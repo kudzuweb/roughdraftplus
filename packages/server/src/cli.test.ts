@@ -1077,7 +1077,10 @@ describe("cli", () => {
     expect(watchRequestBody).toMatchObject({
       batchWindowSeconds: 0,
     });
-    expect(watchRequestBody).not.toHaveProperty("timeoutSeconds");
+    // Watch requests poll in bounded segments (priming poll at 0, then
+    // segments capped at 240s); the capture holds whichever arrived last.
+    expect(typeof watchRequestBody?.timeoutSeconds).toBe("number");
+    expect(watchRequestBody?.timeoutSeconds).toBeLessThanOrEqual(240);
     await fetch(`http://localhost:${persisted?.port}/api/review-events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1101,6 +1104,195 @@ describe("cli", () => {
         },
       ],
     });
+  });
+
+  interface WatchScriptResponse {
+    events: unknown[];
+    timedOut: boolean;
+    nextSequence: number;
+  }
+
+  function createWatchScriptTest(
+    script: Array<Error | WatchScriptResponse>,
+    envOverrides: NodeJS.ProcessEnv = {},
+  ) {
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const requests: Array<{
+      timeoutSeconds?: number;
+      afterSequence?: number;
+      fromNow?: boolean;
+    }> = [];
+    const remaining = [...script];
+
+    const deps = createCliDependencies({
+      env: {
+        ...process.env,
+        ROUGHDRAFT_STATE_DIR: stateDir,
+        ...envOverrides,
+      },
+      cwd: projectDir,
+      fetchImpl: async (input, init) => {
+        const url =
+          input instanceof URL
+            ? input
+            : new URL(
+                typeof input === "string" ? input : input.url,
+                "http://localhost",
+              );
+
+        if (url.pathname === "/api/status") {
+          return new Response(
+            JSON.stringify({
+              backend: "local-files",
+              port: Number.parseInt(url.port || "80", 10),
+              projectDir,
+              serverRoot,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        if (url.pathname === "/api/review-events/watch") {
+          if (typeof init?.body === "string") {
+            requests.push(JSON.parse(init.body) as (typeof requests)[number]);
+          }
+          const next = remaining.shift();
+          if (!next) {
+            throw new Error("watch script exhausted: unexpected extra request");
+          }
+          if (next instanceof Error) {
+            throw next;
+          }
+          return new Response(JSON.stringify(next), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        throw new Error(`Unexpected request in watch test: ${url.pathname}`);
+      },
+      sleepImpl: async () => {},
+      isProcessRunning: () => false,
+      stopProcess: async () => {},
+      spawnServerProcess: async () => {
+        throw new Error("should not spawn");
+      },
+      openUrl: () => "disabled",
+      resolveUpdateStatus: noUpdateStatus,
+      log: (message) => logs.push(message),
+      error: (message) => errors.push(message),
+    });
+
+    return { deps, logs, errors, requests };
+  }
+
+  it("keeps an untimed watch alive across undici header-timeout rejections until the review completes", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest([
+      { events: [], timedOut: true, nextSequence: 41 },
+      Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "UND_ERR_HEADERS_TIMEOUT" },
+      }),
+      {
+        events: [{ documentPath, type: "review.completed" }],
+        timedOut: false,
+        nextSequence: 43,
+      },
+    ]);
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    expect(test.logs.join("\n")).toContain("Review completed");
+  });
+
+  it("sends a bounded timeoutSeconds on every untimed watch request", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest([
+      { events: [], timedOut: true, nextSequence: 1 },
+      {
+        events: [{ documentPath, type: "review.completed" }],
+        timedOut: false,
+        nextSequence: 2,
+      },
+    ]);
+
+    await runCli(["watch", documentPath], test.deps);
+
+    expect(test.requests.length).toBeGreaterThan(0);
+    for (const body of test.requests) {
+      expect(typeof body.timeoutSeconds).toBe("number");
+      expect(body.timeoutSeconds).toBeLessThanOrEqual(240);
+    }
+  });
+
+  it("honors ROUGHDRAFT_WATCH_SEGMENT_SECONDS as the watch segment bound", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        { events: [], timedOut: true, nextSequence: 1 },
+        {
+          events: [{ documentPath, type: "review.completed" }],
+          timedOut: false,
+          nextSequence: 2,
+        },
+      ],
+      { ROUGHDRAFT_WATCH_SEGMENT_SECONDS: "30" },
+    );
+
+    await runCli(["watch", documentPath], test.deps);
+
+    expect(test.requests.length).toBeGreaterThan(0);
+    for (const body of test.requests) {
+      expect(typeof body.timeoutSeconds).toBe("number");
+      expect(body.timeoutSeconds).toBeLessThanOrEqual(30);
+    }
+  });
+
+  it("resumes each watch segment from the previous nextSequence so no events are lost", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest([
+      { events: [], timedOut: true, nextSequence: 7 },
+      { events: [], timedOut: true, nextSequence: 9 },
+      {
+        events: [{ documentPath, type: "review.completed" }],
+        timedOut: false,
+        nextSequence: 12,
+      },
+    ]);
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    // A response's nextSequence is the next unassigned sequence, and the
+    // server delivers events with sequence > afterSequence, so the resume
+    // cursor must be nextSequence - 1 — a cursor of nextSequence itself would
+    // skip the event assigned that number after the previous segment returned.
+    expect(test.requests.slice(1).map((body) => body.afterSequence)).toEqual([
+      6, 8,
+    ]);
+  });
+
+  it("still crashes when an untimed watch hits a non-timeout fetch error", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest([
+      Object.assign(new TypeError("fetch failed"), {
+        cause: { code: "ECONNREFUSED" },
+      }),
+    ]);
+
+    await expect(runCli(["watch", documentPath], test.deps)).rejects.toThrow(
+      "fetch failed",
+    );
   });
 
   it("cleans stale state during status checks", async () => {
@@ -1411,7 +1603,9 @@ describe("cli", () => {
     expect(test.logs).toContain(
       "  help agent         Print the agent setup prompt",
     );
-    expect(test.logs).toContain("Agent setup: https://roughdraft.md/setup.md");
+    expect(test.logs).toContain(
+      "Agent setup: https://roughdraft.md/setup.md",
+    );
     expect(test.logs).toContain(
       "Use `roughdraft help agent` for a copyable setup prompt.",
     );

@@ -2117,43 +2117,99 @@ async function runWatch(
     serverUrl = result.server.url;
   }
   const relativePath = path.relative(target.projectDir, target.openPath);
-  const body: {
-    projectPath: string;
-    path: string;
-    timeoutSeconds?: number;
-    batchWindowSeconds: number;
-    fromNow: boolean;
-  } = {
-    projectPath: target.projectDir,
-    path: relativePath,
-    batchWindowSeconds: options.batchWindowSeconds,
-    fromNow: !options.replay,
-  };
-  if (options.timeoutSeconds !== undefined) {
-    body.timeoutSeconds = options.timeoutSeconds;
-  }
 
-  const response = await deps.fetchImpl(
-    new URL("/api/review-events/watch", serverUrl),
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      ...(options.timeoutSeconds !== undefined
-        ? { signal: AbortSignal.timeout((options.timeoutSeconds + 5) * 1000) }
-        : {}),
-    },
+  // The server caps a single wait at 300s and undici's default headersTimeout
+  // is also 300s, so one unbounded long-poll dies in a dead heat with the
+  // server and loses the Done Reviewing signal. Poll in segments that end at
+  // 240s with our own abort at 255s, both under undici's limit, and carry the
+  // sequence cursor across segments so no event slips through the gap.
+  const configuredSegmentSeconds = Number(
+    deps.env.ROUGHDRAFT_WATCH_SEGMENT_SECONDS,
   );
+  const segmentCapSeconds =
+    Number.isFinite(configuredSegmentSeconds) && configuredSegmentSeconds > 0
+      ? configuredSegmentSeconds
+      : 240;
+  const abortMarginSeconds = 15;
 
-  if (!response.ok) {
-    throw new Error(`Failed to watch review events: ${response.status}`);
-  }
-
-  const payload = (await response.json()) as {
+  interface WatchPayload {
     events?: unknown[];
     timedOut?: boolean;
     nextSequence?: number;
+  }
+
+  const postWatch = async (
+    extra: { fromNow: boolean; afterSequence?: number },
+    segmentSeconds: number,
+  ): Promise<WatchPayload> => {
+    const response = await deps.fetchImpl(
+      new URL("/api/review-events/watch", serverUrl),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectPath: target.projectDir,
+          path: relativePath,
+          batchWindowSeconds: options.batchWindowSeconds,
+          timeoutSeconds: segmentSeconds,
+          ...extra,
+        }),
+        signal: AbortSignal.timeout(
+          (segmentSeconds + abortMarginSeconds) * 1000,
+        ),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to watch review events: ${response.status}`);
+    }
+    return (await response.json()) as WatchPayload;
   };
+
+  const isSegmentTimeout = (error: unknown): boolean => {
+    const withCode = error as {
+      cause?: { code?: string };
+      code?: string;
+      name?: string;
+    } | null;
+    const code = withCode?.cause?.code ?? withCode?.code;
+    return (
+      code === "UND_ERR_HEADERS_TIMEOUT" ||
+      code === "UND_ERR_BODY_TIMEOUT" ||
+      withCode?.name === "TimeoutError" ||
+      withCode?.name === "AbortError"
+    );
+  };
+
+  // The priming poll returns immediately and yields the sequence cursor, so a
+  // segment that dies before delivering one cannot lose an event.
+  let payload = await postWatch({ fromNow: !options.replay }, 0);
+  let afterSequence =
+    typeof payload.nextSequence === "number" ? payload.nextSequence - 1 : 0;
+  const deadline =
+    options.timeoutSeconds !== undefined
+      ? Date.now() + options.timeoutSeconds * 1000
+      : undefined;
+
+  while (payload.timedOut) {
+    let segmentSeconds = segmentCapSeconds;
+    if (deadline !== undefined) {
+      const remaining = Math.ceil((deadline - Date.now()) / 1000);
+      if (remaining <= 0) break;
+      segmentSeconds = Math.min(segmentSeconds, remaining);
+    }
+    try {
+      payload = await postWatch(
+        { fromNow: false, afterSequence },
+        segmentSeconds,
+      );
+    } catch (error) {
+      if (!isSegmentTimeout(error)) throw error;
+      continue;
+    }
+    if (typeof payload.nextSequence === "number") {
+      afterSequence = payload.nextSequence - 1;
+    }
+  }
 
   if (json) {
     emitJson(deps.log, payload);
