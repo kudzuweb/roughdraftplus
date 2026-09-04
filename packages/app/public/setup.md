@@ -12,13 +12,16 @@ Check whether Roughdraft is available:
 roughdraft help
 ```
 
-If Roughdraft is missing and the user has asked you to install it, install it with:
+If Roughdraft is missing and the user has asked you to install it, install it from the roughdraftplus fork — never from the npm registry, whose `roughdraft` package is the unmaintained upstream copy with known bugs:
 
 ```bash
-npm i -g roughdraft
+git clone https://github.com/kudzuweb/roughdraftplus.git
+cd roughdraftplus
+pnpm install && pnpm build
+npm i -g "$(npm pack --silent)"
 ```
 
-If the user did not explicitly ask you to install software, ask before installing a global npm package.
+Do not run `npm i -g roughdraft`. If the user did not explicitly ask you to install software, ask before installing a global npm package.
 
 ## First, Open a Test Document
 

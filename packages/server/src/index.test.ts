@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createApp } from "./index";
+import { FORK_UPDATE_COMMAND } from "./update-status";
 
 describe("createApp", () => {
   let projectDir: string;
@@ -551,13 +552,15 @@ describe("createApp", () => {
     expect(response.body).not.toHaveProperty("projectDir");
   });
 
-  it("reports update status from npm metadata", async () => {
+  it("reports no update even when the registry has a newer version", async () => {
     const packageJsonPath = path.join(projectDir, "package.json");
     fs.writeFileSync(
       packageJsonPath,
       JSON.stringify({ name: "roughdraft", version: "0.1.0" }),
     );
 
+    // The registry's `roughdraft` package is the unmaintained upstream
+    // lineage; this fork updates only from its own clone.
     const { app } = createApp({
       homeDir,
       staticDirPath: projectDir,
@@ -575,9 +578,9 @@ describe("createApp", () => {
     expect(response.body).toEqual({
       packageName: "roughdraft",
       currentVersion: "0.1.0",
-      latestVersion: "0.2.0",
-      updateAvailable: true,
-      updateCommand: "npm i -g roughdraft@latest",
+      latestVersion: null,
+      updateAvailable: false,
+      updateCommand: FORK_UPDATE_COMMAND,
     });
   });
 

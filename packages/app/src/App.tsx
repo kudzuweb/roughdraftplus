@@ -92,7 +92,7 @@ export function shouldWarnBeforeUnload({
 }
 
 const AGENT_SETUP_PROMPT =
-  "Install Roughdraft for me using `npm i -g roughdraft`, then read https://roughdraft.md/setup.md and set yourself up to use it.";
+  'Install Roughdraft from the roughdraftplus fork: clone https://github.com/kudzuweb/roughdraftplus, run `pnpm install && pnpm build` in the clone, then `npm i -g "$(npm pack --silent)"`. Never run `npm i -g roughdraft`. Then read packages/app/public/setup.md in the clone and set yourself up to use it.';
 const PREVIEW_DOCUMENT_PATH = "preview.md";
 const PREVIEW_INITIAL_MARKDOWN = [
   "# Live Preview",

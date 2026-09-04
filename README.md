@@ -1,18 +1,23 @@
 # Roughdraft
 A local-first markdown editor and viewer for working with AI.
 
+This is `roughdraftplus`, a maintained fork of [Lex-Inc/roughdraft](https://github.com/Lex-Inc/roughdraft). Install from this repository, not from the npm registry — the published `roughdraft` package is the unmaintained upstream copy and ships with known bugs this fork fixes.
+
 {==Open one markdown file on your machine. Review it, comment on it, and suggest edits.==}{>>What does this mean?<<}{id="c3" by="user" at="2026-04-30T20:18:51.163Z"}{>>It means Roughdraft works with a normal local Markdown file: you open one .md file from your computer, read it in the app, leave inline comments, and propose edits that are saved back into the Markdown using CriticMarkup.<<}{id="c4" by="AI" at="2026-04-30T20:19:39.000Z" re="c3"}{>>cjool<<}{id="c5" by="user" at="2026-05-07T20:38:25.621Z" re="c4"}
 
 Paste this into your coding agent:
 
 ```text
-Install Roughdraft for me using `npm i -g roughdraft`, then read https://roughdraft.md/setup.md and set yourself up to use it.
+Install Roughdraft from the roughdraftplus fork: clone https://github.com/kudzuweb/roughdraftplus, run `pnpm install && pnpm build` in the clone, then `npm i -g "$(npm pack --silent)"`. Do not run `npm i -g roughdraft` — the registry package is the unmaintained upstream. Then read packages/app/public/setup.md in the clone and set yourself up to use it.
 ```
 
 Or install and open a file yourself:
 
 ```bash
-npm i -g roughdraft
+git clone https://github.com/kudzuweb/roughdraftplus.git
+cd roughdraftplus
+pnpm install && pnpm build
+npm i -g "$(npm pack --silent)"
 roughdraft open /absolute/path/to/file.md
 ```
 ## What is this?
@@ -33,10 +38,9 @@ Roughdraft opens a single markdown file directly for CriticMarkup comments and s
 - **No cloud, no account, no telemetry** — Runs entirely on your machine
   
 ## Quick start
-Install Roughdraft and start the local server:
+Install Roughdraft from this repository (see above) and start the local server:
 
 ```bash
-npm i -g roughdraft
 roughdraft start
 ```
 
@@ -112,7 +116,7 @@ The two scripts coordinate through a lock file, so it's safe to start `./scripts
 
 If you prefer package scripts, the same commands are available as `pnpm setup` and `pnpm start`.
 
-Running `pnpm setup` also installs a per-worktree dev CLI wrapper into `~/.local/bin` by default, using the current worktree directory name. For example, this checkout might install `roughdraft-dev-lyon-v2`, which points at this worktree's local code while leaving the published global `roughdraft` command untouched.
+Running `pnpm setup` also installs a per-worktree dev CLI wrapper into `~/.local/bin` by default, using the current worktree directory name. For example, this checkout might install `roughdraft-dev-lyon-v2`, which points at this worktree's local code while leaving the fork-built global `roughdraft` command untouched.
 
 Each dev wrapper keeps its own server state under `~/.roughdraft/dev/<wrapper-name>` by default, so opening a file from one worktree will not accidentally reuse a backend started from another worktree. `roughdraft-dev-<worktree> open ...` can start its own background server as needed; you do not need to run `pnpm dev` first just to open files in Roughdraft.
 
@@ -133,26 +137,7 @@ pnpm check
 
 `pnpm check` is the same command the pull request workflow runs before merge.
 ## Publishing
-Roughdraft publishes from `main` when the root `package.json` version is newer than the current npm `latest` version.
-
-Release flow:
-
-1. Bump the root `package.json` version in a pull request.
-  
-2. Merge the pull request to `main`.
-  
-3. The `Publish to npm` GitHub Actions workflow runs `pnpm check`, publishes the package if that exact version is not already on npm and is newer than `latest`, then creates a `v<version>` git tag.
-  
-
-The workflow uses npm trusted publishing, so npm must be configured with this trusted publisher:
-
-```text
-Owner: Lex-Inc
-Repository: roughdraft
-Workflow filename: publish.yml
-```
-
-No `NPM_TOKEN` secret is required.
+This fork does not publish to npm. The upstream `Publish to npm` workflow is still in the repository but is gated to `github.repository == 'Lex-Inc/roughdraft'`, so it never runs here. Installs come from a local clone via `npm pack` (see the install instructions above).
 ## Files on disk
 ```
 my-essay/
@@ -162,10 +147,10 @@ my-essay/
 
 Roughdraft reads and writes the markdown file directly.
 ## Agent setup
-If you want your local agent to remember the Roughdraft workflow, ask it to read the live setup prompt:
+If you want your local agent to remember the Roughdraft workflow, ask it to read the setup prompt:
 
 ```text
-Install Roughdraft for me using `npm i -g roughdraft`, then read https://roughdraft.md/setup.md and set yourself up to use it.
+Install Roughdraft from the roughdraftplus fork: clone https://github.com/kudzuweb/roughdraftplus, run `pnpm install && pnpm build` in the clone, then `npm i -g "$(npm pack --silent)"`. Do not run `npm i -g roughdraft` — the registry package is the unmaintained upstream. Then read packages/app/public/setup.md in the clone and set yourself up to use it.
 ```
 
 Use `roughdraft help`, `roughdraft help agent`, or `roughdraft help criticmarkup` if you need a local refresher.

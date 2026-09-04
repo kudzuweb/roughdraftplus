@@ -93,7 +93,7 @@ Keep generated screenshot runs in `.context/ui-state-screenshots/` unless the us
 
 This repo installs a worktree-specific Roughdraft CLI wrapper during setup.
 
-- `roughdraft` is the published npm package
+- `roughdraft` is the global CLI, installed from this fork via `npm pack` (never from the npm registry — the registry package is the unmaintained upstream)
 - `roughdraft-dev-<worktree-name>` is the local CLI for one specific checkout
 
 In a fresh worktree, `pnpm setup` runs `pnpm dev:install-cli`, which creates a wrapper in `~/.local/bin` by default.
@@ -112,7 +112,7 @@ Example in this checkout:
 roughdraft-dev-shanghai-v4 start
 ```
 
-Do not use the global `roughdraft` command for repo-local development in this repo unless the user explicitly asks for the published package.
+Do not use the global `roughdraft` command for repo-local development in this repo unless the user explicitly asks for the fork-built global install.
 
 ## Fallback If The Wrapper Is Missing
 

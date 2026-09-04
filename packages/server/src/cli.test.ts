@@ -1604,7 +1604,7 @@ describe("cli", () => {
       "  help agent         Print the agent setup prompt",
     );
     expect(test.logs).toContain(
-      "Agent setup: https://roughdraft.md/setup.md",
+      "Agent setup: https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/packages/app/public/setup.md",
     );
     expect(test.logs).toContain(
       "Use `roughdraft help agent` for a copyable setup prompt.",
@@ -1621,7 +1621,7 @@ describe("cli", () => {
       "To set up your coding agent, paste this into it:",
     );
     expect(test.logs).toContain(
-      "Install Roughdraft for me using `npm i -g roughdraft`, then read https://roughdraft.md/setup.md and set yourself up to use it.",
+      'Install Roughdraft from the roughdraftplus fork: clone https://github.com/kudzuweb/roughdraftplus, run `pnpm install && pnpm build` in the clone, then `npm i -g "$(npm pack --silent)"`. Never run `npm i -g roughdraft`. Then read packages/app/public/setup.md in the clone and set yourself up to use it.',
     );
     expect(test.logs).toContain(
       "This command only prints setup text. It does not edit agent instruction files.",
@@ -1702,7 +1702,7 @@ describe("cli", () => {
 
     expect(exitCode).toBe(0);
     expect(test.logs).toContain(
-      "Live setup instructions: https://roughdraft.md/setup.md",
+      "Live setup instructions: https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/packages/app/public/setup.md",
     );
   });
 

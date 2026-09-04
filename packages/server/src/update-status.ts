@@ -119,28 +119,14 @@ export function compareVersions(leftVersion: string, rightVersion: string) {
   return comparePrerelease(left.prerelease, right.prerelease);
 }
 
-async function fetchLatestVersion(
-  packageName: string,
-  fetchImpl: typeof fetch,
-): Promise<string | null> {
-  try {
-    const response = await fetchImpl(
-      `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
-      {
-        headers: { accept: "application/json" },
-        signal: AbortSignal.timeout(1500),
-      },
-    );
+export const FORK_UPDATE_COMMAND =
+  'git pull && pnpm install && pnpm build && npm i -g "$(npm pack --silent)" (from your roughdraftplus clone)';
 
-    if (!response.ok) return null;
-
-    const payload = (await response.json()) as PackageManifest;
-    return payload.version?.trim() || null;
-  } catch {
-    return null;
-  }
-}
-
+// This build installs from a local clone of kudzuweb/roughdraftplus, never
+// from the npm registry: the registry's `roughdraft` package is the
+// unmaintained upstream lineage, so a registry version comparison would
+// prompt users to overwrite the fork with upstream's copy. Update status
+// therefore never consults the registry and never reports an update.
 export async function resolveUpdateStatus(
   options: ResolveUpdateStatusOptions = {},
 ): Promise<UpdateStatus> {
@@ -149,20 +135,12 @@ export async function resolveUpdateStatus(
   );
   const packageName =
     options.packageName?.trim() || installedPackageInfo.packageName;
-  const currentVersion = installedPackageInfo.currentVersion;
-  const latestVersion = await fetchLatestVersion(
-    packageName,
-    options.fetchImpl ?? fetch,
-  );
 
   return {
     packageName,
-    currentVersion,
-    latestVersion,
-    updateAvailable:
-      !!currentVersion &&
-      !!latestVersion &&
-      compareVersions(currentVersion, latestVersion) < 0,
-    updateCommand: `npm i -g ${packageName}@latest`,
+    currentVersion: installedPackageInfo.currentVersion,
+    latestVersion: null,
+    updateAvailable: false,
+    updateCommand: FORK_UPDATE_COMMAND,
   };
 }

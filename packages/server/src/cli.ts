@@ -18,10 +18,12 @@ import {
 import { findAvailablePort } from "./ports.js";
 import { resolveUpdateStatus, type UpdateStatus } from "./update-status.js";
 
-const AGENT_SETUP_URL = "https://roughdraft.md/setup.md";
+const AGENT_SETUP_URL =
+  "https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/packages/app/public/setup.md";
 const ROUGHDRAFT_FLAVORED_MARKDOWN_SPEC_URL =
   "https://roughdraft.md/spec/roughdraft-flavored-markdown.md";
-const AGENT_SETUP_PROMPT = `Install Roughdraft for me using \`npm i -g roughdraft\`, then read ${AGENT_SETUP_URL} and set yourself up to use it.`;
+const AGENT_SETUP_PROMPT =
+  'Install Roughdraft from the roughdraftplus fork: clone https://github.com/kudzuweb/roughdraftplus, run `pnpm install && pnpm build` in the clone, then `npm i -g "$(npm pack --silent)"`. Never run `npm i -g roughdraft`. Then read packages/app/public/setup.md in the clone and set yourself up to use it.';
 const STATUS_PATH = "/api/status";
 const STATUS_TIMEOUT_MS = 750;
 const SERVER_WAIT_ATTEMPTS = 40;
