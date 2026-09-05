@@ -36,11 +36,11 @@ Existing documents may still carry them until render-or-migrate support lands.
 ## Approvals
 
 - A reviewer reply that is an approval ("approved", "okay approved", or the approve button once it
-  ships) **resolves its thread**: the thread does not reappear next round. The agent removes the
-  thread's markup when processing the round; the anchor text stays if it is real prose.
-- **"approve all"** on any comment in a thread approves everything stacked in that thread — every
-  proposal and request the thread accumulated — and resolves the whole thread. Reviewers stack
-  requests onto one thread sometimes; approve-all is the shorthand that closes the stack.
+  ships) **resolves exactly the comment it answers** — never the rest of a stacked thread, because
+  different questions in one stack can have different answers. The agent removes the resolved
+  markup when processing the round; the anchor text stays if it is real prose, and the thread's
+  other comments survive untouched.
+- No other text is read as approval: approval is the explicit reply (or button), nothing inferred.
 - An approval with a further question or request attached is not a full stop: the agent acts on
   the approval, answers the question, and the thread (or its live tail) survives until the
   reviewer clears it.
@@ -64,7 +64,6 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 | Behavior | Today | Destination |
 |---|---|---|
 | Auto-reopen until done-signal | Agent discipline | CLI loop mode (backlog item 13) |
-| Approval resolves thread | Agent discipline | Approve button + auto-clear on save (item 6) |
-| Approve-all resolves the stack | Agent discipline | Same button semantics (item 6) |
+| Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |
 | Inline replies canonical | Agent discipline; prompt/spec still say endmatter | Prompt/spec rewrite + legacy rendering (item 4) |
 | Collapsed threads, newest reply visible | Not built | Review rail change (item 5) |
