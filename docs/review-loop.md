@@ -2,8 +2,8 @@
 
 How a document round-trips between a reviewer and an agent using Roughdraft. Parts of this
 contract are agent discipline today and product behavior tomorrow; the Status section at the end
-says which is which. The upgrade backlog (`.context/upgrade-backlog.md`, untracked) carries the
-implementation items.
+says which is which. The upgrade backlog (`.context/upgrade-backlog.md`, tracked) carries the
+implementation items, and Agent Dash works them as one phase.
 
 ## The loop
 

@@ -154,11 +154,3 @@ An Edit anchored on a phrase a script had already moved, duplicating half a sent
 **23. Compaction-summary counts are hypotheses** [pc-c9ed9a]
 
 A post-compaction summary claimed five open review threads; the file held two, and the stale number reached you before the file was checked. Candidate global CLAUDE.md rule: verify any count, list, or status inherited from a compaction summary against the file or command before stating it.
-
----
-comments:
-  c18:
-    body: okay just tell me about the mapping thing again so i can decide on this, i
-      think its all thats left
-    by: user
-    at: 2026-09-05T14:15:39.932Z
