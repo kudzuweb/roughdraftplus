@@ -136,8 +136,22 @@ Before creating or updating a PR:
 5. Make sure the current branch name is descriptive. If it is random or unclear, rename it before pushing.
 6. Rebase the current branch on the latest `origin/main`.
 7. Commit and push.
-8. Create the PR with `gh pr create --base main`.
+8. Create the PR with `gh pr create --base main --repo kudzuweb/roughdraftplus`. The `--repo`
+   flag is not optional here — see below.
 9. If the PR resolves GitHub issues, include closing keywords such as `Fixes #123` in the PR body.
+
+### This repo is a fork — always name it
+
+`kudzuweb/roughdraftplus` is a fork of `Lex-Inc/roughdraft`, which is unmaintained. `gh`
+resolves commands in a fork against the upstream by default, so an unqualified `gh pr create`
+can open a pull request on a stranger's project instead of this one.
+
+- Pass `--repo kudzuweb/roughdraftplus` on every `gh pr create`, `gh issue create` and
+  `gh issue develop`. Never let `gh` infer the target from the clone.
+- Before any of those, confirm `gh repo set-default --view` prints `kudzuweb/roughdraftplus`.
+  If it prints anything else, stop and say so rather than correcting it and carrying on — a
+  wrong default means other commands in the session have been resolving somewhere unintended
+  too.
 
 ## Plan Writing Workflow
 
