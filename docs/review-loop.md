@@ -35,7 +35,11 @@ Existing documents may still carry them until render-or-migrate support lands.
 
 Substantive text added between rounds — a new section or sentence a comment caused — is written as
 a CriticMarkup insertion (`{++new text++}`) so the reviewer can see at a glance what appeared since
-they last read, and accept or edit it like any suggestion.
+they last read. Approving an insertion **accepts** it: the `{++ ++}` markers are stripped and the
+text becomes ordinary document prose. Rejecting removes it; editing replaces it with what the
+reviewer typed. This is the item-6 approval action applied to a suggestion instead of a comment,
+and it stays the right way to add text even once the diff-based highlighting (backlog item 10)
+ships, because an insertion carries its own accept/reject affordance.
 
 ## Approvals
 
@@ -69,6 +73,7 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 |---|---|---|
 | Auto-reopen until done-signal | Agent discipline | CLI loop mode (backlog item 14) |
 | New-since-last-round text stands out | Agent writes additions as `{++insertions++}` | Diff vs last-reviewed version, distinct color + jump navigation (item 10) |
+| Approving an insertion accepts it into prose | Agent strips markers on approval | Approve action accepts the suggestion (items 6, 10) |
 | Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |
 | Inline replies canonical | Agent discipline; prompt/spec still say endmatter | Prompt/spec rewrite + legacy rendering (item 4) |
 | Collapsed threads, newest reply visible | Not built | Review rail change (item 5) |
