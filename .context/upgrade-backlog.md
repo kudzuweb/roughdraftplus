@@ -33,7 +33,23 @@ These exist on purpose — to keep a compact-authored document compact across a 
 
 Fix: make the two removals context-aware — strip a heading's adjacent blank line only when the neighboring block is a heading or paragraph (where tightness is safe), never when it is a table row, fenced block, blockquote, or list item (where the blank line is load-bearing). Scope: this one function plus its tests; the existing compact round-trip test must still pass, with new cases for heading-after-table, heading-after-fence, and a comment anchored at each. Per the repo's Prove It workflow, land a failing test reproducing the heading-into-table corruption first.
 
-Bounds of this PR: it fixes the boundary corruption and CriticMarkup survival across saves. It does not fix the other reflow noise — turndown joining wrapped lines, trailing whitespace, table-separator rewriting — which originates in turndown and the GFM plugin and is the remainder of Option A above. Separate PRs.
+Bounds of this PR: it fixes the boundary corruption and CriticMarkup survival across saves. It does not fix the other reflow noise — turndown joining wrapped lines, trailing whitespace, table-separator rewriting — which originates in turndown and the GFM plugin and is the remainder of the serializer-hardening path (Option A). Separate PRs.
+
+**1b. Open question — the real save-path fix (Option B), and why its hard part decides the shape** [design note, not a ready PR]
+
+Item 1a and the serializer bullets above are Option A: harden the reserializer so it stops corrupting boundaries. Option A is incremental and low-risk but has a ceiling — the parse-and-reserialize round trip discards whatever the editor tree does not represent (original line wrapping, exact separator style), so the first save still normalizes the file once, then reaches a stable fixed point. Option B removes the ceiling: keep the original Markdown text on the server, track which regions the reviewer actually touched, and splice only those regions back into the original bytes, so untouched text stays byte-identical and a save produces a clean diff. Option B is the real fix and a redesign of the save path, not a patch.
+
+The open question is what Option B's position mapping should be, because that is the hard part and it decides the whole shape:
+
+- The pipeline discards source positions at the first step. Markdown goes through `marked` into tokens and into TipTap's ProseMirror tree, whose positions index the tree, not the source bytes. Splicing an edit back needs a map from each tree node to a source byte range, and nothing builds one today.
+- That map is many-to-one, so it cannot be reconstructed after the fact: `*emphasis*` and `_emphasis_`, `-` and `*` bullets, ATX and setext headings, wrapped and unwrapped paragraphs all parse to identical nodes. The map must be captured during parsing. `marked` does not emit reliable character spans after its inline normalizations, so this likely means a position-emitting parser such as remark/mdast rather than `marked`.
+- Tracking positions through the reviewer's edits is the solved part — ProseMirror transactions carry step maps that say exactly how every position moved.
+- Structural edits smear the boundaries. Splitting a paragraph, or editing one table cell, no longer maps to a clean source span; tables are the worst case, since ProseMirror holds a table cell-by-cell while the source is line-oriented, so one cell edit re-serializes a whole row that should match its neighbors' column widths and separators.
+- CriticMarkup rides inside the text, so the source map has to carry comment and suggestion spans too, or a splice near a thread corrupts it — the same damage as item 1.
+
+Recommended target: block-level patching, not character-level splicing. Track which blocks (paragraphs, headings, individual tables) the reviewer touched, keep each block's source span from parse time, and re-serialize only the dirty blocks; everything untouched stays byte-identical. Block boundaries are line-oriented in Markdown, so their spans are far easier to keep honest than inline character offsets. Build it with Option A's serializer rules applied to the dirty blocks being regenerated, so Option A's tests carry straight over.
+
+Decision to make before building Option B: is block-level patching enough, or is character-level splicing needed? Defer it until Option A (item 1a plus the serializer bullets) has landed and the residual reflow is measured against real documents — that measurement is what says whether block-level patching closes the gap or leaves one worth the character-level cost.
 
 **2. Save only when the reviewer actually changed something, and stop saving after the review ends** [pc 13; pc-a83cf9]
 
