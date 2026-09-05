@@ -155,7 +155,7 @@ can open a pull request on a stranger's project instead of this one.
 
 ## Plan Writing Workflow
 
-When the user asks for a plan, write the plan as a Markdown file in `.context/` so it is easy to review, revise, and keep out of commits.
+When the user asks for a plan, write the plan as a Markdown file in `.context/`, which is tracked so a plan is versioned with the code and reaches a fresh clone or worktree. Only generated runs under it — slog (`.context/slog/`) and screenshot captures (`.context/ui-state-screenshots/`) — are gitignored.
 
 Before writing the plan:
 

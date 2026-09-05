@@ -16,4 +16,5 @@ sandbox
 .roughdraft-state
 /roughdraft.json
 .compound-engineering/*.local.yaml
-.context
+.context/slog/
+.context/ui-state-screenshots/
