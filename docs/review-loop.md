@@ -33,6 +33,10 @@ attribute form the UI writes,
 YAML-endmatter replies are a legacy upstream format the UI never rendered; do not write them.
 Existing documents may still carry them until render-or-migrate support lands.
 
+Substantive text added between rounds — a new section or sentence a comment caused — is written as
+a CriticMarkup insertion (`{++new text++}`) so the reviewer can see at a glance what appeared since
+they last read, and accept or edit it like any suggestion.
+
 ## Approvals
 
 - A reviewer reply that is an approval ("approved", "okay approved", or the approve button once it
@@ -63,7 +67,8 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 
 | Behavior | Today | Destination |
 |---|---|---|
-| Auto-reopen until done-signal | Agent discipline | CLI loop mode (backlog item 13) |
+| Auto-reopen until done-signal | Agent discipline | CLI loop mode (backlog item 14) |
+| New-since-last-round text stands out | Agent writes additions as `{++insertions++}` | Diff vs last-reviewed version, distinct color + jump navigation (item 10) |
 | Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |
 | Inline replies canonical | Agent discipline; prompt/spec still say endmatter | Prompt/spec rewrite + legacy rendering (item 4) |
 | Collapsed threads, newest reply visible | Not built | Review rail change (item 5) |
