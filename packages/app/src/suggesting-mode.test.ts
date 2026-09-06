@@ -781,11 +781,13 @@ function createWrappedEditor() {
   return { editor, comments };
 }
 
-// The save path fills soft-break spans with U+200B before Turndown; every
-// saved string from these tests is checked so the placeholder never leaks.
+// The save path fills soft-break spans with U+200B and pads the whitespace a
+// change mark covers with U+E000, both before Turndown; every saved string
+// from these tests is checked so neither placeholder leaks.
 function saveMarkdown(editor: Editor, comments: Map<string, never>) {
   const markdown = editorStateToCriticMarkdown(editor.getJSON(), comments);
   expect(markdown).not.toContain("\u200b");
+  expect(markdown).not.toContain("\ue000");
   return markdown;
 }
 
@@ -1280,6 +1282,93 @@ describe("suggesting mode deleting whitespace inside inline formatting", () => {
     expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
     expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
       "Two words here.\n",
+    );
+    rejected.editor.destroy();
+  });
+});
+
+describe("suggesting mode adding and replacing whitespace", () => {
+  it("writes a suggested space between two plain words as one marker", () => {
+    const { editor, comments } = createEditorFromMarkdown("Twowords here.\n");
+
+    selectText(editor, "words");
+    editor.view.dispatch(
+      editor.state.tr.setSelection(
+        TextSelection.create(editor.state.doc, editor.state.selection.from),
+      ),
+    );
+    suggestingTypeChar(editor, " ");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^Two\{\+\+ \+\+\}\{id="s1"[^}]*\}words here\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a suggested space between two plain words", () => {
+    const accepted = createEditorFromMarkdown("Twowords here.\n");
+    selectText(accepted.editor, "words");
+    accepted.editor.view.dispatch(
+      accepted.editor.state.tr.setSelection(
+        TextSelection.create(
+          accepted.editor.state.doc,
+          accepted.editor.state.selection.from,
+        ),
+      ),
+    );
+    suggestingTypeChar(accepted.editor, " ");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "Two words here.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown("Twowords here.\n");
+    selectText(rejected.editor, "words");
+    rejected.editor.view.dispatch(
+      rejected.editor.state.tr.setSelection(
+        TextSelection.create(
+          rejected.editor.state.doc,
+          rejected.editor.state.selection.from,
+        ),
+      ),
+    );
+    suggestingTypeChar(rejected.editor, " ");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "Twowords here.\n",
+    );
+    rejected.editor.destroy();
+  });
+
+  it("writes a wrap replaced by a space as one substitution", () => {
+    const { editor, comments } = createEditorFromMarkdown("Two\nwords here.\n");
+
+    selectText(editor, " ");
+    suggestingTypeWithSelection(editor, " ");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^Two\{~~\n~> ~~\}\{id="s1"[^}]*\}words here\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a wrap replaced by a space", () => {
+    const accepted = createEditorFromMarkdown("Two\nwords here.\n");
+    selectText(accepted.editor, " ");
+    suggestingTypeWithSelection(accepted.editor, " ");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "Two words here.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown("Two\nwords here.\n");
+    selectText(rejected.editor, " ");
+    suggestingTypeWithSelection(rejected.editor, " ");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "Two\nwords here.\n",
     );
     rejected.editor.destroy();
   });

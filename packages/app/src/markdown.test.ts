@@ -388,6 +388,75 @@ describe("reserialize fidelity", () => {
     expect(saved).not.toContain("\u200b");
   });
 
+  // One mark can cover a space and formatted text at once. The space is padded
+  // so turndown keeps it, the element as a whole is not whitespace, and the
+  // padding has to come back out of turndown's reading of it all the same.
+  it("keeps a deletion that covers a space and bold text together", () => {
+    const markdown =
+      'Keep{-- **bold** text--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"} here.\n';
+    const saved = saveCriticMarkdown(markdown);
+
+    expect(saved).toBe(markdown);
+    expect(saved).not.toContain("\ue000");
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  it("keeps a deletion that covers a space and a code span together", () => {
+    const markdown =
+      'Keep{-- `code` text--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"} here.\n';
+    const saved = saveCriticMarkdown(markdown);
+
+    expect(saved).toBe(markdown);
+    expect(saved).not.toContain("\ue000");
+  });
+
+  // A zero-width space is a character an author can type, so the save path
+  // must carry it through rather than read it as padding of its own.
+  it("keeps a zero-width space the author typed inside a deletion", () => {
+    const markdown =
+      'Keep {--\u200b--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"} here.\n';
+
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  it("settles a deletion over a zero-width space between two spaces", () => {
+    const markdown =
+      'a{-- \u200b --}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}b\n';
+    const settled =
+      'a {--\u200b--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"} b\n';
+
+    expect(settled).not.toBe(markdown);
+    expectSavesToSettleOn(markdown, settled);
+  });
+
+  it("keeps an insertion that covers only a space", () => {
+    const markdown =
+      'Two{++ ++}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}words here.\n';
+
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  it("keeps a substitution from a wrap to a space", () => {
+    const markdown =
+      'Two{~~\n~> ~~}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}words here.\n';
+
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  // Turndown collapses a run of whitespace to one space, so the replacement
+  // settles at one space and holds there; before it settles it is still a
+  // substitution, which is what the editor's HTML parser used to lose by
+  // collapsing the two whitespace halves of this marker into one.
+  it("settles a substitution from one space to two on a single space", () => {
+    const markdown =
+      'Two{~~ ~>  ~~}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}words here.\n';
+    const settled =
+      'Two{~~ ~> ~~}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}words here.\n';
+
+    expect(settled).not.toBe(markdown);
+    expectSavesToSettleOn(markdown, settled);
+  });
+
   // Markdown cannot wrap whitespace alone in emphasis or a link, so a marker
   // covering only whitespace is written between the formatted runs rather than
   // inside them. Each input below is the inside-the-formatting shape a person
