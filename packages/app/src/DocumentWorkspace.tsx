@@ -616,6 +616,9 @@ export function DocumentWorkspace({
 
       setReviewHandoffState("notifying");
       try {
+        // Approvals wait for the handoff so the reviewer can still undo them;
+        // apply them now so the flush below writes them in the same save.
+        saveControllerRef.current?.applyPendingApprovals();
         // The button stays enabled while autosave is still pending, so make
         // sure any debounced edits are persisted before handing off.
         const flushResult = await saveControllerRef.current?.flushSave();

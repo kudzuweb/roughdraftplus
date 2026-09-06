@@ -712,6 +712,28 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
   });
 
+  it("resolves one approved reply in a stacked thread and leaves the anchor and the rest of the stack untouched", () => {
+    const input =
+      'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>I can add one from the intro.<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n';
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    const editor = new Editor({
+      extensions: createEditorExtensions(""),
+      content: doc,
+    });
+
+    try {
+      editor.commands.removeCommentId("c2");
+      const nextComments = new Map(comments);
+      nextComments.delete("c2");
+
+      expect(editorStateToCriticMarkdown(editor.getJSON(), nextComments)).toBe(
+        'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n',
+      );
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("round-trips nested replies in preorder", () => {
     const input =
       'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>I can add one from the intro.<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"}{>>Use the market report too.<<}{id="c3" by="user" at="2024-01-15T10:32:00.000Z" re="c2"}.\n';
