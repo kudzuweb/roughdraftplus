@@ -47,6 +47,9 @@ export interface CompleteReviewOptions {
 export interface ReviewWatchStatus {
   watching: boolean;
   watcherCount: number;
+  // Watchers of the review round the tab asked about, reported only when it
+  // asks with a review token.
+  watcherCountForReview?: number;
   instanceId?: string;
 }
 
@@ -77,7 +80,10 @@ export interface StorageBackend {
     relativePath: string,
     options?: CompleteReviewOptions,
   ): Promise<CompleteReviewResult>;
-  getReviewWatchStatus?(relativePath: string): Promise<ReviewWatchStatus>;
+  getReviewWatchStatus?(
+    relativePath: string,
+    reviewToken?: string | null,
+  ): Promise<ReviewWatchStatus>;
   refreshServerInstance?(): Promise<string | undefined>;
   saveAsset(file: File): Promise<StoredAsset>;
   resolveFileUrl(path: string): string | null;

@@ -148,9 +148,15 @@ export class ApiBackend implements StorageBackend {
     return { delivered: payload.delivered === true };
   }
 
-  async getReviewWatchStatus(relativePath: string): Promise<ReviewWatchStatus> {
+  async getReviewWatchStatus(
+    relativePath: string,
+    reviewToken?: string | null,
+  ): Promise<ReviewWatchStatus> {
     const res = await fetch(
-      this.buildUrl("/api/review-events/status", { path: relativePath }),
+      this.buildUrl("/api/review-events/status", {
+        path: relativePath,
+        ...(reviewToken ? { reviewToken } : {}),
+      }),
     );
 
     if (!res.ok) {
@@ -162,12 +168,16 @@ export class ApiBackend implements StorageBackend {
     const payload = (await res.json()) as {
       watching?: unknown;
       watcherCount?: unknown;
+      watcherCountForReview?: unknown;
       instanceId?: unknown;
     };
     return {
       watching: payload.watching === true,
       watcherCount:
         typeof payload.watcherCount === "number" ? payload.watcherCount : 0,
+      ...(typeof payload.watcherCountForReview === "number"
+        ? { watcherCountForReview: payload.watcherCountForReview }
+        : {}),
       ...(typeof payload.instanceId === "string"
         ? { instanceId: payload.instanceId }
         : {}),

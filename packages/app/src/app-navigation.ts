@@ -200,12 +200,17 @@ export function getSessionLabelFromLocation(): string | null {
   return searchParams.get("label")?.trim() || null;
 }
 
-export function syncSessionLabelInUrl(sessionLabel: string | null) {
+export function getReviewTokenFromLocation(): string | null {
+  const searchParams = new URLSearchParams(window.location.search);
+  return searchParams.get("reviewToken")?.trim() || null;
+}
+
+function syncSearchParamInUrl(name: string, value: string | null) {
   const url = new URL(window.location.href);
-  if (sessionLabel) {
-    url.searchParams.set("label", sessionLabel);
+  if (value) {
+    url.searchParams.set(name, value);
   } else {
-    url.searchParams.delete("label");
+    url.searchParams.delete(name);
   }
 
   const nextLocation = `${url.pathname}${url.search}${url.hash}`;
@@ -213,6 +218,14 @@ export function syncSessionLabelInUrl(sessionLabel: string | null) {
   if (nextLocation !== currentLocation) {
     window.history.replaceState(null, "", nextLocation);
   }
+}
+
+export function syncSessionLabelInUrl(sessionLabel: string | null) {
+  syncSearchParamInUrl("label", sessionLabel);
+}
+
+export function syncReviewTokenInUrl(reviewToken: string | null) {
+  syncSearchParamInUrl("reviewToken", reviewToken);
 }
 
 export function syncRequestedPathInUrl(path?: string | null) {

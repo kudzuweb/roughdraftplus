@@ -198,6 +198,9 @@ interface ParsedWatchOptions {
   loop?: boolean;
   positionals: string[];
   replay: boolean;
+  // Set only by `open`, which mints a token for the review round it starts;
+  // a bare `watch` belongs to no round and registers without one.
+  reviewToken?: string;
   serverUrl?: string;
   stateDir?: string;
   stateFile?: string;
@@ -1253,12 +1256,16 @@ function buildTargetUrl(
   baseUrl: string,
   openPath: string,
   sessionLabel: string | null = null,
+  reviewToken: string | null = null,
 ): string {
   const url = new URL(baseUrl);
 
   url.pathname = "/";
   url.searchParams.set("path", openPath);
   if (sessionLabel) url.searchParams.set("label", sessionLabel);
+  // A tab opened for this round carries the token in its URL, so it keeps it
+  // across a reload the way it keeps the path and the session label.
+  if (reviewToken) url.searchParams.set("reviewToken", reviewToken);
   return url.toString();
 }
 
@@ -1516,6 +1523,7 @@ async function sendOpenRequestToExistingWindow(
   targetUrl: string,
   openPath: string,
   sessionLabel: string | null,
+  reviewToken: string | null,
 ): Promise<boolean> {
   try {
     const requestUrl = new URL("/api/open-request", baseUrl);
@@ -1526,6 +1534,7 @@ async function sendOpenRequestToExistingWindow(
         path: openPath,
         url: targetUrl,
         ...(sessionLabel ? { label: sessionLabel } : {}),
+        ...(reviewToken ? { reviewToken } : {}),
       }),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
@@ -2446,6 +2455,7 @@ async function runWatch(
       relativePath,
       batchWindowSeconds: options.batchWindowSeconds,
       fromNow: !options.replay,
+      ...(options.reviewToken ? { reviewToken: options.reviewToken } : {}),
       ...(deadline !== undefined ? { deadlineMs: deadline } : {}),
       onPrimed: (primed) => {
         if (typeof primed.instanceId === "string") {
@@ -3147,7 +3157,18 @@ export async function runCli(
         baseUrl = buildPublicBaseUrl(result.server.port);
       }
 
-      const targetUrl = buildTargetUrl(baseUrl, openPath, sessionLabel);
+      const shouldWatch = !options.noWatch && !options.printUrl;
+      // Only an open that watches starts a review round, and the token names
+      // that round: the tab it opens resumes saving for this watch and not
+      // for another session's watcher on the same file.
+      const reviewToken = shouldWatch ? crypto.randomUUID() : null;
+
+      const targetUrl = buildTargetUrl(
+        baseUrl,
+        openPath,
+        sessionLabel,
+        reviewToken,
+      );
       let openMode: OpenMode = "disabled";
       if (!options.noOpen && deps.env.ROUGHDRAFT_NO_OPEN !== "1") {
         openMode = (await sendOpenRequestToExistingWindow(
@@ -3156,6 +3177,7 @@ export async function runCli(
           targetUrl,
           openPath,
           sessionLabel,
+          reviewToken,
         ))
           ? "existing-window"
           : deps.openUrl(targetUrl);
@@ -3174,8 +3196,6 @@ export async function runCli(
         deps.log(targetUrl);
         return 0;
       }
-
-      const shouldWatch = !options.noWatch && !options.printUrl;
 
       if (shouldWatch) {
         if (!json) {
@@ -3198,6 +3218,7 @@ export async function runCli(
           loop: options.loop,
           positionals: [target],
           replay: options.replay,
+          ...(reviewToken ? { reviewToken } : {}),
           serverUrl: liveDevFrontend?.apiUrl ?? undefined,
           stateDir: options.stateDir,
           stateFile: options.stateFile,

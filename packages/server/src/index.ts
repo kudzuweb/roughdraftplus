@@ -84,6 +84,7 @@ interface OpenRequestPayload {
   path?: string;
   url?: string;
   label?: string;
+  reviewToken?: string;
 }
 
 interface RemoteSession {
@@ -113,6 +114,28 @@ const REMOTE_SESSION_KEEPALIVE_MS = 15 * 1000;
 const MAX_OVERALL_COMMENT_LENGTH = 4_000;
 
 let nextOpenRequestClientId = 1;
+
+// The review round a request belongs to, as minted by `roughdraft open`.
+// Returns null when the request names no round — an absent key, or a JSON
+// `null`, which asks for the same tokenless answer — and refuses one that
+// names a round it cannot read: a `reviewToken` sent twice reaches Express as
+// an array, and dropping it would quietly return the tab to counting every
+// watcher on the path, which is the behaviour the round exists to replace.
+// Refusing says so instead, and matches the route's treatment of an
+// unreadable `path`.
+function readReviewToken(
+  value: unknown,
+  res: Response,
+): { reviewToken: string | null } | null {
+  if (value === undefined || value === null) return { reviewToken: null };
+  if (typeof value !== "string") {
+    res.status(400).json({ error: "reviewToken must be a single value" });
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return { reviewToken: trimmed.length > 0 ? trimmed : null };
+}
 
 function remoteSessionVersion(content: string): string {
   const hash = crypto.createHash("sha256").update(content).digest("hex");
@@ -630,9 +653,13 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
         : 0.25;
     const afterSequence =
       typeof req.body?.afterSequence === "number" ? req.body.afterSequence : 0;
+    const watchToken = readReviewToken(req.body?.reviewToken, res);
+    if (!watchToken) return;
+    const reviewToken = watchToken.reviewToken;
 
     const result = await reviewEvents.wait({
       documentPath: target.absolutePath,
+      ...(reviewToken ? { reviewToken } : {}),
       afterSequence: fromNow ? reviewEvents.latestSequence() : afterSequence,
       timeoutMs:
         timeoutSeconds !== undefined ? timeoutSeconds * 1000 : undefined,
@@ -651,6 +678,16 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     const watcherCount = reviewEvents.waiterCountForDocument(
       target.absolutePath,
     );
+    // A tab that was opened for one review round asks about that round, so it
+    // hears only about the watch its own agent registered.
+    const statusToken = readReviewToken(req.query.reviewToken, res);
+    if (!statusToken) return;
+    const watcherCountForReview = statusToken.reviewToken
+      ? reviewEvents.waiterCountForReview(
+          target.absolutePath,
+          statusToken.reviewToken,
+        )
+      : undefined;
     // The tab polls this while a document is open, so the answering instance
     // is how it learns the server was replaced while it had nothing to write.
     res.json({
@@ -659,6 +696,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       relativePath: target.relativePath,
       watching: watcherCount > 0,
       watcherCount,
+      ...(watcherCountForReview !== undefined ? { watcherCountForReview } : {}),
       instanceId,
     });
   });
@@ -803,7 +841,12 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
 
   function writeOpenRequestEvent(
     client: OpenRequestClient,
-    event: { path: string; url: string; label: string | null },
+    event: {
+      path: string;
+      url: string;
+      label: string | null;
+      reviewToken: string | null;
+    },
   ) {
     client.response.write(
       `event: open-request\ndata: ${JSON.stringify({
@@ -864,7 +907,17 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     }
 
     const sessionLabel = normalizeSessionLabel(payload.label);
-    const event = { path: targetPath, url: targetUrl, label: sessionLabel };
+    // The tab keeps this token until the next open replaces it, and lets only
+    // the watch that carries it end the block a delivered handoff put on it.
+    const openToken = readReviewToken(payload.reviewToken, res);
+    if (!openToken) return;
+    const reviewToken = openToken.reviewToken;
+    const event = {
+      path: targetPath,
+      url: targetUrl,
+      label: sessionLabel,
+      reviewToken,
+    };
     const matchingClient = Array.from(openRequestClients)
       .reverse()
       .find((client) => client.path === targetPath);

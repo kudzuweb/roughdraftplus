@@ -600,6 +600,136 @@ describe("createApp", () => {
     await waitingPromise;
   });
 
+  it("counts review watchers of one round apart from the rest on the path", async () => {
+    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
+    const { app } = createApp({
+      staticDirPath: projectDir,
+    });
+
+    const watching = [
+      request(app).post("/api/review-events/watch").send({
+        projectPath: projectDir,
+        path: "draft.md",
+        reviewToken: "round-1",
+        timeoutSeconds: 1,
+        batchWindowSeconds: 0,
+      }),
+      request(app).post("/api/review-events/watch").send({
+        projectPath: projectDir,
+        path: "draft.md",
+        reviewToken: "round-2",
+        timeoutSeconds: 1,
+        batchWindowSeconds: 0,
+      }),
+    ];
+    const watchingPromise = Promise.all(watching);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const roundStatus = await request(app)
+      .get("/api/review-events/status")
+      .query({
+        projectPath: projectDir,
+        path: "draft.md",
+        reviewToken: "round-1",
+      });
+    const pathStatus = await request(app)
+      .get("/api/review-events/status")
+      .query({ projectPath: projectDir, path: "draft.md" });
+
+    expect(roundStatus.status).toBe(200);
+    expect(roundStatus.body).toMatchObject({
+      watching: true,
+      watcherCount: 2,
+      watcherCountForReview: 1,
+    });
+    // A tab that knows no round hears only the count for the whole path.
+    expect(pathStatus.body.watcherCount).toBe(2);
+    expect(pathStatus.body.watcherCountForReview).toBeUndefined();
+
+    await request(app)
+      .post("/api/review-events")
+      .send({ projectPath: projectDir, path: "draft.md" });
+    await watchingPromise;
+  });
+
+  it("refuses a review token it cannot read rather than answering unscoped", async () => {
+    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
+    const { app } = createApp({
+      staticDirPath: projectDir,
+    });
+
+    // Sent twice, a query parameter reaches the route as an array. Answering
+    // without the round would put the tab back on the path-wide count.
+    const duplicated = await request(app)
+      .get("/api/review-events/status")
+      .query(
+        `projectPath=${encodeURIComponent(projectDir)}&path=draft.md&reviewToken=round-1&reviewToken=round-2`,
+      );
+    const watched = await request(app)
+      .post("/api/review-events/watch")
+      .send({
+        projectPath: projectDir,
+        path: "draft.md",
+        reviewToken: ["round-1", "round-2"],
+        timeoutSeconds: 0,
+      });
+    const opened = await request(app)
+      .post("/api/open-request")
+      .send({
+        path: path.join(projectDir, "draft.md"),
+        url: "http://localhost:3000/?path=draft.md",
+        reviewToken: ["round-1", "round-2"],
+      });
+
+    expect(duplicated.status).toBe(400);
+    expect(duplicated.body).toEqual({
+      error: "reviewToken must be a single value",
+    });
+    expect(watched.status).toBe(400);
+    expect(watched.body).toEqual({
+      error: "reviewToken must be a single value",
+    });
+    expect(opened.status).toBe(400);
+    expect(opened.body).toEqual({
+      error: "reviewToken must be a single value",
+    });
+  });
+
+  it("reads a null review token as naming no round at all", async () => {
+    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
+    const { app } = createApp({
+      staticDirPath: projectDir,
+    });
+
+    // A caller that sends the key as null, or as an empty value, asks for the
+    // same answer as one that leaves it out: the tokenless behaviour, not 400.
+    const status = await request(app)
+      .get("/api/review-events/status")
+      .query(
+        `projectPath=${encodeURIComponent(projectDir)}&path=draft.md&reviewToken=`,
+      );
+    const watched = await request(app).post("/api/review-events/watch").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      reviewToken: null,
+      timeoutSeconds: 0,
+      batchWindowSeconds: 0,
+    });
+    const opened = await request(app)
+      .post("/api/open-request")
+      .send({
+        path: path.join(projectDir, "draft.md"),
+        url: "http://localhost:3000/?path=draft.md",
+        reviewToken: null,
+      });
+
+    expect(status.status).toBe(200);
+    expect(status.body.watcherCountForReview).toBeUndefined();
+    expect(watched.status).toBe(200);
+    expect(opened.status).toBe(200);
+    expect(opened.body).toEqual({ delivered: false });
+  });
+
   it("rejects page ids that resolve outside the project directory", async () => {
     const outsideName = `${path.basename(projectDir)}-secret`;
     const outsideFilePath = path.join(

@@ -31,6 +31,9 @@ export interface SegmentedWatchOptions<TEvent = unknown> {
   relativePath: string;
   batchWindowSeconds: number;
   fromNow: boolean;
+  // The review round this watch belongs to, minted by `roughdraft open`, so
+  // the tab it opened can recognise this watch as its own.
+  reviewToken?: string;
   // The instant the watch gives up, as epoch milliseconds. The caller owns it
   // so anything else it bounds by the same deadline agrees to the millisecond.
   // Omitted, the watch polls until the review completes.
@@ -98,6 +101,7 @@ export async function watchReviewEventsInSegments<TEvent = unknown>(
           path: options.relativePath,
           batchWindowSeconds: options.batchWindowSeconds,
           timeoutSeconds: segmentSeconds,
+          ...(options.reviewToken ? { reviewToken: options.reviewToken } : {}),
           ...extra,
         }),
         signal: AbortSignal.timeout(

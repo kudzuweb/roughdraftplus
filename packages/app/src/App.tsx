@@ -28,11 +28,13 @@ import {
   getDocumentEditorViewModeFromLocation,
   getPathLeaf,
   getRequestedPathState,
+  getReviewTokenFromLocation,
   getSessionLabelFromLocation,
   joinPath,
   PREVIEW_PATH,
   ROUGHDRAFT_FLAVORED_MARKDOWN_PATH,
   syncRequestedPathInUrl,
+  syncReviewTokenInUrl,
   syncSessionLabelInUrl,
 } from "./app-navigation";
 import { Button } from "./components/ui/button";
@@ -1498,6 +1500,7 @@ export function PreviewPage() {
         documentCopyPath={PREVIEW_DOCUMENT_PATH}
         documentFilenameLabel={PREVIEW_DOCUMENT_PATH}
         documentSessionLabel={null}
+        documentReviewToken={null}
         showDocumentLocation={false}
         documentEditorViewMode={editorViewMode}
         onDocumentEditorViewModeChange={setEditorViewMode}
@@ -1538,6 +1541,11 @@ export function App() {
   const [serverRestartNotice, setServerRestartNotice] = useState(false);
   const [documentSessionLabel, setDocumentSessionLabel] = useState(
     getSessionLabelFromLocation,
+  );
+  // Which review round this tab belongs to. `roughdraft open` mints it, so a
+  // tab reached any other way has none and the review watch stays unscoped.
+  const [documentReviewToken, setDocumentReviewToken] = useState(
+    getReviewTokenFromLocation,
   );
   const [documentOpenedElsewhere, setDocumentOpenedElsewhere] =
     useState<DocumentOpenedElsewhere | null>(null);
@@ -1622,6 +1630,7 @@ export function App() {
           path?: unknown;
           url?: unknown;
           label?: unknown;
+          reviewToken?: unknown;
           instanceId?: unknown;
         };
         if (typeof payload.url !== "string" || !payload.url.trim()) return;
@@ -1634,6 +1643,10 @@ export function App() {
         const nextSessionLabel =
           typeof payload.label === "string" && payload.label.trim()
             ? payload.label.trim()
+            : null;
+        const nextReviewToken =
+          typeof payload.reviewToken === "string" && payload.reviewToken.trim()
+            ? payload.reviewToken.trim()
             : null;
 
         // A different document opened while this one is under review: warn,
@@ -1649,6 +1662,10 @@ export function App() {
         window.focus();
         setDocumentSessionLabel(nextSessionLabel);
         syncSessionLabelInUrl(nextSessionLabel);
+        // This open is the round the tab now belongs to; the previous round's
+        // token stops matching, so its watcher can no longer resume saving.
+        setDocumentReviewToken(nextReviewToken);
+        syncReviewTokenInUrl(nextReviewToken);
 
         // The same document opened again from a server this tab has not
         // seen: the server was restarted, so adopt it instead of reloading.
@@ -2147,6 +2164,7 @@ export function App() {
         documentCopyPath={documentAbsolutePath}
         documentFilenameLabel={documentFilenameLabel}
         documentSessionLabel={documentSessionLabel}
+        documentReviewToken={documentReviewToken}
         documentEditorViewMode={documentEditorViewMode}
         onDocumentEditorViewModeChange={handleDocumentEditorViewModeChange}
         onSaveDocument={handleSaveDocument}
