@@ -996,8 +996,10 @@ function printCommandHelp(
       "  ROUGHDRAFT_TOKEN      Bearer token sent on remote-document requests.",
     );
     log("                        Required when the hosted server binds to a");
-    log("                        non-loopback host. Must match the value the");
-    log("                        hosted server was started with.");
+    log("                        non-loopback host, where it also gates every");
+    log("                        route that reads or writes a file on that");
+    log("                        host. Must match the value the hosted server");
+    log("                        was started with.");
     log("  ROUGHDRAFT_NO_OPEN    Set to 1 to suppress browser launch.");
     log("  ROUGHDRAFT_WATCH_RECONNECT_SECONDS");
     log("                        Seconds to wait for a stopped server to come");

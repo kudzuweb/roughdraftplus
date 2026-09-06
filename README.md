@@ -148,6 +148,25 @@ my-essay/
 ```
 
 Roughdraft reads and writes the markdown file directly.
+## Network exposure
+By default the server binds loopback only (`127.0.0.1` and `::1`), so nothing outside your machine can reach it and no token or extra configuration is needed.
+
+`ROUGHDRAFT_BIND_HOST` binds other addresses, which is how a document reaches a browser on another machine over something like Tailscale. Any address outside loopback makes the server reachable from another machine, so a non-loopback deployment must set both variables:
+
+```text
+ROUGHDRAFT_BIND_HOST
+  Comma-separated hosts to listen on. Defaults to 127.0.0.1,::1.
+
+ROUGHDRAFT_TOKEN
+  Shared secret. Required whenever ROUGHDRAFT_BIND_HOST names a
+  non-loopback address; the server refuses to start without it.
+```
+
+Every route that reads or writes a file on the host then requires the token as `Authorization: Bearer <ROUGHDRAFT_TOKEN>` and answers `401` without it. That covers the local-document routes as well as `/api/remote-document`, so an exposed server serves no files to an anonymous caller. Give the CLI on the connecting machine the same `ROUGHDRAFT_TOKEN`.
+
+The token protects the transport, not the paths themselves: any caller holding it can name any `projectPath` on the host. Give it only to people you would give a shell.
+
+The browser has no way to send a bearer header on the local-document routes, so remote viewing goes through remote-document mode, whose viewer URL carries the token in the query string. A non-loopback server is not a way to browse the host's files from another machine's browser.
 ## Agent setup
 If you want your local agent to remember the Roughdraft workflow, ask it to read the setup prompt:
 
@@ -225,6 +244,15 @@ ROUGHDRAFT_STATE_FILE
 
 ROUGHDRAFT_STATE_DIR
   Directory containing server.json.
+
+ROUGHDRAFT_BIND_HOST
+  Comma-separated hosts to listen on. Defaults to 127.0.0.1,::1.
+  See "Network exposure" above before setting it.
+
+ROUGHDRAFT_TOKEN
+  Bearer token sent on requests to a server bound to a non-loopback
+  address. Required on the server whenever ROUGHDRAFT_BIND_HOST names
+  one.
 ```
 
 Development-only environment variables:
