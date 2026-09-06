@@ -529,20 +529,43 @@ export function createTurndownService(): TurndownService {
 
 const turndown = createTurndownService();
 
+const atxHeadingLine = /^#{1,6} /;
+// A table row, fence marker, or blockquote line. A heading must not be glued
+// to one of these: the blank line before the heading is what ends that block.
+const structuralBlockLine = /^ {0,3}(?:\||`{3}|~{3}|>)/;
+
+function isRemovableHeadingGap(previous: string, next: string): boolean {
+  if (atxHeadingLine.test(previous)) return true;
+  return atxHeadingLine.test(next) && !structuralBlockLine.test(previous);
+}
+
 /**
  * Collapse runs of 3+ newlines to 2 and remove the blank line that
  * Turndown inserts before/after ATX headings.  This keeps block
  * separation where it matters (between consecutive paragraphs) while
  * producing a more compact output that round-trips with fewer
- * gratuitous whitespace changes.
+ * gratuitous whitespace changes.  The blank line after a heading is
+ * always removed, since a heading is a single-line block and whatever
+ * follows starts fresh.  The blank line before a heading is removed only
+ * when the line above is not a table row, fence marker, or blockquote
+ * line.
  */
 export function normalizeBlockSpacing(md: string): string {
-  let normalized = md.replace(/\n{3,}/g, "\n\n");
-  // Remove blank line immediately before a heading.
-  normalized = normalized.replace(/\n\n(#{1,6} )/g, "\n$1");
-  // Remove blank line immediately after a heading line.
-  normalized = normalized.replace(/(^#{1,6} [^\n]+)\n\n/gm, "$1\n");
-  return normalized;
+  const lines = md.replace(/\n{3,}/g, "\n\n").split("\n");
+  const kept: string[] = [];
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (
+      line === "" &&
+      index > 0 &&
+      index < lines.length - 1 &&
+      isRemovableHeadingGap(lines[index - 1], lines[index + 1])
+    ) {
+      continue;
+    }
+    kept.push(line);
+  }
+  return kept.join("\n");
 }
 
 export function toMarkdown(html: string): string {
