@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { Editor } from "@tiptap/core";
+import { Editor, type JSONContent } from "@tiptap/core";
 import type { CriticComment } from "../src/critic-markup";
 import {
   advanceReviewIdCounters,
@@ -56,6 +56,51 @@ const inlineAttributeEndmatterReplyMarkdown = [
   "    re: c1",
   "",
 ].join("\n");
+
+// What the server leaves on disk after the reviewer clicks Done Reviewing with
+// an overall comment: the same inline attribute document, plus the persisted
+// document-level comment as its only endmatter entry.
+const inlineAttributeOverallCommentMarkdown = [
+  'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+  "",
+  "---",
+  "comments:",
+  "  c2:",
+  "    body: Please prioritize the CLI contract.",
+  "    by: user",
+  '    at: "2026-04-28T12:05:00.000Z"',
+  "",
+].join("\n");
+
+// Mirrors how the rail attaches a new reply: the reply's id joins the anchor's
+// existing commentRef mark rather than getting an anchor of its own.
+function attachCommentToAnchor(
+  node: JSONContent,
+  anchorCommentId: string,
+  commentId: string,
+): JSONContent {
+  const marks = node.marks?.map((mark) => {
+    if (mark.type !== "commentRef") return mark;
+    const ids = (mark.attrs?.commentIds ?? []) as string[];
+    if (!ids.includes(anchorCommentId)) return mark;
+    return {
+      ...mark,
+      attrs: { ...mark.attrs, commentIds: [...ids, commentId] },
+    };
+  });
+
+  return {
+    ...node,
+    ...(marks ? { marks } : {}),
+    ...(node.content
+      ? {
+          content: node.content.map((child) =>
+            attachCommentToAnchor(child, anchorCommentId, commentId),
+          ),
+        }
+      : {}),
+  };
+}
 
 describe("CriticMarkup comments", () => {
   it("preserves YAML frontmatter delimiters and raw table-like YAML text", () => {
@@ -211,6 +256,71 @@ describe("CriticMarkup comments", () => {
     expect(output).not.toContain("* * *");
     expect(output).toContain("body: I can add one from the intro.");
     expect(output).toContain("re: c1");
+  });
+
+  it("leaves inline attributes inline when the endmatter holds only a reply", () => {
+    const { doc, comments } = criticMarkdownToEditorState(
+      inlineAttributeEndmatterReplyMarkdown,
+    );
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain(
+      '{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
+    );
+    expect(output).not.toContain("{#c1}");
+  });
+
+  it("leaves inline attributes inline when the endmatter holds a document-level comment", () => {
+    const { doc, comments } = criticMarkdownToEditorState(
+      inlineAttributeOverallCommentMarkdown,
+    );
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain(
+      '{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
+    );
+    expect(output).not.toContain("{#c1}");
+    expect(output).toContain("body: Please prioritize the CLI contract.");
+  });
+
+  it("saves a document carrying a persisted overall comment unchanged", () => {
+    const { doc, comments } = criticMarkdownToEditorState(
+      inlineAttributeOverallCommentMarkdown,
+    );
+
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(
+      inlineAttributeOverallCommentMarkdown,
+    );
+  });
+
+  it("writes a new reply inline on a document carrying a persisted overall comment", () => {
+    const { doc, comments, idCounters } = criticMarkdownToEditorState(
+      inlineAttributeOverallCommentMarkdown,
+    );
+    const reply = createCriticComment(
+      {
+        content: "Pulled it in.",
+        createdAt: "2026-04-28T12:10:00.000Z",
+        authorType: "ai",
+        parentCommentId: "c1",
+      },
+      { existingComments: comments.values(), idCounters },
+    );
+    comments.set(reply.id, reply);
+
+    const output = editorStateToCriticMarkdown(
+      attachCommentToAnchor(doc, "c1", reply.id),
+      comments,
+      { idCounters },
+    );
+
+    expect(output).toContain(
+      `{>>Pulled it in.<<}{id="${reply.id}" by="AI" at="2026-04-28T12:10:00.000Z" re="c1"}`,
+    );
+    expect(output).not.toContain("body: Pulled it in.");
+    expect(output).toContain("body: Please prioritize the CLI contract.");
   });
 
   it("does not treat horizontal rules and fenced YAML examples as review endmatter", () => {

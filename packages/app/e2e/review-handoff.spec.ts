@@ -73,6 +73,70 @@ test.describe("review handoff", () => {
     });
   });
 
+  test("keeps an inline document inline after the server persists an overall comment @smoke", async ({
+    page,
+    request,
+  }) => {
+    const relativePath = "inline-after-overall-comment.md";
+    const filePath = writeProjectFile(
+      projectDir,
+      relativePath,
+      [
+        "# Inline After Overall Comment",
+        "",
+        'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+        "",
+      ].join("\n"),
+    );
+
+    const persisted = await request.post("/api/review-events", {
+      data: {
+        projectPath: projectDir,
+        path: relativePath,
+        overallComment: "Please prioritize the CLI contract.",
+      },
+    });
+    expect(persisted.status()).toBe(201);
+    expect(readProjectFile(projectDir, relativePath)).toContain(
+      "body: Please prioritize the CLI contract.",
+    );
+
+    // The flip lands on the next save the tab makes, so the document has to be
+    // read back from the bytes the server wrote and then saved again.
+    await openMarkdownFile(page, filePath);
+    const rail = page.getByTestId("document-review-rail");
+    await expect(rail.getByTestId("comment-rail-c1")).toContainText(
+      "Needs a source.",
+    );
+
+    await rail
+      .getByTestId("comment-rail-c1-action-reply")
+      .evaluate((element) => {
+        (element as HTMLButtonElement).click();
+      });
+    await page.getByTestId("comment-rail-c3-editor").fill("Pulled it in.");
+    await page
+      .getByTestId("comment-rail-c3-action-save")
+      .evaluate((element) => {
+        (element as HTMLButtonElement).click();
+      });
+
+    await expect
+      .poll(() => readProjectFile(projectDir, relativePath))
+      .toContain("Pulled it in.");
+    const saved = readProjectFile(projectDir, relativePath);
+    expect(saved).toContain(
+      '{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
+    );
+    expect(saved).not.toContain("{#c1}");
+    expect(saved).toContain('re="c1"');
+    expect(saved).toContain("body: Please prioritize the CLI contract.");
+
+    logE2eEvent("review-handoff.inline-document-survived-overall-comment", {
+      file: relativePath,
+    });
+  });
+
   test("applies pending approvals in the handoff save and resolves only the approved reply @smoke", async ({
     page,
     request,
