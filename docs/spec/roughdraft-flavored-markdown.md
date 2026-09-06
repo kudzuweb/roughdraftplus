@@ -28,6 +28,20 @@ An implementation MUST treat the opening and closing marker pairs as review deli
 
 Implementations MUST treat review markers inside inline code spans and fenced code blocks as literal example text. They MUST NOT create comments, suggestions, or highlights from those code contexts.
 
+## Escaping Delimiters
+
+Marker text has no delimiter of its own, so a review delimiter typed inside a comment, an anchor, or a suggestion would close or reopen the marker that holds it. A backslash immediately before a review delimiter escapes it: the delimiter is literal text and the backslash is not part of the text. The escapable sequences are the ten opening and closing markers `{==`, `==}`, `{>>`, `<<}`, `{++`, `++}`, `{--`, `--}`, `{~~` and `~~}`, the substitution arrow `~>`, and the backslash itself.
+
+```markdown
+Please revisit {==this claim==}{>>Write \{>>a note\<<} to reply.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.
+```
+
+A writer that escapes MUST escape every one of those sequences wherever it writes comment text, anchor text, or suggestion text, and MUST write a literal backslash in that text as `\\`. A reader MUST treat a backslash before one of those sequences as an escape, MUST NOT end a marker at an escaped closing delimiter, and MUST report the text with the escapes removed.
+
+A backslash before anything else is ordinary text and a reader MUST leave it as written, so a document from a writer that did not escape keeps its backslashes. Every escaped form above is also a CommonMark backslash escape, so a Markdown renderer that knows nothing of this specification shows the literal delimiter rather than the backslash.
+
+Escaping is an extension: an implementation MAY instead reject review text containing a raw closing delimiter, as [Comments](#comments) describes.
+
 ## Comments
 
 A comment is written as:
@@ -36,7 +50,7 @@ A comment is written as:
 comment = "{>>" comment-text "<<}" [ metadata ]
 ```
 
-Comment text is plain inline Markdown content. Comment text MUST NOT contain the literal closing delimiter `<<}` unless the implementation defines an escaping extension. Writers that do not implement escaping MUST reject comment or reply text containing raw CriticMarkup close delimiters instead of emitting ambiguous review markup.
+Comment text is plain inline Markdown content. Comment text MUST NOT contain an unescaped literal closing delimiter `<<}`; see [Escaping Delimiters](#escaping-delimiters). Writers that do not implement escaping MUST reject comment or reply text containing raw CriticMarkup close delimiters instead of emitting ambiguous review markup.
 
 A comment MAY appear by itself when the feedback applies to the surrounding paragraph or document:
 
@@ -244,6 +258,7 @@ Round trips SHOULD preserve:
 - Soft line breaks inside paragraphs, blockquotes, and list items.
 - Raw review marker text inside code contexts.
 - Metadata values, including escaped quotes and backslashes.
+- Escaped review delimiters in comment, anchor, and suggestion text.
 - The `counters` map in YAML endmatter.
 - Legacy `comments:` and `suggestions:` maps in YAML endmatter, for documents that carry them.
 
