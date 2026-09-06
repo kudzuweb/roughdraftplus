@@ -34,13 +34,21 @@ function saveCriticMarkdown(markdown: string): string {
 }
 
 // A one-time normalization and a compounding corruption look the same after a
-// single save, so fence fidelity is asserted over a run of them.
-function saveCriticMarkdownRepeatedly(markdown: string, times: number): string {
+// single save, so every round is asserted, and each against the text the saves
+// are meant to settle on rather than against the round before it. Text already
+// at its fixed point cannot tell the two apart on its own, because round one
+// passing then forces the rest; the cases that need the distinction pass a
+// `settled` that differs from `markdown`.
+function expectSavesToSettleOn(
+  markdown: string,
+  settled: string,
+  rounds = 4,
+): void {
   let saved = markdown;
-  for (let round = 0; round < times; round += 1) {
+  for (let round = 1; round <= rounds; round += 1) {
     saved = saveCriticMarkdown(saved);
+    expect(saved, `save ${round}`).toBe(settled);
   }
-  return saved;
 }
 
 function readMarkdownFixture(name: string): string {
@@ -434,8 +442,7 @@ describe("reserialize fidelity", () => {
     ].join("\n");
 
     expect(toMarkdown(toHtml(markdown))).toBe(markdown);
-    expect(saveCriticMarkdown(markdown)).toBe(markdown);
-    expect(saveCriticMarkdownRepeatedly(markdown, 4)).toBe(markdown);
+    expectSavesToSettleOn(markdown, markdown);
   });
 
   it("keeps the comment inside a fenced block on the review rail", () => {
@@ -458,6 +465,9 @@ describe("reserialize fidelity", () => {
     });
   });
 
+  // A guard, not a reproduction: a fence holding only suggestions has no
+  // marker span, so the critic fence rule never fires and this passes on main
+  // too. It is here to catch a later change that starts parsing these.
   it("keeps a multi-line fenced block that holds a literal suggestion", () => {
     const markdown = [
       "```md",
@@ -472,8 +482,54 @@ describe("reserialize fidelity", () => {
     ].join("\n");
 
     expect(toMarkdown(toHtml(markdown))).toBe(markdown);
-    expect(saveCriticMarkdown(markdown)).toBe(markdown);
-    expect(saveCriticMarkdownRepeatedly(markdown, 4)).toBe(markdown);
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  it("grows the fence around an example that opens a fence of its own", () => {
+    const markdown = [
+      "````md",
+      "Documenting a fence:",
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      "",
+      "```text",
+      "inner",
+      "```",
+      "````",
+      "",
+      "Prose after the fence.",
+      "",
+    ].join("\n");
+
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  // The one fence case whose input is not already at its fixed point, so it is
+  // the one that can tell a settling normalization from a corruption that
+  // compounds. Save one drops the fence's trailing blank line; every save after
+  // it has to leave the result alone.
+  it("settles a fence's trailing blank line in one save and then holds", () => {
+    const markdown = [
+      "```text",
+      "code",
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      "",
+      "```",
+      "",
+      "Prose after.",
+      "",
+    ].join("\n");
+    const settled = [
+      "```text",
+      "code",
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      "```",
+      "",
+      "Prose after.",
+      "",
+    ].join("\n");
+
+    expect(settled).not.toBe(markdown);
+    expectSavesToSettleOn(markdown, settled);
   });
 
   it("keeps a fenced block whose comment metadata lives in the endmatter", () => {
@@ -488,8 +544,7 @@ describe("reserialize fidelity", () => {
       commentEndmatter,
     ].join("\n");
 
-    expect(saveCriticMarkdown(markdown)).toBe(markdown);
-    expect(saveCriticMarkdownRepeatedly(markdown, 4)).toBe(markdown);
+    expectSavesToSettleOn(markdown, markdown);
   });
 
   it("round-trips the reflow fixture through the save path", () => {
@@ -499,7 +554,7 @@ describe("reserialize fidelity", () => {
     expect(saved).toBe(markdown);
     expect(saved).not.toMatch(/[ \t]+\n/);
     expect(saved).not.toContain("\u200b");
-    expect(saveCriticMarkdownRepeatedly(markdown, 4)).toBe(markdown);
+    expectSavesToSettleOn(markdown, markdown);
   });
 });
 
