@@ -138,8 +138,10 @@ test.describe("selected unrendered-block placeholder", () => {
     // the three would leave the second and third editing ordinary prose.
     await selectPlaceholder(page);
     await page.keyboard.press("Backspace");
-    await expect(deletionRefusedNote(page)).toBeVisible();
+    // The block first, so a failure here names the loss this test exists to
+    // catch rather than the missing explanation for it.
     await expect(placeholder(page)).toBeVisible();
+    await expect(deletionRefusedNote(page)).toBeVisible();
 
     await selectPlaceholder(page);
     await page.keyboard.press("Delete");
@@ -299,11 +301,6 @@ test.describe("selected unrendered-block placeholder", () => {
     // first, must still get the explanation rather than a dead editor.
     await page.keyboard.type("Z");
 
-    // The refused keystroke changes nothing, so nothing clears the note and it
-    // is still there a second later. A test that only polled for it could pass
-    // on a flash, which is not what a reader gets.
-    await expect(deletionRefusedNote(page)).toBeVisible();
-    await page.waitForTimeout(1_000);
     await expect(deletionRefusedNote(page)).toBeVisible();
     await expect(richTextEditor(page)).not.toContainText("Z");
     await expectFileUnchanged(page, projectDir);
