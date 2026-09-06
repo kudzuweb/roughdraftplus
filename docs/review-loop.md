@@ -70,10 +70,15 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
      loose lists are tightened (#23); runs of blank lines collapse to one outside fences.
   2. Marker and delimiter style: `*` and `+` bullets become `-`; `1)` becomes `1.`; `*em*`
      becomes `_em_` and `__strong__` becomes `**strong**`; a `---` rule becomes `* * *`.
-  3. Syntax-form normalization: setext headings become ATX; indented code blocks become
-     fenced; reference-style links become inline and their definition lines are dropped;
+  3. Syntax-form normalization: setext headings become ATX and trailing `#`s on a heading
+     are dropped; indented code blocks become fenced; reference-style links become inline and
+     their definition lines are dropped; single-quoted link titles become double-quoted;
      footnotes break; backslash escapes are dropped; HTML entities are decoded; inline HTML is
-     converted or unwrapped; tabs become spaces.
+     converted or unwrapped; tabs become spaces; continuation-line indentation collapses to
+     one space; a nested ordered list re-indents from three spaces to two; a nested blockquote
+     `> a\n>> b` gains a bare `>` line before `> > b`; a newline inside a code span becomes a
+     space and double-backtick code-span padding is trimmed. The list is not exhaustive: any
+     hunk that changes only how a construct is spelled belongs here.
   4. Task lists are corrupted: `- [x] Done` splits across lines (#22).
   A diff hunk outside those groups is a reviewer edit.
 - Close the tab (or stop the server) before restoring or editing a reviewed file outside the loop.
