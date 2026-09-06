@@ -370,15 +370,21 @@ function endmatterEntryForChange(
   };
 }
 
+function reviewMetadataLivesInEndmatter(parsed: ParsedEndmatter): boolean {
+  return (
+    parsed.data !== null &&
+    ("comments" in parsed.data || "suggestions" in parsed.data)
+  );
+}
+
 function serializeReviewEndmatter(
   existingEndmatter: string | null,
   comments: Map<string, CriticComment>,
   changes: Map<string, CriticChangeAttrs>,
   idCounters?: ReviewIdCounters,
 ): string | null {
-  if (!existingEndmatter) return null;
-
   const parsed = parseReviewEndmatter(existingEndmatter);
+  const useEndmatter = reviewMetadataLivesInEndmatter(parsed);
   const commentEntries = new Map<string, Record<string, unknown>>();
   const suggestionEntries = new Map<string, Record<string, unknown>>();
   const counters = recordedReviewIdCounters(
@@ -398,21 +404,27 @@ function serializeReviewEndmatter(
     ]),
   );
 
-  for (const comment of comments.values()) {
-    commentEntries.set(
-      comment.id,
-      endmatterEntryForComment(comment, parsed.comments.get(comment.id)),
-    );
-  }
+  if (useEndmatter) {
+    for (const comment of comments.values()) {
+      commentEntries.set(
+        comment.id,
+        endmatterEntryForComment(comment, parsed.comments.get(comment.id)),
+      );
+    }
 
-  for (const change of changes.values()) {
-    suggestionEntries.set(
-      change.changeId,
-      endmatterEntryForChange(change, parsed.suggestions.get(change.changeId)),
-    );
+    for (const change of changes.values()) {
+      suggestionEntries.set(
+        change.changeId,
+        endmatterEntryForChange(
+          change,
+          parsed.suggestions.get(change.changeId),
+        ),
+      );
+    }
   }
 
   if (
+    existingEndmatter &&
     areEndmatterMapsEqual(parsed.comments, commentEntries) &&
     areEndmatterMapsEqual(parsed.suggestions, suggestionEntries) &&
     areReviewIdCountersEqual(parsed.counters, counters)
@@ -423,11 +435,15 @@ function serializeReviewEndmatter(
   const data: Record<string, unknown> = { ...(parsed.data ?? {}) };
   if (commentEntries.size > 0) {
     data.comments = Object.fromEntries(commentEntries);
+  } else if (useEndmatter && "comments" in data) {
+    data.comments = {};
   } else {
     delete data.comments;
   }
   if (suggestionEntries.size > 0) {
     data.suggestions = Object.fromEntries(suggestionEntries);
+  } else if (useEndmatter && "suggestions" in data) {
+    data.suggestions = {};
   } else {
     delete data.suggestions;
   }
@@ -1660,7 +1676,9 @@ export function editorStateToCriticMarkdown(
     (doc as JSONContent & { yamlEndmatter?: string }).yamlEndmatter ??
     null;
   const changes = collectCriticChangesFromDoc(doc);
-  const useEndmatter = Boolean(sourceEndmatter);
+  const useEndmatter = reviewMetadataLivesInEndmatter(
+    parseReviewEndmatter(sourceEndmatter),
+  );
   addCriticCommentRule(service, comments, useEndmatter);
   addCriticChangeRule(service, comments, useEndmatter);
   addCriticCodeBlockRule(service);

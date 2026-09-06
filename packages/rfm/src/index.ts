@@ -1393,11 +1393,15 @@ function writeRoughdraftEndmatter(
   const data: Record<string, unknown> = { ...(existing.data ?? {}) };
   if (endmatter.comments.size > 0) {
     data.comments = Object.fromEntries(endmatter.comments);
+  } else if (existing.data && "comments" in existing.data) {
+    data.comments = {};
   } else {
     delete data.comments;
   }
   if (endmatter.suggestions.size > 0) {
     data.suggestions = Object.fromEntries(endmatter.suggestions);
+  } else if (existing.data && "suggestions" in existing.data) {
+    data.suggestions = {};
   } else {
     delete data.suggestions;
   }
