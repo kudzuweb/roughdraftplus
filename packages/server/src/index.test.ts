@@ -1632,3 +1632,386 @@ describe("createApp", () => {
     });
   });
 });
+
+describe("non-loopback bind guard", () => {
+  const token = "guard-token";
+  let projectDir: string;
+  let homeDir: string;
+
+  beforeEach(() => {
+    projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-guard-"));
+    homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-guard-home-"));
+    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
+    fs.writeFileSync(path.join(projectDir, "untitled-1.md"), "# Page\n");
+  });
+
+  afterEach(() => {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+    fs.rmSync(homeDir, { recursive: true, force: true });
+  });
+
+  // Every route that reads or writes a file the caller names, in an order that
+  // leaves each probe's fixture intact for the ones after it. The guard is one
+  // decision applied to the whole list, so the list is what the tests drive.
+  // `/api/markdown-file/events` is covered by the live-server test below
+  // instead, because its authorized answer is an open SSE stream.
+  function fileTouchingProbes(
+    app: ReturnType<typeof createApp>["app"],
+    headers: Record<string, string>,
+  ) {
+    return [
+      {
+        name: "GET /api/pages",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .get("/api/pages")
+            .set(headers)
+            .query({ projectPath: projectDir }),
+      },
+      {
+        name: "GET /api/pages/:id",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .get("/api/pages/untitled-1")
+            .set(headers)
+            .query({ projectPath: projectDir }),
+      },
+      {
+        name: "PUT /api/pages/:id",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .put("/api/pages/untitled-1")
+            .set(headers)
+            .query({ projectPath: projectDir })
+            .send({ content: "# Page edited\n" }),
+      },
+      {
+        name: "POST /api/pages",
+        okStatus: 201,
+        run: () =>
+          request(app)
+            .post("/api/pages")
+            .set(headers)
+            .send({ title: "New", projectPath: projectDir }),
+      },
+      {
+        name: "GET /api/markdown-file",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .get("/api/markdown-file")
+            .set(headers)
+            .query({ projectPath: projectDir, path: "draft.md" }),
+      },
+      {
+        name: "PUT /api/markdown-file",
+        okStatus: 409,
+        run: () =>
+          request(app)
+            .put("/api/markdown-file")
+            .set(headers)
+            .query({ projectPath: projectDir, path: "draft.md" })
+            .send({ content: "# Rewritten\n", expectedVersion: "stale" }),
+      },
+      {
+        name: "GET /api/review-index",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .get("/api/review-index")
+            .set(headers)
+            .query({ projectPath: projectDir, path: "draft.md" }),
+      },
+      {
+        name: "POST /api/review-events",
+        okStatus: 201,
+        run: () =>
+          request(app)
+            .post("/api/review-events")
+            .set(headers)
+            .query({ projectPath: projectDir, path: "draft.md" })
+            .send({}),
+      },
+      {
+        name: "POST /api/review-events/watch",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .post("/api/review-events/watch")
+            .set(headers)
+            .query({ projectPath: projectDir, path: "draft.md" })
+            .send({ timeoutSeconds: 0.05 }),
+      },
+      {
+        name: "GET /api/review-events/status",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .get("/api/review-events/status")
+            .set(headers)
+            .query({ projectPath: projectDir, path: "draft.md" }),
+      },
+      {
+        name: "GET /api/files",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .get("/api/files")
+            .set(headers)
+            .query({ projectPath: projectDir, path: "draft.md" }),
+      },
+      {
+        name: "POST /api/assets",
+        okStatus: 201,
+        run: () =>
+          request(app)
+            .post("/api/assets")
+            .set(headers)
+            .send({
+              projectPath: projectDir,
+              filename: "pixel.png",
+              dataBase64: Buffer.from("pixel").toString("base64"),
+            }),
+      },
+      {
+        name: "DELETE /api/pages/:id",
+        okStatus: 200,
+        run: () =>
+          request(app)
+            .delete("/api/pages/untitled-1")
+            .set(headers)
+            .query({ projectPath: projectDir }),
+      },
+    ];
+  }
+
+  it("answers 401 on every file-touching route when the bind is non-loopback and no token is sent", async () => {
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      bindHosts: ["0.0.0.0"],
+      remoteDocumentToken: token,
+    });
+
+    for (const probe of fileTouchingProbes(app, {})) {
+      const response = await probe.run();
+      expect(response.status, `${probe.name} must be guarded`).toBe(401);
+    }
+
+    // Nothing the sweep sent reached disk.
+    expect(fs.readFileSync(path.join(projectDir, "draft.md"), "utf-8")).toBe(
+      "# Draft\n",
+    );
+    expect(fs.existsSync(path.join(projectDir, "untitled-1.md"))).toBe(true);
+    expect(fs.existsSync(path.join(projectDir, "untitled-2.md"))).toBe(false);
+  });
+
+  it("serves every file-touching route on a non-loopback bind when the token is sent", async () => {
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      bindHosts: ["0.0.0.0"],
+      remoteDocumentToken: token,
+    });
+
+    for (const probe of fileTouchingProbes(app, {
+      Authorization: `Bearer ${token}`,
+    })) {
+      const response = await probe.run();
+      expect(response.status, `${probe.name} must accept the token`).toBe(
+        probe.okStatus,
+      );
+    }
+  });
+
+  it("rejects a wrong token on a non-loopback bind", async () => {
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      bindHosts: ["0.0.0.0"],
+      remoteDocumentToken: token,
+    });
+
+    const response = await request(app)
+      .get("/api/markdown-file")
+      .set({ Authorization: "Bearer wrong-token" })
+      .query({ projectPath: projectDir, path: "draft.md" });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("refuses every file-touching route on a non-loopback bind with no token configured", async () => {
+    // Fail closed: no token means no caller can authenticate, so an exposed
+    // server serves no files at all rather than serving them to everyone.
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      bindHosts: ["0.0.0.0"],
+    });
+
+    for (const probe of fileTouchingProbes(app, {})) {
+      const response = await probe.run();
+      expect(response.status, `${probe.name} must fail closed`).toBe(401);
+    }
+  });
+
+  it("leaves the loopback default unguarded with no token and no configuration", async () => {
+    const { app } = createApp({ homeDir, staticDirPath: projectDir });
+
+    for (const probe of fileTouchingProbes(app, {})) {
+      const response = await probe.run();
+      expect(response.status, `${probe.name} must stay open on loopback`).toBe(
+        probe.okStatus,
+      );
+    }
+  });
+
+  it("leaves the loopback default unguarded even when a token is configured", async () => {
+    // A token configured for the remote-document routes must not start
+    // demanding auth from the local browser on the default bind.
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      remoteDocumentToken: token,
+    });
+
+    for (const probe of fileTouchingProbes(app, {})) {
+      const response = await probe.run();
+      expect(response.status, `${probe.name} must stay open on loopback`).toBe(
+        probe.okStatus,
+      );
+    }
+  });
+
+  it("treats an explicit loopback bind list as loopback", async () => {
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      bindHosts: ["127.0.0.1", "::1"],
+      remoteDocumentToken: token,
+    });
+
+    const response = await request(app)
+      .get("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "draft.md" });
+
+    expect(response.status).toBe(200);
+  });
+
+  it("guards a mixed bind list that contains one non-loopback host", async () => {
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      bindHosts: ["127.0.0.1", "100.64.0.1"],
+      remoteDocumentToken: token,
+    });
+
+    const response = await request(app)
+      .get("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "draft.md" });
+
+    expect(response.status).toBe(401);
+  });
+
+  it("guards a live server listening on a real non-loopback address", async () => {
+    // The guard is a network-boundary behavior, so this exercises a real
+    // socket bound to a real non-loopback address rather than an in-process
+    // app object.
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      bindHosts: ["0.0.0.0"],
+      remoteDocumentToken: token,
+    });
+
+    const server = await new Promise<Server>((resolve) => {
+      const listening = app.listen(0, "0.0.0.0", () => resolve(listening));
+    });
+
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const query = `projectPath=${encodeURIComponent(projectDir)}&path=draft.md`;
+      const fileUrl = `http://127.0.0.1:${port}/api/markdown-file?${query}`;
+
+      const anonymousRead = await fetch(fileUrl);
+      expect(anonymousRead.status).toBe(401);
+      await anonymousRead.text();
+
+      const anonymousWrite = await fetch(fileUrl, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: "# Overwritten\n" }),
+      });
+      expect(anonymousWrite.status).toBe(401);
+      await anonymousWrite.text();
+      expect(fs.readFileSync(path.join(projectDir, "draft.md"), "utf-8")).toBe(
+        "# Draft\n",
+      );
+
+      const anonymousStream = await fetch(
+        `http://127.0.0.1:${port}/api/markdown-file/events?${query}`,
+      );
+      expect(anonymousStream.status).toBe(401);
+      await anonymousStream.text();
+
+      const authorizedRead = await fetch(fileUrl, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      expect(authorizedRead.status).toBe(200);
+      expect(
+        ((await authorizedRead.json()) as { content: string }).content,
+      ).toBe("# Draft\n");
+
+      const authorizedStream = await fetch(
+        `http://127.0.0.1:${port}/api/markdown-file/events?${query}`,
+        { headers: { Authorization: `Bearer ${token}` } },
+      );
+      expect(authorizedStream.status).toBe(200);
+      await authorizedStream.body?.cancel();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("keeps a live loopback server open with no token", async () => {
+    const { app } = createApp({ homeDir, staticDirPath: projectDir });
+
+    const server = await new Promise<Server>((resolve) => {
+      const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+    });
+
+    try {
+      const port = (server.address() as AddressInfo).port;
+      const query = `projectPath=${encodeURIComponent(projectDir)}&path=draft.md`;
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/markdown-file?${query}`,
+      );
+
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as { content: string }).content).toBe(
+        "# Draft\n",
+      );
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("still guards the remote-document routes on a loopback bind", async () => {
+    // The bind guard is additive: a configured token keeps gating the
+    // remote-document routes on every bind, as it did before.
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+      remoteDocumentToken: token,
+    });
+
+    const response = await request(app)
+      .post("/api/remote-document")
+      .send({ sessionId: "s1", originPath: "/a.md", content: "x" });
+
+    expect(response.status).toBe(401);
+  });
+});

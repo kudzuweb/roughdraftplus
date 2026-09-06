@@ -8,10 +8,16 @@ import {
   appendRoughdraftDocumentComment,
   extractRoughdraftReviewIndex,
 } from "@roughdraft/rfm";
-import express, { type Express, type Request, type Response } from "express";
+import express, {
+  type Express,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import {
   hasNonLoopbackHost,
   ROUGHDRAFT_DEFAULT_PORT,
+  ROUGHDRAFT_LOOPBACK_HOSTS,
   ROUGHDRAFT_PUBLIC_HOST,
   resolveBindHosts,
 } from "./network.js";
@@ -62,6 +68,11 @@ interface CreateAppOptions {
   projectDir?: string;
   serverRoot?: string;
   homeDir?: string;
+  // The hosts the server was told to listen on. Any host outside loopback makes
+  // every file-touching route reachable from another machine, so the token
+  // guard switches on from this and never from a request header, which the
+  // caller controls. Defaults to the loopback-only bind.
+  bindHosts?: readonly string[];
   staticDirPath?: string;
   packageJsonPath?: string;
   fetchImpl?: typeof fetch;
@@ -421,6 +432,9 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     options.remoteDocumentToken.length > 0
       ? options.remoteDocumentToken
       : null;
+  const bindIsNonLoopback = hasNonLoopbackHost(
+    options.bindHosts ?? ROUGHDRAFT_LOOPBACK_HOSTS,
+  );
   const app = express();
   const openRequestClients = new Set<OpenRequestClient>();
   const reviewEvents = new ReviewEventQueue();
@@ -445,17 +459,21 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     return true;
   }
 
-  function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
-    if (!remoteDocumentToken) return true;
+  function hasValidBearerToken(req: Request): boolean {
+    if (!remoteDocumentToken) return false;
 
     const header =
       typeof req.headers.authorization === "string"
         ? req.headers.authorization
         : "";
-    if (header.startsWith("Bearer ")) {
-      const supplied = header.slice("Bearer ".length).trim();
-      if (supplied === remoteDocumentToken) return true;
-    }
+    if (!header.startsWith("Bearer ")) return false;
+
+    return header.slice("Bearer ".length).trim() === remoteDocumentToken;
+  }
+
+  function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
+    if (!remoteDocumentToken) return true;
+    if (hasValidBearerToken(req)) return true;
 
     const acceptsQueryToken =
       req.method === "GET" &&
@@ -551,6 +569,47 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     }
 
     return { relativePath, absolutePath, projectDir };
+  }
+
+  // --- Non-loopback bind guard ---
+
+  // Every route below reads or writes a file the caller names through
+  // `projectPath`, so on a bind another machine can reach, each one is a remote
+  // file-read or file-write primitive. Mounted as prefixes, so subpaths such as
+  // `/api/pages/:id` and `/api/markdown-file/events` are covered with the
+  // parents. The remote-document routes carry their own token check and are not
+  // listed here.
+  const FILE_TOUCHING_ROUTE_PREFIXES = [
+    "/api/pages",
+    "/api/markdown-file",
+    "/api/review-index",
+    "/api/review-events",
+    "/api/files",
+    "/api/assets",
+  ];
+
+  // On the loopback default this is a pass-through, so no existing workflow
+  // gains a token or a setting. On a non-loopback bind the token is required;
+  // when none is configured nothing can satisfy it, and refusing every request
+  // is the safe end of that.
+  function requireTokenOnNonLoopbackBind(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): void {
+    if (!bindIsNonLoopback || hasValidBearerToken(req)) {
+      next();
+      return;
+    }
+
+    res.status(401).json({
+      error:
+        "Roughdraft is bound to a non-loopback address, so routes that read or write files require a token. Send Authorization: Bearer <ROUGHDRAFT_TOKEN>, or unset ROUGHDRAFT_BIND_HOST to return to the loopback-only bind.",
+    });
+  }
+
+  for (const prefix of FILE_TOUCHING_ROUTE_PREFIXES) {
+    app.use(prefix, requireTokenOnNonLoopbackBind);
   }
 
   // --- API routes ---
@@ -1352,9 +1411,9 @@ export async function createServer(
     throw new Error(
       [
         `Roughdraft refuses to bind ${bindHosts.join(", ")} without a token.`,
-        "Non-loopback bindings expose the remote-document endpoints, which can",
-        "rewrite files on every connected CLI machine. Set ROUGHDRAFT_TOKEN to",
-        "a strong secret and pass the same value to your CLI before retrying,",
+        "Non-loopback bindings expose every route that reads or writes files on",
+        "this host, including the remote-document endpoints. Set ROUGHDRAFT_TOKEN",
+        "to a strong secret and pass the same value to your CLI before retrying,",
         "or remove ROUGHDRAFT_BIND_HOST to keep loopback-only.",
       ].join(" "),
     );
@@ -1363,6 +1422,7 @@ export async function createServer(
   const { app } = createApp({
     port,
     projectDir,
+    bindHosts,
     remoteDocumentToken:
       remoteDocumentToken.length > 0 ? remoteDocumentToken : undefined,
   });
