@@ -277,6 +277,25 @@ test.describe("selected unrendered-block placeholder", () => {
     }
   });
 
+  test("raises the note when typing is the first thing refused", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, writeProtectedFile(projectDir));
+    await expect(placeholder(page)).toBeVisible();
+    await chooseEditingMode(page);
+
+    await selectPlaceholder(page);
+    await expect(deletionRefusedNote(page)).toBeHidden();
+
+    // A reader who selects the block and types, without pressing Backspace
+    // first, must still get the explanation rather than a dead editor.
+    await page.keyboard.type("Zq");
+
+    await expect(deletionRefusedNote(page)).toBeVisible();
+    await expect(richTextEditor(page)).not.toContainText("Zq");
+    await expectFileUnchanged(page, projectDir);
+  });
+
   test("keeps refusing while the placeholder stays selected", async ({
     page,
   }) => {
@@ -293,8 +312,14 @@ test.describe("selected unrendered-block placeholder", () => {
     // tells the reader why nothing is happening.
     await page.keyboard.type("ABCDE");
     await expect(richTextEditor(page)).not.toContainText("ABCDE");
-    await expect(deletionRefusedNote(page)).toBeVisible();
     await expectFileUnchanged(page, projectDir);
+
+    // The note has to be true while it is on screen, and it now claims typing
+    // will not land, so it has to still be there after the typing it describes.
+    await expect(deletionRefusedNote(page)).toBeVisible();
+    await expect(deletionRefusedNote(page)).toContainText(
+      "Nothing you type lands while it is selected",
+    );
 
     // Moving the selection off the block is what lets typing land again.
     await page.keyboard.press("ArrowUp");
