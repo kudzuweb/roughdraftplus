@@ -783,6 +783,27 @@ describe("escaped review delimiters", () => {
     ]);
   });
 
+  it("accepts an escaped close delimiter in reply text and rejects a raw one", () => {
+    const markdown = `Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.\n`;
+    const reply = (message: string) =>
+      appendRoughdraftReply(markdown, {
+        parentId: "c1",
+        message,
+        at: "2026-04-28T12:10:00.000Z",
+      });
+
+    // The form `prompt.md` tells an agent to write.
+    const updated = reply(String.raw`Write \{>>a note\<<} to reply.`);
+    expect(extractRoughdraftReviewIndex(updated).items).toMatchObject([
+      { id: "c1" },
+      { id: "c2", text: "Write {>>a note<<} to reply." },
+    ]);
+
+    expect(() => reply("Write {>>a note<<} to reply.")).toThrow(
+      /unescaped CriticMarkup close delimiter/,
+    );
+  });
+
   it("appends a reply after a comment whose body carries escapes", () => {
     const markdown = `Please revisit {==this claim==}{>>${escapedText}<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.\n`;
 

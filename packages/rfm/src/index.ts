@@ -94,7 +94,7 @@ interface Metadata {
   endOffset: number;
 }
 
-const CRITICMARKUP_CLOSE_DELIMITER_PATTERN = /<<}|\+\+}|--}|~~}|==}/;
+const CRITICMARKUP_CLOSE_DELIMITERS = ["<<}", "++}", "--}", "~~}", "==}"];
 // A delimiter written with a leading backslash is literal text, not a marker
 // boundary. See the Escaping Delimiters section of the RFM spec.
 const CRITICMARKUP_ESCAPED_DELIMITER_PATTERN =
@@ -701,13 +701,17 @@ export function appendRoughdraftReply(
   );
 }
 
+// Reply text is written between delimiters verbatim, so a raw closing delimiter
+// would end the comment early. An escaped one is literal text the reader strips
+// again, which is what the shipped agent prompt tells an agent to write.
 function assertSafeCommentBodyText(message: string): void {
-  const match = message.match(CRITICMARKUP_CLOSE_DELIMITER_PATTERN);
-  if (!match) return;
+  for (const delimiter of CRITICMARKUP_CLOSE_DELIMITERS) {
+    if (indexOfUnescaped(message, delimiter, 0) === -1) continue;
 
-  throw new Error(
-    `Reply text contains CriticMarkup close delimiter "${match[0]}". Rewrite the reply without raw CriticMarkup delimiters.`,
-  );
+    throw new Error(
+      `Reply text contains an unescaped CriticMarkup close delimiter "${delimiter}". Write it as "\\${delimiter}" or rewrite the reply without it.`,
+    );
+  }
 }
 
 export function markRoughdraftResolved(
