@@ -276,7 +276,7 @@ Remove {--vague phrasing--}{id="s2" by="user" at="2026-04-28T12:13:00.000Z"}.
 Use {~~rough~>specific~~}{id="s3" by="AI" at="2026-04-28T12:14:00.000Z"} wording.
 ```
 
-Ids are never reused within a document. Once a comment or suggestion has been removed, the endmatter records the highest number allocated for that family in a `counters` map, whether the review markup itself is inline or endmatter-backed, and new ids are allocated above it. This map is the only review metadata Roughdraft writes to endmatter:
+Ids are never reused within a document. Once a comment or suggestion has been removed, the endmatter records the highest number allocated for that family in a `counters` map, whether the review markup itself is inline or endmatter-backed, and new ids are allocated above it. Roughdraft writes two things to endmatter and nothing else: this map, and the reviewer's overall Done Reviewing comment as a document-level `comments:` entry with a `body` and no `re` (see the `roughdraft open` section above), which the agent acts on and then marks `status: resolved` or removes:
 
 ```markdown
 ---

@@ -44,6 +44,23 @@ A comment MAY appear by itself when the feedback applies to the surrounding para
 Add one concrete launch example here.{>>This should come from the customer story.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}
 ```
 
+### Document-Level Comments
+
+A document-level comment applies to the whole document and has no position in the body. It is the one kind of comment written to final YAML endmatter: an entry under `comments:` with a `body`, `by`, and `at`, no `re`, and no matching reference anywhere in the body text. Roughdraft's server writes one for the reviewer's overall comment when the reviewer clicks Done Reviewing with a message:
+
+```markdown
+Body text.
+
+---
+comments:
+  c1:
+    body: Please prioritize the CLI contract.
+    by: user
+    at: "2026-04-28T12:00:00.000Z"
+```
+
+A document-level comment counts as unresolved until it carries `status: resolved` or is removed. Readers MUST report it as a review item; writers MUST NOT add `re` to it or move it into the body.
+
 ## Anchored Comments
 
 An anchored comment is a highlight immediately followed by one or more comment blocks:
@@ -167,11 +184,11 @@ suggestions:
 
 In that form, root comment bodies and suggestion text stay inline while their `by` and `at` live under `comments:` or `suggestions:`, and a reply lives entirely in endmatter as an entry with `body` and `re`. Roughdraft does not display endmatter replies.
 
-Readers MUST accept this form and MUST preserve its `comments:` and `suggestions:` maps on items they are not rewriting. Writers MUST NOT emit new comments, replies, or suggestions in it. For compatibility, readers MAY also accept legacy comment metadata of the form `{@id:c1; by:AI; at:2026-04-28T12:00:00.000Z@}`.
+Readers MUST accept this form and MUST preserve its `comments:` and `suggestions:` maps on items they are not rewriting. Writers MUST NOT emit new body comments, replies, or suggestions in it. The only endmatter entries a writer emits are the `counters` map ([Id Counters](#id-counters)) and a [document-level comment](#document-level-comments); neither is legacy. For compatibility, readers MAY also accept legacy comment metadata of the form `{@id:c1; by:AI; at:2026-04-28T12:00:00.000Z@}`.
 
 ## Id Counters
 
-Agents track threads across review rounds by id, so an id MUST stay unique for the life of a document. The ids still present cannot show which ids have been removed, so the endmatter records the highest number ever allocated for each id family in a `counters` map. This map is the only review metadata a writer places in endmatter:
+Agents track threads across review rounds by id, so an id MUST stay unique for the life of a document. The ids still present cannot show which ids have been removed, so the endmatter records the highest number ever allocated for each id family in a `counters` map. This map and a [document-level comment](#document-level-comments) are the only review metadata a writer places in endmatter:
 
 ```markdown
 Body text.
