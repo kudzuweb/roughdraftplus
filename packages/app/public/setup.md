@@ -135,7 +135,7 @@ Deletion: `{--old text--}`
 Substitution: `{~~old~>new~~}`
 Highlight: `{==text==}`
 
-When you add a new comment or suggested change, use the extended Roughdraft format with a compact inline reference such as `{#c1}` or `{#s1}`, then add metadata in final YAML endmatter. Generate a stable document-local id (`c1`, `c2`, etc. for comments; `s1`, `s2`, etc. for suggestions), set `by` to your agent or author label, set `at` to the current ISO timestamp, and set `re` when replying to an existing comment or suggestion.
+When you add a new comment or suggested change, use the extended Roughdraft format with a compact inline reference such as `{#c1}` or `{#s1}`, then add metadata in final YAML endmatter. Generate a stable document-local id (`c1`, `c2`, etc. for comments; `s1`, `s2`, etc. for suggestions), set `by` to your agent or author label, set `at` to the current ISO timestamp, and set `re` when replying to an existing comment or suggestion. Never reuse an id the document has already used: allocate above every id present and above `counters.comments` or `counters.suggestions` in the endmatter when that map exists, and raise the counter to the id you allocated.
 
 Roughdraft may already have inline attribute blocks after comments and suggestions from older documents. Preserve these attributes unless you are intentionally removing the associated comment or suggestion. For new feedback, prefer compact references plus YAML endmatter.
 
@@ -229,6 +229,8 @@ by  Author or agent label
 at  ISO timestamp
 re  Parent comment or suggestion id for replies
 ```
+
+A top-level `counters` map in the endmatter (`comments`, `suggestions`) records the highest id number ever allocated for each family so removed ids are never reused. Allocate above it and never lower it.
 
 CriticMarkup inside fenced code blocks is literal example text. Do not treat it as review feedback.
 

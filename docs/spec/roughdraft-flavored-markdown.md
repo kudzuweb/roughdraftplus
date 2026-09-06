@@ -226,9 +226,27 @@ comments:
     at: "2026-04-28T12:00:00.000Z"
 ```
 
-Implementations SHOULD generate simple document-local ids. Roughdraft uses `c1`, `c2`, and so on for comments and `s1`, `s2`, and so on for suggestions. Implementations MUST preserve unknown valid attributes or YAML keys when possible, but they MUST NOT require unknown metadata for correct review rendering.
+Implementations SHOULD generate simple document-local ids. Roughdraft uses `c1`, `c2`, and so on for comments and `s1`, `s2`, and so on for suggestions. A writer MUST NOT give a new comment or suggestion an id the document has already used, even after every item that carried it has been removed; the [Id Counters](#id-counters) section defines how that is recorded. Implementations MUST preserve unknown valid attributes or YAML keys when possible, but they MUST NOT require unknown metadata for correct review rendering.
 
 For compatibility, readers MAY accept legacy comment metadata of the form `{@id:c1; by:AI; at:2026-04-28T12:00:00.000Z@}`. Writers SHOULD emit compact references plus YAML endmatter for new review data.
+
+## Id Counters
+
+Agents track threads across review rounds by id, so an id MUST stay unique for the life of a document. The ids still present cannot show which ids have been removed, so the endmatter records the highest number ever allocated for each id family in a `counters` map:
+
+```markdown
+Body text.
+
+---
+counters:
+  comments: 9
+  suggestions: 2
+```
+
+- `counters.comments` is the highest `n` ever allocated as a `c<n>` comment id, and `counters.suggestions` is the highest `n` ever allocated as an `s<n>` suggestion id. Each value is a non-negative integer, and a missing family counts as `0`. Ids that do not follow the `c<n>` or `s<n>` form are not tracked.
+- The effective counter for a family is the greater of the recorded value and the highest id of that family present anywhere in the document, including `comments:` and `suggestions:` entries. Writers MUST allocate new ids above the effective counter.
+- Writers MUST record a family's counter once it exceeds the highest id of that family still present, and MUST NOT lower or drop a recorded counter afterwards. A writer MAY leave a counter unrecorded while every allocated id is still present, since the ids imply it; that keeps a save of an untouched document byte-identical.
+- Readers MUST treat a final YAML block containing a valid `counters` map as review endmatter even when it has no `comments:` or `suggestions:` entries and the body has no compact references, so a document whose review items have all been removed keeps its counters.
 
 ## Threads
 
@@ -264,6 +282,7 @@ Round trips SHOULD preserve:
 - Soft line breaks inside paragraphs, blockquotes, and list items.
 - Raw review marker text inside code contexts.
 - Metadata values, including escaped quotes and backslashes.
+- The `counters` map in YAML endmatter.
 
 When importing a valid comment or suggestion without metadata, an implementation MAY synthesize missing `id`, `by`, and `at` values on write.
 

@@ -43,9 +43,29 @@
       "items": {
         "$ref": "#/$defs/suggestion"
       }
+    },
+    "counters": {
+      "$ref": "#/$defs/counters"
     }
   },
   "$defs": {
+    "counters": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The effective id counters for the document: the highest number ever allocated for each id family, mirroring the `counters` map in YAML endmatter raised to the ids present. New c<n> and s<n> ids are allocated above these values.",
+      "properties": {
+        "comments": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The highest n ever allocated as a c<n> comment id."
+        },
+        "suggestions": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "The highest n ever allocated as an s<n> suggestion id."
+        }
+      }
+    },
     "id": {
       "type": "string",
       "minLength": 1
