@@ -750,8 +750,8 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     ).toBe(input);
   });
 
-  // Each removed id is reserved in the counters endmatter so it is never
-  // reused (#10); that is why every collapsed document below carries one.
+  // Each removed id stays reserved in the counters endmatter so it is never
+  // reused; that is why every collapsed document below carries one.
   describe("pending mark decisions applied to a Markdown string", () => {
     const insertion =
       'Keep {++clear wording++}{id="s1" by="AI" at="2024-01-15T10:30:00.000Z"} here.\n';
