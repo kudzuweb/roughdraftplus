@@ -14,7 +14,8 @@ import type {
   Mark as ProseMirrorMark,
   Node as ProseMirrorNode,
 } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import type { EditorState, Transaction } from "@tiptap/pm/state";
+import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Transform } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ReactNodeViewRenderer } from "@tiptap/react";
@@ -25,7 +26,10 @@ import {
   rawMarkdownBlockAttribute,
   rawMarkdownBlockTypeAttribute,
 } from "./markdown";
-import { UnrenderedBlockPlaceholder } from "./UnrenderedBlockPlaceholder";
+import {
+  rawMarkdownBlockDeletionRefusedDecoration,
+  UnrenderedBlockPlaceholder,
+} from "./UnrenderedBlockPlaceholder";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -915,6 +919,103 @@ const RawMarkdownBlock = Node.create({
   },
 });
 
+/** Position of the placeholder whose deletion was just refused, if any. */
+export interface RawMarkdownBlockGuardState {
+  refusedPos: number | null;
+}
+
+export const rawMarkdownBlockGuardPluginKey =
+  new PluginKey<RawMarkdownBlockGuardState>("rawMarkdownBlockGuard");
+
+function selectedRawMarkdownBlockPos(state: EditorState): number | null {
+  const { selection } = state;
+  if (!(selection instanceof NodeSelection)) return null;
+  return selection.node.type.name === "rawMarkdownBlock"
+    ? selection.from
+    : null;
+}
+
+/**
+ * Protects a selected unrendered-block placeholder from the keystrokes that
+ * would replace it. The placeholder is clickable, so a selected atom takes its
+ * Markdown with it on Backspace, Delete or the next character typed, and
+ * autosave writes the loss to disk with nothing to undo it from. Refuse the
+ * keystroke and mark the block so the placeholder can say why; the code view
+ * is where the source is edited.
+ *
+ * Suggesting mode never reaches this plugin: `PageCard` claims Backspace,
+ * Delete and text input in its own editor props, which ProseMirror consults
+ * before any plugin's. The priority keeps the guard ahead of the base keymap,
+ * which would otherwise delete the node before the guard saw the key.
+ */
+const RawMarkdownBlockGuard = Extension.create({
+  name: "rawMarkdownBlockGuard",
+  priority: 1000,
+
+  addProseMirrorPlugins() {
+    const refuse = (
+      state: EditorState,
+      dispatch: (tr: Transaction) => void,
+    ) => {
+      const refusedPos = selectedRawMarkdownBlockPos(state);
+      if (refusedPos === null) return false;
+
+      dispatch(
+        state.tr.setMeta(rawMarkdownBlockGuardPluginKey, { refusedPos }),
+      );
+      return true;
+    };
+
+    return [
+      new Plugin<RawMarkdownBlockGuardState>({
+        key: rawMarkdownBlockGuardPluginKey,
+        state: {
+          init: () => ({ refusedPos: null }),
+          apply(tr, value) {
+            const meta = tr.getMeta(rawMarkdownBlockGuardPluginKey) as
+              | RawMarkdownBlockGuardState
+              | undefined;
+            if (meta) return meta;
+            if (value.refusedPos === null) return value;
+            return tr.docChanged || tr.selectionSet
+              ? { refusedPos: null }
+              : value;
+          },
+        },
+        props: {
+          handleKeyDown(view, event) {
+            if (event.key !== "Backspace" && event.key !== "Delete") {
+              return false;
+            }
+            return refuse(view.state, view.dispatch.bind(view));
+          },
+          handleTextInput(view) {
+            return refuse(view.state, view.dispatch.bind(view));
+          },
+          decorations(state) {
+            const refusedPos =
+              rawMarkdownBlockGuardPluginKey.getState(state)?.refusedPos ??
+              null;
+            if (refusedPos === null) return null;
+
+            const node = state.doc.nodeAt(refusedPos);
+            if (!node) return null;
+
+            return DecorationSet.create(state.doc, [
+              Decoration.node(
+                refusedPos,
+                refusedPos + node.nodeSize,
+                {},
+                { [rawMarkdownBlockDeletionRefusedDecoration]: true },
+              ),
+            ]);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 const MarkdownTable = Table.extend({
   addAttributes() {
     return {
@@ -995,6 +1096,7 @@ export function createEditorExtensions(placeholder: string) {
     CommentRef,
     CriticChange,
     RawMarkdownBlock,
+    RawMarkdownBlockGuard,
     MarkdownSoftBreak,
     MarkdownCodeBlock,
     CommentHighlight,

@@ -3,6 +3,14 @@ import { TriangleAlert } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import type { RawMarkdownBlockType } from "./markdown";
 
+/**
+ * Spec key the editor's guard plugin puts on a node decoration when it has
+ * just refused a keystroke that would have deleted this block. It lives here
+ * so the extension can import it without the placeholder importing back.
+ */
+export const rawMarkdownBlockDeletionRefusedDecoration =
+  "rawMarkdownBlockDeletionRefused";
+
 const blockLabels: Record<RawMarkdownBlockType, string> = {
   table: "Table",
   details: "Details block",
@@ -14,13 +22,20 @@ function isRawMarkdownBlockType(value: unknown): value is RawMarkdownBlockType {
   return typeof value === "string" && value in blockLabels;
 }
 
-export function UnrenderedBlockPlaceholder({ node }: NodeViewProps) {
+export function UnrenderedBlockPlaceholder({
+  node,
+  decorations,
+}: NodeViewProps) {
   const blockType = isRawMarkdownBlockType(node.attrs.blockType)
     ? node.attrs.blockType
     : "block";
   const label = isRawMarkdownBlockType(blockType)
     ? blockLabels[blockType]
     : "Block";
+  const deletionRefused = decorations.some(
+    (decoration) =>
+      decoration.spec?.[rawMarkdownBlockDeletionRefusedDecoration] === true,
+  );
 
   return (
     <NodeViewWrapper
@@ -37,6 +52,15 @@ export function UnrenderedBlockPlaceholder({ node }: NodeViewProps) {
           Its Markdown is kept exactly as written; switch to code view to read
           or edit it.
         </AlertDescription>
+        {deletionRefused ? (
+          <AlertDescription
+            data-testid="unrendered-block-deletion-refused"
+            className="font-medium text-foreground"
+          >
+            A keystroke will not delete this {label.toLowerCase()}. Switch to
+            code view to remove its Markdown.
+          </AlertDescription>
+        ) : null}
       </Alert>
     </NodeViewWrapper>
   );
