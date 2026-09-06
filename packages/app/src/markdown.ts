@@ -4,12 +4,15 @@ import TurndownService from "turndown";
 import { parse as parseYaml } from "yaml";
 
 export const rawMarkdownBlockAttribute = "data-markdown-raw-block";
-// A newline inside a paragraph, blockquote line, or list item. The span is
-// empty on purpose: Turndown lifts any whitespace inside an inline element
-// out as flanking text, so the editor draws the space with CSS instead. It
-// is written back as the newline the author typed.
+// A newline inside a paragraph, blockquote line, or list item. The span holds
+// a real space so the editor, find-in-page, and copied text read it as one;
+// it is written back as the newline the author typed.
 export const markdownSoftBreakAttribute = "data-markdown-softbreak";
-const markdownSoftBreakHtml = `<span ${markdownSoftBreakAttribute}=""></span>`;
+const markdownSoftBreakHtml = `<span ${markdownSoftBreakAttribute}=""> </span>`;
+const markdownSoftBreakWithSpace = new RegExp(
+  `(<span ${markdownSoftBreakAttribute}="">) (</span>)`,
+  "g",
+);
 // A soft break inside one of these must stay a space: a heading or table
 // cell cannot span lines in markdown.
 const singleLineBlockSelector = "h1, h2, h3, h4, h5, h6, th, td";
@@ -671,8 +674,19 @@ export function normalizeBlockSpacing(md: string): string {
   return kept.join("\n");
 }
 
+/**
+ * Turndown lifts whitespace inside an inline element out as flanking text,
+ * so the space in a soft break span would land in the output next to the
+ * newline. Empty the span before Turndown sees it.
+ */
+export function emptySoftBreakSpans(html: string): string {
+  return html.replace(markdownSoftBreakWithSpace, "$1$2");
+}
+
 export function toMarkdown(html: string): string {
-  return normalizeBlockSpacing(`${turndown.turndown(html).trimEnd()}\n`);
+  return normalizeBlockSpacing(
+    `${turndown.turndown(emptySoftBreakSpans(html)).trimEnd()}\n`,
+  );
 }
 
 export function toHtml(markdown: string, options?: MarkdownOptions): string {

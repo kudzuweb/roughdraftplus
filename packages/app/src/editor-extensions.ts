@@ -805,7 +805,7 @@ const MarkdownSoftBreak = Node.create({
   },
 
   renderHTML() {
-    return ["span", { [markdownSoftBreakAttribute]: "" }];
+    return ["span", { [markdownSoftBreakAttribute]: "" }, " "];
   },
 
   renderText() {
