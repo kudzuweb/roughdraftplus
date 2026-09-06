@@ -2093,9 +2093,7 @@ describe("PageCard editor integration", () => {
 
     await flushAnimationFrame();
 
-    expect(
-      queryByTestId(rendered.container, "comment-rail-c2"),
-    ).not.toBeNull();
+    expect(queryByTestId(rendered.container, "comment-rail-c2")).not.toBeNull();
 
     await selectText(rendered.getEditor(), "this claim");
 

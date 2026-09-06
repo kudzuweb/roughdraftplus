@@ -63,6 +63,64 @@ test.describe("CriticMarkup review flows", () => {
     });
   });
 
+  test("renders a legacy YAML endmatter reply and keeps it on save @smoke", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "legacy-endmatter-reply.md",
+      [
+        "# Legacy Endmatter Reply",
+        "",
+        "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+        "",
+        "---",
+        "comments:",
+        "  c1:",
+        "    by: user",
+        '    at: "2026-04-28T12:00:00.000Z"',
+        "  c2:",
+        "    body: I can add one from the intro.",
+        "    by: AI",
+        '    at: "2026-04-28T12:05:00.000Z"',
+        "    re: c1",
+        "",
+      ].join("\n"),
+    );
+
+    await openMarkdownFile(page, filePath);
+    const rail = page.getByTestId("document-review-rail");
+    await expect(rail.getByTestId("comment-rail-c1")).toContainText(
+      "Needs a source.",
+    );
+    await expect(rail.getByTestId("comment-rail-c2")).toContainText(
+      "I can add one from the intro.",
+    );
+
+    await rail
+      .getByTestId("comment-rail-c2-action-reply")
+      .evaluate((element) => {
+        (element as HTMLButtonElement).click();
+      });
+    await page.getByTestId("comment-rail-c3-editor").fill("Pulled it in.");
+    await page
+      .getByTestId("comment-rail-c3-action-save")
+      .evaluate((element) => {
+        (element as HTMLButtonElement).click();
+      });
+
+    await expect
+      .poll(() => readProjectFile(projectDir, "legacy-endmatter-reply.md"))
+      .toContain("Pulled it in.");
+    const saved = readProjectFile(projectDir, "legacy-endmatter-reply.md");
+    expect(saved).toContain("body: I can add one from the intro.");
+    expect(saved).toContain("re: c2");
+
+    logE2eEvent("criticmarkup.legacy-endmatter-reply-rendered", {
+      file: "legacy-endmatter-reply.md",
+    });
+  });
+
   test("collapses a thread to its anchor plus the newest reply until expanded @smoke", async ({
     page,
   }) => {
