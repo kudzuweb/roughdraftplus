@@ -8,12 +8,10 @@ import type { RawMarkdownBlockType } from "./markdown";
  * just refused a keystroke that would have deleted this block. It lives here
  * so the extension can import it without the placeholder importing back.
  *
- * The note this raises claims that typing will not land either, which holds
- * while it is on screen: only a refusal sets it, every refusal answers a
- * gesture acting on a selection that includes the block, and the guard clears
- * it on the next transaction that moves the selection or changes the document.
- * So the selection still includes the block for as long as the reader can read
- * the sentence.
+ * The note says only what stays true once the refusal has run. The guard
+ * releases the caret clear of the block, so the reader can type straight on and
+ * a sentence telling them their typing will not land would be false by the time
+ * they read it.
  */
 export const rawMarkdownBlockDeletionRefusedDecoration =
   "rawMarkdownBlockDeletionRefused";
@@ -65,9 +63,8 @@ export function UnrenderedBlockPlaceholder({
             className="font-medium text-foreground"
           >
             Rich text will not delete this {label.toLowerCase()}, and will not
-            delete a selection that includes it. Nothing you type lands while it
-            is selected, so click or arrow off it to carry on. Switch to code
-            view to remove its Markdown.
+            delete a selection that includes it. Switch to code view to remove
+            its Markdown.
           </AlertDescription>
         ) : null}
       </Alert>

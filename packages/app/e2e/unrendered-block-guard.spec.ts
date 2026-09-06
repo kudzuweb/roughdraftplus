@@ -129,15 +129,19 @@ test.describe("selected unrendered-block placeholder", () => {
 
     await chooseEditingMode(page);
 
+    // Each gesture reselects the placeholder first. A refusal releases the
+    // caret clear of the block so the reader can carry on typing, so chaining
+    // the three would leave the second and third editing ordinary prose.
     await selectPlaceholder(page);
-
     await page.keyboard.press("Backspace");
     await expect(deletionRefusedNote(page)).toBeVisible();
     await expect(placeholder(page)).toBeVisible();
 
+    await selectPlaceholder(page);
     await page.keyboard.press("Delete");
     await expect(placeholder(page)).toBeVisible();
 
+    await selectPlaceholder(page);
     await page.keyboard.type("x");
     await expect(placeholder(page)).toBeVisible();
 
@@ -289,45 +293,35 @@ test.describe("selected unrendered-block placeholder", () => {
 
     // A reader who selects the block and types, without pressing Backspace
     // first, must still get the explanation rather than a dead editor.
-    await page.keyboard.type("Zq");
+    await page.keyboard.type("Z");
 
     await expect(deletionRefusedNote(page)).toBeVisible();
-    await expect(richTextEditor(page)).not.toContainText("Zq");
+    await expect(richTextEditor(page)).not.toContainText("Z");
     await expectFileUnchanged(page, projectDir);
   });
 
-  test("keeps refusing while the placeholder stays selected", async ({
-    page,
-  }) => {
-    await openMarkdownFile(page, writeProtectedFile(projectDir));
-    await expect(placeholder(page)).toBeVisible();
-    await chooseEditingMode(page);
+  test("lets the reader keep typing after a refusal", async ({ page }) => {
+    const typed = "ABCDEFGHIJ";
 
-    await selectPlaceholder(page);
-    await page.keyboard.press("Backspace");
-    await expect(deletionRefusedNote(page)).toBeVisible();
+    // Repeated, because the loss this covers was intermittent in some gestures
+    // and total in others: one clean pass proves nothing here.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await openMarkdownFile(page, writeProtectedFile(projectDir));
+      await expect(placeholder(page)).toBeVisible();
+      await chooseEditingMode(page);
 
-    // A refusal does not move the selection, so the block is still selected
-    // and every character typed over it is refused in turn. The note is what
-    // tells the reader why nothing is happening.
-    await page.keyboard.type("ABCDE");
-    await expect(richTextEditor(page)).not.toContainText("ABCDE");
-    await expectFileUnchanged(page, projectDir);
+      await placeholder(page).click();
+      await page.keyboard.press("Backspace");
+      await expect(deletionRefusedNote(page)).toBeVisible();
 
-    // The note has to be true while it is on screen, and it now claims typing
-    // will not land, so it has to still be there after the typing it describes.
-    await expect(deletionRefusedNote(page)).toBeVisible();
-    await expect(deletionRefusedNote(page)).toContainText(
-      "Nothing you type lands while it is selected",
-    );
+      // The refusal leaves the caret clear of the block, so this is an
+      // ordinary insertion rather than another replacement of the selection
+      // that spanned it.
+      await page.keyboard.type(typed);
 
-    // Moving the selection off the block is what lets typing land again.
-    await page.keyboard.press("ArrowUp");
-    await page.keyboard.press("End");
-    await page.keyboard.type("ABCDE");
-
-    await expect(richTextEditor(page)).toContainText("ABCDE");
-    await expect(placeholder(page)).toBeVisible();
+      await expect(richTextEditor(page)).toContainText(typed);
+      await expect(placeholder(page)).toBeVisible();
+    }
   });
 
   test("leaves viewing mode untouched", async ({ page }) => {
