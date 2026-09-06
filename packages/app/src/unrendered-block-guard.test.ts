@@ -305,6 +305,25 @@ describe("a transaction that keeps every protected block", () => {
     expect(countRawMarkdownBlocks(editor)).toBe(0);
   });
 
+  it("goes through when a block is replaced by an identical copy", () => {
+    const editor = createEditorWithProtectedTable();
+    const { from, to } = blockRange(editor);
+    const original = editor.state.doc.nodeAt(from);
+    if (!original) throw new Error("Expected a block to copy");
+
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(
+        from,
+        to,
+        original.type.create(original.attrs),
+      ),
+    );
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
+    expect(refusedPos(editor)).toBe(null);
+  });
+
   it("goes through when a deletion ends exactly at the block's start", () => {
     const editor = createEditorWithProtectedTable();
     const { before } = neighbourRanges(editor);
@@ -377,6 +396,27 @@ describe("the note the refusal leaves", () => {
     await Promise.resolve();
 
     expect(refusedPos(editor)).toBe(second);
+  });
+
+  it("is refused when a different block is swapped in where one stood", () => {
+    const editor = createEditorWithProtectedTable();
+    const { from, to } = blockRange(editor);
+    const blockType = editor.state.schema.nodes.rawMarkdownBlock;
+
+    // The extent survives and a protected block still stands here, so only the
+    // Markdown it carries says the reader's table went.
+    editor.view.dispatch(
+      editor.state.tr.replaceWith(
+        from,
+        to,
+        blockType.create({
+          rawMarkdown: "%7C%20other%20%7C%0A",
+          blockType: "table",
+        }),
+      ),
+    );
+
+    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
   });
 
   it("still refuses when one block is dropped and another added", () => {

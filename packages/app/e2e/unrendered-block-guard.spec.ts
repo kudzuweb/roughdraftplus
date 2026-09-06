@@ -128,15 +128,20 @@ test.describe("selected unrendered-block placeholder", () => {
     await expect(placeholder(page)).toBeVisible();
 
     await chooseEditingMode(page);
-    await selectPlaceholder(page);
 
+    // Each gesture reselects the placeholder first. A refusal releases the
+    // caret clear of the block so the reader can carry on typing, so chaining
+    // the three would leave the second and third editing ordinary prose.
+    await selectPlaceholder(page);
     await page.keyboard.press("Backspace");
     await expect(deletionRefusedNote(page)).toBeVisible();
     await expect(placeholder(page)).toBeVisible();
 
+    await selectPlaceholder(page);
     await page.keyboard.press("Delete");
     await expect(placeholder(page)).toBeVisible();
 
+    await selectPlaceholder(page);
     await page.keyboard.type("x");
     await expect(placeholder(page)).toBeVisible();
 
@@ -273,6 +278,30 @@ test.describe("selected unrendered-block placeholder", () => {
       expect(readProjectFile(projectDir, "protected.md")).not.toContain(
         "Trailing paragraph.",
       );
+    }
+  });
+
+  test("lets the reader keep typing after a refusal", async ({ page }) => {
+    const typed = "ABCDEFGHIJ";
+
+    // Repeated, because the loss this covers was intermittent in some gestures
+    // and total in others: one clean pass proves nothing here.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await openMarkdownFile(page, writeProtectedFile(projectDir));
+      await expect(placeholder(page)).toBeVisible();
+      await chooseEditingMode(page);
+
+      await placeholder(page).click();
+      await page.keyboard.press("Backspace");
+      await expect(deletionRefusedNote(page)).toBeVisible();
+
+      // The refusal leaves the caret clear of the block, so this is an
+      // ordinary insertion rather than another replacement of the selection
+      // that spanned it.
+      await page.keyboard.type(typed);
+
+      await expect(richTextEditor(page)).toContainText(typed);
+      await expect(placeholder(page)).toBeVisible();
     }
   });
 

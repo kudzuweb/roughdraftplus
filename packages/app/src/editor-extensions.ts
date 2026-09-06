@@ -14,8 +14,9 @@ import type {
   Mark as ProseMirrorMark,
   Node as ProseMirrorNode,
 } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
 import type { Transaction } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 import type { Transform } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ReactNodeViewRenderer } from "@tiptap/react";
@@ -939,6 +940,12 @@ export const rawMarkdownBlockGuardPluginKey =
  * going, and it is why a transaction that drops one block and adds another is
  * still refused. Counting blocks, or matching the Markdown they carry, gets
  * both of those wrong.
+ *
+ * The extent alone is not enough. A replacement can put a different protected
+ * block where this one stood, which leaves the extent intact and the reader's
+ * Markdown gone, so the survivor has to carry the same Markdown to count as the
+ * same block. Comparing it also keeps a block replaced by an identical copy of
+ * itself allowed, which is a real transaction and no loss.
  */
 function firstDroppedProtectedBlockPos(
   tr: Transaction,
@@ -956,7 +963,8 @@ function firstDroppedProtectedBlockPos(
 
     if (
       end - start !== node.nodeSize ||
-      survivor?.type.name !== "rawMarkdownBlock"
+      survivor?.type.name !== "rawMarkdownBlock" ||
+      survivor.attrs.rawMarkdown !== node.attrs.rawMarkdown
     ) {
       dropped = pos;
     }
@@ -965,6 +973,31 @@ function firstDroppedProtectedBlockPos(
   });
 
   return dropped;
+}
+
+/**
+ * Marks the refusal on the placeholder and moves the caret clear of it.
+ *
+ * Refusing the deletion is not enough on its own. The selection that spanned
+ * the block is still there afterwards, so the next character the reader types
+ * is another replacement of that same range, refused in turn, and so is the one
+ * after it: everything they write disappears while the note explains only the
+ * table. Collapsing to a caret just past the block turns the refusal into a
+ * single event the reader can type straight through.
+ */
+function releaseSelection(view: EditorView, refusedPos: number): void {
+  const tr = view.state.tr.setMeta(rawMarkdownBlockGuardPluginKey, {
+    refusedPos,
+  });
+  const node = view.state.doc.nodeAt(refusedPos);
+
+  if (node) {
+    tr.setSelection(
+      TextSelection.near(view.state.doc.resolve(refusedPos + node.nodeSize), 1),
+    );
+  }
+
+  view.dispatch(tr);
 }
 
 /**
@@ -1029,14 +1062,10 @@ const RawMarkdownBlockGuard = Extension.create({
           if (refusedPos === null) return true;
 
           // The transaction is being rejected, so the position still points at
-          // the block in the document that stays. Dispatching the note has to
-          // wait until this dispatch has finished.
+          // the block in the document that stays. Both of these have to wait
+          // until this dispatch has finished.
           queueMicrotask(() => {
-            editor.view.dispatch(
-              editor.state.tr.setMeta(rawMarkdownBlockGuardPluginKey, {
-                refusedPos,
-              }),
-            );
+            releaseSelection(editor.view, refusedPos);
           });
           return false;
         },
