@@ -73,13 +73,22 @@ interface ReviewIndexPayload {
   items?: Array<{ id: string; kind: string; status: string | null }>;
 }
 
+// One tab holding a document, as `status <path>` reports it.
+interface OpenDocumentTab {
+  sessionLabel: string | null;
+  openedAt: string;
+}
+
 interface OpenDocumentStatus {
   path: string;
   open: true;
   sessionLabel: string | null;
   openedAt: string;
   lastSavedAt: string | null;
-  openThreads: { count: number; ids: string[] };
+  tabs: OpenDocumentTab[];
+  // Null when the review index could not be read; `threadsError` says why.
+  openThreads: { count: number; ids: string[] } | null;
+  threadsError: string | null;
 }
 
 interface DevFrontendState {
@@ -1014,12 +1023,14 @@ function printCommandHelp(
     log("it with the session label each was opened with.");
     log("");
     log("With a path, reports that document's open threads and last save: an");
-    log("open thread is a comment or suggestion not marked resolved (replies");
-    log("belong to their thread), and the last save is the last time this");
-    log(
-      "server wrote the document while a tab had it open. A path that no tab",
-    );
-    log("has open is reported as not open.");
+    log("open thread is any comment, reply or suggestion not marked resolved,");
+    log("which is the same count that ends the review loop, and the last save");
+    log("is the last time this server wrote the document while a tab had it");
+    log("open. A path that no tab has open is reported as not open, and a");
+    log("review index that cannot be read is reported as an error at exit 1.");
+    log("");
+    log("When several tabs hold the same path, Session and Opened name the");
+    log("newest tab and Also open in lists the rest.");
     log("");
     log("Flags:");
     log("  --json               Print machine-readable output");
@@ -1950,7 +1961,7 @@ function buildServerStatusJson(
 
 // Describes one open document for `status <path>`: null when no tab has it
 // open. Several tabs can hold the same path; the newest one names the session
-// and the latest save across them counts.
+// and the latest save across them counts, and every tab is listed in `tabs`.
 async function describeOpenDocument(
   server: ReusableServer,
   documentPath: string,
@@ -1968,32 +1979,73 @@ async function describeOpenDocument(
     .sort((a, b) => Date.parse(a) - Date.parse(b))
     .pop();
 
-  const reviewIndexUrl = new URL("/api/review-index", server.url);
-  reviewIndexUrl.searchParams.set("projectPath", path.dirname(documentPath));
-  reviewIndexUrl.searchParams.set("path", path.basename(documentPath));
-  const response = await deps.fetchImpl(reviewIndexUrl, {
-    signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`Failed to read review index: ${response.status}`);
-  }
-  const reviewIndex = (await response.json()) as ReviewIndexPayload;
-  const openThreadIds = (reviewIndex.items ?? [])
-    .filter((item) => item.kind !== "reply" && item.status !== "resolved")
-    .map((item) => item.id);
-
-  return {
+  const openDocument = {
     path: documentPath,
-    open: true,
+    open: true as const,
     sessionLabel: newest.sessionLabel,
     openedAt: newest.openedAt,
     lastSavedAt: lastSavedAt ?? null,
+    tabs: entries.map((entry) => ({
+      sessionLabel: entry.sessionLabel,
+      openedAt: entry.openedAt,
+    })),
+  };
+
+  let reviewIndex: ReviewIndexPayload;
+  try {
+    const reviewIndexUrl = new URL("/api/review-index", server.url);
+    reviewIndexUrl.searchParams.set("projectPath", path.dirname(documentPath));
+    reviewIndexUrl.searchParams.set("path", path.basename(documentPath));
+    const response = await deps.fetchImpl(reviewIndexUrl, {
+      signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`the server answered ${response.status}`);
+    }
+    reviewIndex = (await response.json()) as ReviewIndexPayload;
+  } catch (error) {
+    // The file can be renamed or deleted, and the server can go away, between
+    // the status poll and this call. Report that instead of crashing.
+    return {
+      ...openDocument,
+      openThreads: null,
+      threadsError: error instanceof Error ? error.message : String(error),
+    };
+  }
+
+  // An open thread is any item the review index leaves unresolved, replies
+  // included. That is the same rule `summary.unresolved` applies
+  // (packages/rfm/src/index.ts), which is what the `threads-cleared` done
+  // signal reads (packages/server/src/review-events.ts), so this count and
+  // the end of the review loop always agree.
+  const openThreadIds = (reviewIndex.items ?? [])
+    .filter((item) => item.status !== "resolved")
+    .map((item) => item.id);
+
+  return {
+    ...openDocument,
     openThreads: { count: openThreadIds.length, ids: openThreadIds },
+    threadsError: null,
   };
 }
 
 function formatSessionLine(sessionLabel: string | null): string {
   return `Session: ${sessionLabel ?? "no label given"}`;
+}
+
+function printServerProcessLines(
+  deps: CliDependencies,
+  server: ReusableServer,
+  stateFilePath: string,
+) {
+  if (server.tracked && server.pid !== null && server.startedAt !== null) {
+    deps.log(`PID: ${server.pid}`);
+    deps.log(`Started: ${server.startedAt}`);
+    deps.log(`State file: ${stateFilePath}`);
+    return;
+  }
+
+  deps.log(`This server is not managed by ${stateFilePath}.`);
 }
 
 async function stopTrackedServer(deps: CliDependencies): Promise<{
@@ -2628,10 +2680,11 @@ export async function runCli(
             ...buildServerStatusJson(server, stateFilePath),
             document: document ?? { path: documentPath, open: false },
           });
-          return 0;
+          return document?.threadsError ? 1 : 0;
         }
 
         deps.log(`Roughdraft is running at ${server.url}`);
+        printServerProcessLines(deps, server, stateFilePath);
         if (!document) {
           deps.log(`${documentPath} is not open in Roughdraft.`);
           return 1;
@@ -2640,7 +2693,24 @@ export async function runCli(
         deps.log(`Document: ${document.path}`);
         deps.log(formatSessionLine(document.sessionLabel));
         deps.log(`Opened: ${document.openedAt}`);
+        const olderTabs = document.tabs.slice(0, -1);
+        if (olderTabs.length > 0) {
+          deps.log(
+            `Also open in: ${olderTabs
+              .map(
+                (tab) =>
+                  `${tab.sessionLabel ?? "no label given"} (opened ${tab.openedAt})`,
+              )
+              .join(", ")}`,
+          );
+        }
         deps.log(`Last save: ${document.lastSavedAt ?? "none since opened"}`);
+        if (!document.openThreads) {
+          deps.error(
+            `Could not read the review index for ${documentPath}: ${document.threadsError}`,
+          );
+          return 1;
+        }
         deps.log(
           document.openThreads.count === 0
             ? "Open threads: 0"
@@ -2658,13 +2728,7 @@ export async function runCli(
       }
 
       deps.log(`Roughdraft is running at ${server.url}`);
-      if (server.tracked && server.pid !== null && server.startedAt !== null) {
-        deps.log(`PID: ${server.pid}`);
-        deps.log(`Started: ${server.startedAt}`);
-        deps.log(`State file: ${stateFilePath}`);
-      } else {
-        deps.log(`This server is not managed by ${stateFilePath}.`);
-      }
+      printServerProcessLines(deps, server, stateFilePath);
       if (server.documents.length === 0) {
         deps.log("Document: none open");
       }

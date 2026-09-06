@@ -1081,6 +1081,16 @@ describe("cli", () => {
       "",
     ].join("\n");
 
+    // The case that split `status <path>` from the `threads-cleared` done
+    // signal: the only comment is resolved, but its reply is not.
+    const resolvedRootWithOpenReply = [
+      "# Draft",
+      "",
+      'Intro {>>Needs a source<<}{id="c1" by="user" at="2026-09-06T00:00:00Z" status="resolved"}',
+      '{>>Still waiting<<}{id="r1" by="AI" at="2026-09-06T00:01:00Z" re="c1"}',
+      "",
+    ].join("\n");
+
     // Stands in for a browser tab: the app subscribes to /api/open-requests
     // with the path it has open and the label it was opened with.
     async function subscribeTab(
@@ -1230,11 +1240,14 @@ describe("cli", () => {
         ).toBeGreaterThanOrEqual(before - 1000);
         expect(test.logs).toEqual([
           `Roughdraft is running at ${result.server.url}`,
+          `PID: ${result.server.pid}`,
+          `Started: ${result.server.startedAt}`,
+          `State file: ${getServerStateFilePath(test.deps.env)}`,
           `Document: ${documentPath}`,
           "Session: build-16",
           expect.stringMatching(/^Opened: \d{4}-/),
           lastSaveLine,
-          "Open threads: 2 (c1, s1)",
+          "Open threads: 3 (c1, r1, s1)",
         ]);
       } finally {
         await tab.cancel();
@@ -1298,7 +1311,9 @@ describe("cli", () => {
             sessionLabel: "build-16",
             openedAt: expect.any(String),
             lastSavedAt: expect.any(String),
-            openThreads: { count: 2, ids: ["c1", "s1"] },
+            tabs: [{ sessionLabel: "build-16", openedAt: expect.any(String) }],
+            openThreads: { count: 3, ids: ["c1", "r1", "s1"] },
+            threadsError: null,
           },
         });
         expect(payload).not.toHaveProperty("documents");
@@ -1368,6 +1383,136 @@ describe("cli", () => {
         stateFile: getServerStateFilePath(test.deps.env),
         document: { path: documentPath, open: false },
       });
+    });
+
+    it("counts an unresolved reply under a resolved comment, as the review loop does", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        await saveThroughTab(
+          result.server.port,
+          documentPath,
+          resolvedRootWithOpenReply,
+        );
+
+        const exitCode = await runCli(["status", documentPath], test.deps);
+        const query = new URLSearchParams({
+          projectPath: path.dirname(documentPath),
+          path: path.basename(documentPath),
+        });
+        const reviewIndexResponse = await fetch(
+          `http://127.0.0.1:${result.server.port}/api/review-index?${query}`,
+        );
+        const reviewIndex = (await reviewIndexResponse.json()) as {
+          summary: { unresolved: number };
+        };
+
+        expect(exitCode).toBe(0);
+        // The number `threads-cleared` reads, so the two must not disagree.
+        expect(reviewIndex.summary.unresolved).toBe(1);
+        expect(test.logs).toContain("Open threads: 1 (r1)");
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("names every tab when several hold the same path", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const labeledTab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+      const plainTab = await subscribeTab(result.server.port, documentPath);
+
+      try {
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(0);
+        expect(test.logs).toContain("Session: no label given");
+        expect(
+          test.logs.some((line) =>
+            line.startsWith("Also open in: build-16 (opened "),
+          ),
+        ).toBe(true);
+
+        test.logs.length = 0;
+        const jsonExitCode = await runCli(
+          ["status", documentPath, "--json"],
+          test.deps,
+        );
+        const payload = parseOnlyJsonLog<{
+          document: { tabs: Array<{ sessionLabel: string | null }> };
+        }>(test.logs);
+
+        expect(jsonExitCode).toBe(0);
+        expect(payload.document.tabs.map((tab) => tab.sessionLabel)).toEqual([
+          "build-16",
+          null,
+        ]);
+      } finally {
+        await labeledTab.cancel();
+        await plainTab.cancel();
+      }
+    });
+
+    it("reports a review index it cannot read instead of crashing", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        fs.renameSync(documentPath, path.join(projectDir, "renamed.md"));
+
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(1);
+        expect(test.errors).toContain(
+          `Could not read the review index for ${documentPath}: the server answered 404`,
+        );
+        expect(test.logs.some((line) => line.startsWith("Open threads"))).toBe(
+          false,
+        );
+
+        test.logs.length = 0;
+        const jsonExitCode = await runCli(
+          ["status", documentPath, "--json"],
+          test.deps,
+        );
+        const payload = parseOnlyJsonLog<{
+          running: boolean;
+          document: Record<string, unknown>;
+        }>(test.logs);
+
+        expect(jsonExitCode).toBe(1);
+        expect(payload.running).toBe(true);
+        expect(payload.document).toMatchObject({
+          path: documentPath,
+          open: true,
+          sessionLabel: "build-16",
+          openThreads: null,
+          threadsError: "the server answered 404",
+        });
+      } finally {
+        await tab.cancel();
+      }
     });
 
     it("rejects more than one path", async () => {
