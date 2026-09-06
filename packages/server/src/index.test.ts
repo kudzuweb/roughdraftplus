@@ -340,6 +340,89 @@ describe("createApp", () => {
     });
   });
 
+  it("reports a done-signal on the review event when the overall comment says done", async () => {
+    fs.writeFileSync(
+      path.join(projectDir, "draft.md"),
+      [
+        "# Draft",
+        "",
+        'Needs {==support==}{>>Add a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+      ].join("\n"),
+    );
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const response = await request(app).post("/api/review-events").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      overallComment: "Done, thanks!",
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.event).toMatchObject({
+      overallComment: "Done, thanks!",
+      done: true,
+      doneReason: "overall-comment",
+      summary: { unresolved: 2 },
+    });
+  });
+
+  it("reports a done-signal on the review event when every thread is cleared", async () => {
+    fs.writeFileSync(
+      path.join(projectDir, "draft.md"),
+      [
+        "# Draft",
+        "",
+        'Needs {==support==}{>>Add a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z" status="resolved"}.',
+      ].join("\n"),
+    );
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const response = await request(app).post("/api/review-events").send({
+      projectPath: projectDir,
+      path: "draft.md",
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.event).toMatchObject({
+      done: true,
+      doneReason: "threads-cleared",
+      summary: { comments: 1, unresolved: 0 },
+    });
+  });
+
+  it("reports no done-signal when threads stay open and the overall comment is feedback", async () => {
+    fs.writeFileSync(
+      path.join(projectDir, "draft.md"),
+      [
+        "# Draft",
+        "",
+        'Needs {==support==}{>>Add a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+      ].join("\n"),
+    );
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const response = await request(app).post("/api/review-events").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      overallComment: "Please address the risk section.",
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body.event).toMatchObject({
+      done: false,
+      doneReason: null,
+    });
+  });
+
   it("omits whitespace-only overall comments from review events", async () => {
     fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
     const { app } = createApp({

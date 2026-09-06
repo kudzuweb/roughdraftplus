@@ -23,6 +23,31 @@ The loop ends only when the reviewer signals it:
 Anything else — including submitting with no new comments while threads remain open — continues
 the loop.
 
+`roughdraft open --loop` reports that decision after each round, in human and `--json` output
+(`done`, and `doneReason` as `overall-comment`, `threads-cleared`, or null), so the agent reopens
+on the CLI's answer instead of inferring it from the file. The server decides on the Done Reviewing
+event. An overall comment counts as done when its whole text is one of these phrases, ignoring
+case and punctuation, an optional leading "ok", "okay", "yes" or "the", and an optional trailing
+"thanks", "thank you" or "ty": "done", "all done", "I'm done", "we're done", "done reviewing",
+"review done", "review complete", "review completed", "review is done", "review is complete",
+"finished", "finished reviewing", "lgtm", "looks good", "looks good to me", "no further comments",
+"no more comments", "nothing further". A trailing question mark ("Done?") is a question, not a
+signal. "Approved" and "ship it" are deliberately not on the list: per Approvals below, an approval
+resolves the one comment it answers and nothing else is read as approval, so an overall "approved"
+with open threads continues the loop. Every thread is cleared when the document has no unresolved
+comment, reply or suggestion. An overall comment that is not a done-signal is new feedback, so it
+continues the loop even when the threads are otherwise clear.
+
+The server persists every overall comment, done-signal or not, into the document's YAML
+endmatter as a document-level comment, and the tab re-attaches the endmatter on every save, so the
+comment survives into later rounds and counts as unresolved until it carries `status: resolved`.
+Until then the threads-cleared signal cannot fire, and the "item(s) still open" count runs one
+higher than the visible threads. The review rail does not render document-level comments today, so
+the reviewer cannot see or clear it in the browser; the agent clears it after acting on it, by
+marking it resolved (`roughdraft_mark_resolved` over MCP, or `markRoughdraftResolved` from
+`@roughdraft/rfm`) or by removing the entry from the endmatter. Rendering document-level comments
+in the rail, with a way to clear them, is a follow-up.
+
 ## Replies
 
 Inline replies are canonical: a reply sits directly after the comment it answers, in the same
@@ -94,7 +119,7 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 
 | Behavior | Today | Destination |
 |---|---|---|
-| Auto-reopen until done-signal | Agent discipline | CLI loop mode (backlog item 14) |
+| Auto-reopen until done-signal | `roughdraft open --loop` reports the done-signal after each round (item 14) | The reopen on `done: false` remains agent discipline |
 | Meaningful changes stand out | Agent marks them `{++ins++}` / `{~~sub~~}`, leaves mechanical edits unmarked | Jump-to-next-mark navigation (item 10, deferred behind item 5) |
 | Approving a mark accepts it into prose | Agent strips markup on approval | Approve action accepts the suggestion (items 6, 10) |
 | Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |
