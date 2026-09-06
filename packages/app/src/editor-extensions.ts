@@ -14,8 +14,10 @@ import type {
   Mark as ProseMirrorMark,
   Node as ProseMirrorNode,
 } from "@tiptap/pm/model";
-import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import type { Transaction } from "@tiptap/pm/state";
 import type { Transform } from "@tiptap/pm/transform";
+import type { EditorView } from "@tiptap/pm/view";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -25,7 +27,10 @@ import {
   rawMarkdownBlockAttribute,
   rawMarkdownBlockTypeAttribute,
 } from "./markdown";
-import { UnrenderedBlockPlaceholder } from "./UnrenderedBlockPlaceholder";
+import {
+  rawMarkdownBlockDeletionRefusedDecoration,
+  UnrenderedBlockPlaceholder,
+} from "./UnrenderedBlockPlaceholder";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -915,6 +920,180 @@ const RawMarkdownBlock = Node.create({
   },
 });
 
+/** Position of the placeholder whose deletion was just refused, if any. */
+export interface RawMarkdownBlockGuardState {
+  refusedPos: number | null;
+}
+
+export const rawMarkdownBlockGuardPluginKey =
+  new PluginKey<RawMarkdownBlockGuardState>("rawMarkdownBlockGuard");
+
+/**
+ * Position of the first protected block this transaction would drop, or null
+ * when it would drop none. Textblocks are not descended into, so the walk stays
+ * cheap enough to run on every transaction.
+ *
+ * Each block is judged on its own extent: both ends are mapped inward, so a
+ * deletion beside the block leaves them a whole node apart while a deletion of
+ * the block collapses them onto each other. Judging each block by position is
+ * what tells two identical blocks apart, so the note lands on the one that was
+ * going, and it is why a transaction that drops one block and adds another is
+ * still refused. Counting blocks, or matching the Markdown they carry, gets
+ * both of those wrong.
+ *
+ * The extent alone is not enough. A replacement can put a different protected
+ * block where this one stood, which leaves the extent intact and the reader's
+ * Markdown gone, so the survivor has to carry the same Markdown to count as the
+ * same block. Comparing it also keeps a block replaced by an identical copy of
+ * itself allowed, which is a real transaction and no loss.
+ */
+function firstDroppedProtectedBlockPos(
+  tr: Transaction,
+  doc: ProseMirrorNode,
+): number | null {
+  let dropped: number | null = null;
+
+  doc.descendants((node, pos) => {
+    if (dropped !== null) return false;
+    if (node.type.name !== "rawMarkdownBlock") return !node.isTextblock;
+
+    const start = tr.mapping.map(pos, 1);
+    const end = tr.mapping.map(pos + node.nodeSize, -1);
+    const survivor = tr.doc.nodeAt(start);
+
+    if (
+      end - start !== node.nodeSize ||
+      survivor?.type.name !== "rawMarkdownBlock" ||
+      survivor.attrs.rawMarkdown !== node.attrs.rawMarkdown
+    ) {
+      dropped = pos;
+    }
+
+    return false;
+  });
+
+  return dropped;
+}
+
+/**
+ * Marks the refusal on the placeholder and moves the caret clear of it.
+ *
+ * Refusing the deletion is not enough on its own. The selection that spanned
+ * the block is still there afterwards, so the next character the reader types
+ * is another replacement of that same range, refused in turn, and so is the one
+ * after it: everything they write disappears while the note explains only the
+ * table. Collapsing to a caret just past the block turns the refusal into a
+ * single event the reader can type straight through.
+ */
+function releaseSelection(view: EditorView, refusedPos: number): void {
+  const tr = view.state.tr.setMeta(rawMarkdownBlockGuardPluginKey, {
+    refusedPos,
+  });
+  const node = view.state.doc.nodeAt(refusedPos);
+
+  if (node) {
+    tr.setSelection(
+      TextSelection.near(view.state.doc.resolve(refusedPos + node.nodeSize), 1),
+    );
+  }
+
+  view.dispatch(tr);
+}
+
+/**
+ * Keeps a protected block from leaving the document through rich text. The
+ * placeholder is clickable, so a selected atom would take its Markdown with it
+ * on Backspace, Delete, the next character typed, a cut or a paste, and
+ * autosave would write the loss to disk with nothing to undo it from. A range
+ * that spans the placeholder does the same, and so does a bare Backspace at the
+ * start of the paragraph directly after it, which ProseMirror answers by
+ * replacing the atom rather than selecting it first.
+ *
+ * The rule is about the document, not about any gesture: a transaction that
+ * would drop a protected block is rejected, whatever produced it. Input
+ * handlers were tried first and removed. They have to read
+ * `view.state.selection`, which lags the browser's own selection after a
+ * shift-arrow sweep, so they miss deletions the reader can see. A transaction
+ * carries the change that is actually about to happen, so it is the only thing
+ * worth judging, and judging it catches gestures nobody has enumerated: Alt and
+ * Backspace at the start of the paragraph after a placeholder was found already
+ * refused, before anyone named it.
+ *
+ * Two exemptions cover the ways a protected block may legitimately leave:
+ * `preventUpdate` marks tiptap's `setContent`, which is how a document is
+ * loaded or reloaded from disk, and the history meta marks an undo or redo.
+ *
+ * The rule holds in every interaction mode and does not consult any of them.
+ * Suggesting mode reaches it, but never trips it: `PageCard`'s own handlers
+ * turn an edit into suggestion marks rather than deleting a block atom.
+ * Viewing mode dispatches nothing at all, because ProseMirror runs its edit
+ * handlers only on an editable view.
+ */
+const RawMarkdownBlockGuard = Extension.create({
+  name: "rawMarkdownBlockGuard",
+
+  addProseMirrorPlugins() {
+    const { editor } = this;
+
+    return [
+      new Plugin<RawMarkdownBlockGuardState>({
+        key: rawMarkdownBlockGuardPluginKey,
+        state: {
+          init: () => ({ refusedPos: null }),
+          apply(tr, value) {
+            const meta = tr.getMeta(rawMarkdownBlockGuardPluginKey) as
+              | RawMarkdownBlockGuardState
+              | undefined;
+            if (meta) return meta;
+            if (value.refusedPos === null) return value;
+            return tr.docChanged || tr.selectionSet
+              ? { refusedPos: null }
+              : value;
+          },
+        },
+        filterTransaction(tr, state) {
+          if (!tr.docChanged) return true;
+          // `PluginKey("history")` resolves to this string, and reading it by
+          // name keeps the guard from importing the history plugin.
+          if (tr.getMeta("history$")) return true;
+          if (tr.getMeta("preventUpdate") !== undefined) return true;
+
+          const refusedPos = firstDroppedProtectedBlockPos(tr, state.doc);
+          if (refusedPos === null) return true;
+
+          // The transaction is being rejected, so the position still points at
+          // the block in the document that stays. Both of these have to wait
+          // until this dispatch has finished.
+          queueMicrotask(() => {
+            releaseSelection(editor.view, refusedPos);
+          });
+          return false;
+        },
+        props: {
+          decorations(state) {
+            const refusedPos =
+              rawMarkdownBlockGuardPluginKey.getState(state)?.refusedPos ??
+              null;
+            if (refusedPos === null) return null;
+
+            const node = state.doc.nodeAt(refusedPos);
+            if (!node) return null;
+
+            return DecorationSet.create(state.doc, [
+              Decoration.node(
+                refusedPos,
+                refusedPos + node.nodeSize,
+                {},
+                { [rawMarkdownBlockDeletionRefusedDecoration]: true },
+              ),
+            ]);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 const MarkdownTable = Table.extend({
   addAttributes() {
     return {
@@ -995,6 +1174,7 @@ export function createEditorExtensions(placeholder: string) {
     CommentRef,
     CriticChange,
     RawMarkdownBlock,
+    RawMarkdownBlockGuard,
     MarkdownSoftBreak,
     MarkdownCodeBlock,
     CommentHighlight,
