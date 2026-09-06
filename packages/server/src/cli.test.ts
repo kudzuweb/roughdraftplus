@@ -1489,20 +1489,26 @@ describe("cli", () => {
     events: unknown[];
     timedOut: boolean;
     nextSequence: number;
+    instanceId?: string;
   }
 
   function createWatchScriptTest(
     script: Array<Error | WatchScriptResponse>,
     envOverrides: NodeJS.ProcessEnv = {},
+    // Scripted /api/status answers, one per call; the last entry repeats. An
+    // Error entry is a refused connection. Empty means a plain running server.
+    statusScript: Array<string | Error> = [],
   ) {
     const logs: string[] = [];
     const errors: string[] = [];
+    const sleeps: number[] = [];
     const requests: Array<{
       timeoutSeconds?: number;
       afterSequence?: number;
       fromNow?: boolean;
     }> = [];
     const remaining = [...script];
+    const statusRemaining = [...statusScript];
 
     const deps = createCliDependencies({
       env: {
@@ -1521,12 +1527,20 @@ describe("cli", () => {
               );
 
         if (url.pathname === "/api/status") {
+          const scripted =
+            statusRemaining.length > 1
+              ? statusRemaining.shift()
+              : statusRemaining[0];
+          if (scripted instanceof Error) {
+            throw scripted;
+          }
           return new Response(
             JSON.stringify({
               backend: "local-files",
               port: Number.parseInt(url.port || "80", 10),
               projectDir,
               serverRoot,
+              ...(scripted ? { instanceId: scripted } : {}),
             }),
             {
               status: 200,
@@ -1554,7 +1568,9 @@ describe("cli", () => {
 
         throw new Error(`Unexpected request in watch test: ${url.pathname}`);
       },
-      sleepImpl: async () => {},
+      sleepImpl: async (ms) => {
+        sleeps.push(ms);
+      },
       isProcessRunning: () => false,
       stopProcess: async () => {},
       spawnServerProcess: async () => {
@@ -1566,7 +1582,11 @@ describe("cli", () => {
       error: (message) => errors.push(message),
     });
 
-    return { deps, logs, errors, requests };
+    return { deps, logs, errors, requests, sleeps };
+  }
+
+  function connectionLost(code: string): TypeError {
+    return Object.assign(new TypeError("fetch failed"), { cause: { code } });
   }
 
   it("keeps an untimed watch alive across undici header-timeout rejections until the review completes", async () => {
@@ -1673,6 +1693,241 @@ describe("cli", () => {
       "fetch failed",
     );
   });
+
+  it("reconnects an established watch to a restarted server and re-primes on the new instance", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        { events: [], timedOut: true, nextSequence: 5 },
+        connectionLost("UND_ERR_SOCKET"),
+        { events: [], timedOut: true, nextSequence: 1 },
+        {
+          events: [{ documentPath, type: "review.completed" }],
+          timedOut: false,
+          nextSequence: 2,
+        },
+      ],
+      {},
+      // ensureServerRunning, the watch's own instance read, two refused
+      // probes while the server is down, then the replacement answers.
+      [
+        "instance-a",
+        "instance-a",
+        connectionLost("ECONNREFUSED"),
+        connectionLost("ECONNREFUSED"),
+        "instance-b",
+      ],
+    );
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    expect(test.logs.join("\n")).toContain("Review completed");
+    // The replacement's queue starts over, so the old cursor is dropped and
+    // the watch primes again from now.
+    expect(test.requests[2]).toMatchObject({
+      fromNow: true,
+      timeoutSeconds: 0,
+    });
+    expect(test.requests[3]).toMatchObject({
+      fromNow: false,
+      afterSequence: 0,
+    });
+    expect(test.sleeps).toEqual([2000, 2000]);
+    expect(test.errors.join("\n")).toContain("stopped during the review");
+    expect(test.errors.join("\n")).toContain("Reconnected");
+  });
+
+  it("resumes the same server's cursor when a watch segment drops without a restart", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        { events: [], timedOut: true, nextSequence: 5 },
+        connectionLost("ECONNRESET"),
+        {
+          events: [{ documentPath, type: "review.completed" }],
+          timedOut: false,
+          nextSequence: 6,
+        },
+      ],
+      {},
+      ["instance-a"],
+    );
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    expect(test.requests[2]).toMatchObject({
+      fromNow: false,
+      afterSequence: 4,
+    });
+  });
+
+  it("resumes the cursor after a drop when the server's instance was never learned", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        { events: [], timedOut: true, nextSequence: 5 },
+        connectionLost("ECONNRESET"),
+        {
+          events: [{ documentPath, type: "review.completed" }],
+          timedOut: false,
+          nextSequence: 6,
+        },
+      ],
+      {},
+      // ensureServerRunning answers, the watch's own instance read fails, and
+      // the priming poll carries no id either, so the server stays unknown.
+      ["instance-a", connectionLost("ECONNREFUSED"), "instance-a"],
+    );
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    expect(test.requests[2]).toMatchObject({
+      fromNow: false,
+      afterSequence: 4,
+    });
+    expect(test.errors.join("\n")).toContain("resuming the watch");
+  });
+
+  it("learns the server's instance from the priming poll when the status read failed", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        {
+          events: [],
+          timedOut: true,
+          nextSequence: 5,
+          instanceId: "instance-a",
+        },
+        connectionLost("UND_ERR_SOCKET"),
+        { events: [], timedOut: true, nextSequence: 1 },
+        {
+          events: [{ documentPath, type: "review.completed" }],
+          timedOut: false,
+          nextSequence: 2,
+        },
+      ],
+      {},
+      ["instance-a", connectionLost("ECONNREFUSED"), "instance-b"],
+    );
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    expect(test.requests[2]).toMatchObject({
+      fromNow: true,
+      timeoutSeconds: 0,
+    });
+    expect(test.requests[3]).toMatchObject({
+      fromNow: false,
+      afterSequence: 0,
+    });
+  });
+
+  it("reports clearly and exits 1 when the server does not come back", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        { events: [], timedOut: true, nextSequence: 5 },
+        connectionLost("ECONNREFUSED"),
+      ],
+      { ROUGHDRAFT_WATCH_RECONNECT_SECONDS: "6" },
+      ["instance-a", "instance-a", connectionLost("ECONNREFUSED")],
+    );
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(1);
+    expect(test.sleeps).toEqual([2000, 2000, 2000]);
+    const report = test.errors.join("\n");
+    expect(report).toContain("did not come back within 6 s");
+    expect(report).toContain("roughdraft open");
+  });
+
+  it("reports the lost server in --loop --json output without a done-signal", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        { events: [], timedOut: true, nextSequence: 5 },
+        connectionLost("ECONNREFUSED"),
+      ],
+      {
+        ROUGHDRAFT_WATCH_RECONNECT_SECONDS: "2",
+        ROUGHDRAFT_DEV_FRONTEND_STATE_FILE: devFrontendStateFile,
+      },
+      ["instance-a", "instance-a", connectionLost("ECONNREFUSED")],
+    );
+
+    const exitCode = await runCli(
+      ["open", documentPath, "--no-open", "--loop", "--json"],
+      test.deps,
+    );
+
+    expect(exitCode).toBe(1);
+    const payload = parseOnlyJsonLog<{
+      disconnected: boolean;
+      done: boolean;
+      doneReason: string | null;
+      error: string;
+    }>(test.logs);
+    expect(payload).toMatchObject({
+      disconnected: true,
+      done: false,
+      doneReason: null,
+    });
+    expect(payload.error).toContain("did not come back");
+  });
+
+  it("completes a watch started before a real server restart once the replacement receives Done Reviewing", async () => {
+    const test = createTestDependencies();
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const first = await ensureServerRunning(test.deps, { projectDir });
+    const port = first.server.port;
+    const statusUrl = `http://localhost:${port}/api/review-events/status?projectPath=${encodeURIComponent(projectDir)}&path=draft.md`;
+    const watcherCount = async () => {
+      const response = await fetch(statusUrl);
+      return ((await response.json()) as { watcherCount: number }).watcherCount;
+    };
+    const waitForWatcher = async () => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        try {
+          if ((await watcherCount()) > 0) return;
+        } catch {}
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error("no watcher registered");
+    };
+
+    const watching = runCli(["watch", documentPath], test.deps);
+    await waitForWatcher();
+
+    // A real stop: the long-poll socket closes and the port refuses.
+    if (first.server.pid !== null) {
+      await test.deps.stopProcess(first.server.pid);
+    }
+    await test.deps.spawnServerProcess({ port, projectDir });
+    await waitForWatcher();
+
+    const emitted = await fetch(`http://localhost:${port}/api/review-events`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectPath: projectDir, path: "draft.md" }),
+    });
+    expect(emitted.status).toBe(201);
+
+    expect(await watching).toBe(0);
+    expect(test.logs.join("\n")).toContain("Review completed");
+    expect(test.errors.join("\n")).toContain("Reconnected");
+  }, 20_000);
 
   it("cleans stale state during status checks", async () => {
     const test = createTestDependencies();

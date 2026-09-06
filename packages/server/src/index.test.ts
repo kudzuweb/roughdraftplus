@@ -561,6 +561,31 @@ describe("createApp", () => {
     });
   });
 
+  it("names the answering server instance on the review watch status", async () => {
+    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const statusResponse = await request(app).get("/api/status");
+    const watchStatus = await request(app)
+      .get("/api/review-events/status")
+      .query({ projectPath: projectDir, path: "draft.md" });
+
+    expect(watchStatus.status).toBe(200);
+    expect(watchStatus.body.instanceId).toBe(statusResponse.body.instanceId);
+    expect(watchStatus.body.instanceId).toEqual(expect.any(String));
+
+    const primed = await request(app).post("/api/review-events/watch").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      timeoutSeconds: 0,
+    });
+    expect(primed.status).toBe(200);
+    expect(primed.body.instanceId).toBe(statusResponse.body.instanceId);
+  });
+
   it("reports active review watchers for a markdown file", async () => {
     fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
     const { app } = createApp({

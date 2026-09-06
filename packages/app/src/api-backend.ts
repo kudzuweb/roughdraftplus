@@ -162,11 +162,15 @@ export class ApiBackend implements StorageBackend {
     const payload = (await res.json()) as {
       watching?: unknown;
       watcherCount?: unknown;
+      instanceId?: unknown;
     };
     return {
       watching: payload.watching === true,
       watcherCount:
         typeof payload.watcherCount === "number" ? payload.watcherCount : 0,
+      ...(typeof payload.instanceId === "string"
+        ? { instanceId: payload.instanceId }
+        : {}),
     };
   }
 

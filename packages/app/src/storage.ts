@@ -47,6 +47,7 @@ export interface CompleteReviewOptions {
 export interface ReviewWatchStatus {
   watching: boolean;
   watcherCount: number;
+  instanceId?: string;
 }
 
 export interface BackendInfo {

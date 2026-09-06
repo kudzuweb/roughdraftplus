@@ -28,7 +28,9 @@ the loop.
 
 `roughdraft open --loop` reports that decision after each round, in human and `--json` output
 (`done`, and `doneReason` as `overall-comment`, `threads-cleared`, or null), so the agent reopens
-on the CLI's answer instead of inferring it from the file. The server decides on the Done Reviewing
+on the CLI's answer instead of inferring it from the file. When the server stopped mid-round and
+did not come back, the `--json` output is instead `disconnected: true` with an `error` and
+`done: false`, and the exit code is 1; reopen the document to resume. The server decides on the Done Reviewing
 event. An overall comment counts as done when its whole text is one of these phrases, ignoring
 case and punctuation, an optional leading "ok", "okay", "yes" or "the", and an optional trailing
 "thanks", "thank you" or "ty": "done", "all done", "I'm done", "we're done", "done reviewing",
@@ -122,7 +124,12 @@ save still rewrites applies to that file even if it was only ever edited in code
   Done Reviewing the tab does not write until a new review starts. If the server is restarted, the
   tab adopts the replacement and checks the file version first: unsaved edits are kept and saved
   only when the file did not change while the server was away; otherwise the tab shows "File
-  changed on disk" and stops saving until the reviewer decides.
+  changed on disk" and stops saving until the reviewer decides. The blocking `open` survives
+  the same restart: it waits up to `ROUGHDRAFT_WATCH_RECONNECT_SECONDS` (default 60) for the
+  server to answer again on the same port, registers a fresh watch, and Done Reviewing in the
+  tab completes it. If the server does not come back the command exits 1 and names the reopen
+  command; the tab keeps the Done Reviewing button and shows an amber notice under it saying
+  the agent is disconnected and to run `roughdraft open` on the file again.
 
 ## Status
 
