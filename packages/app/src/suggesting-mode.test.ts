@@ -11,6 +11,7 @@ import {
   createEditorExtensions,
   isInlineAtomOrText,
 } from "./editor-extensions";
+import { getCriticChangeRange, getDocumentCriticChanges } from "./PageCard";
 
 /**
  * Helper: build a tiptap Editor in JSDOM with the standard Roughdraft
@@ -927,6 +928,49 @@ describe("change and comment walkers across a soft break", () => {
     expect(saveMarkdown(editor, comments)).toBe(
       "This paragraph wraps across\ntwo source lines here.\n",
     );
+
+    editor.destroy();
+  });
+
+  it("allocates the next change id after a deletion that covers only the soft break", () => {
+    const { editor } = createWrappedEditor();
+
+    selectText(editor, "two");
+    const caret = editor.state.selection.from;
+    editor.view.dispatch(
+      editor.state.tr.setSelection(
+        TextSelection.create(editor.state.doc, caret),
+      ),
+    );
+    suggestingBackspace(editor);
+    expect([...changeIds(editor)]).toEqual(["s1"]);
+
+    expect(getDocumentCriticChanges(editor)).toEqual([{ changeId: "s1" }]);
+    expect(
+      createCriticChange("addition", undefined, {
+        existingChanges: getDocumentCriticChanges(editor),
+      }).changeId,
+    ).toBe("s2");
+
+    editor.destroy();
+  });
+
+  it("finds the range of a change that covers only the soft break", () => {
+    const { editor } = createWrappedEditor();
+
+    selectText(editor, "two");
+    const caret = editor.state.selection.from;
+    editor.view.dispatch(
+      editor.state.tr.setSelection(
+        TextSelection.create(editor.state.doc, caret),
+      ),
+    );
+    suggestingBackspace(editor);
+
+    expect(getCriticChangeRange(editor, "s1")).toEqual({
+      from: caret - 1,
+      to: caret,
+    });
 
     editor.destroy();
   });
