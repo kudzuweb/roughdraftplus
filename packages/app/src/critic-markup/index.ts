@@ -25,7 +25,9 @@ import {
 import {
   createMarkedRenderer,
   createTurndownService,
+  markdownSoftBreakAttribute,
   placeholderSoftBreakSpans,
+  softBreakMarkdown,
   normalizeBlockSpacing,
   appendYamlEndmatter,
   prependYamlFrontmatter,
@@ -1630,6 +1632,62 @@ function getChangeCommentBlocks(
   );
 }
 
+const elementNodeType = 1;
+const textNodeType = 3;
+// Stands in for whitespace on both sides of the conversion, because both
+// conversions read whitespace as nothing: Turndown treats an inline element
+// holding only whitespace as blank and lifts that whitespace out of it, and
+// the editor's HTML parser collapses whitespace that sits between two inline
+// elements. It is a private-use character rather than a zero-width space
+// because a zero-width space is one an author can type, and text a marker
+// covers has to come back out of a save as it went in.
+const criticWhitespacePlaceholder = "\ue000";
+
+function stripCriticWhitespacePlaceholder(text: string): string {
+  return text.replaceAll(criticWhitespacePlaceholder, "");
+}
+
+function padCriticWhitespace(text: string): string {
+  return `${criticWhitespacePlaceholder}${text}${criticWhitespacePlaceholder}`;
+}
+
+/**
+ * The whitespace a marker covers, when it covers nothing else, and null when
+ * it covers anything more. Markdown cannot wrap whitespace alone in emphasis
+ * or a link, so a marker over whitespace is written as the bare whitespace and
+ * the runs on either side keep their own formatting. Turndown's reading of the
+ * same element is no use here: the emphasis rule reads a lone soft break as
+ * empty and drops it, and around a space it writes `** **`, which reads back
+ * as two asterisks rather than as bold.
+ */
+function whitespaceOnlyChangeText(element: HTMLElement): string | null {
+  let text = "";
+
+  const visit = (node: ChildNode): boolean => {
+    if (node.nodeType === textNodeType) {
+      const value = stripCriticWhitespacePlaceholder(node.nodeValue ?? "");
+      if (/\S/.test(value)) return false;
+
+      text += value;
+      return true;
+    }
+
+    if (node.nodeType !== elementNodeType) return true;
+
+    const child = node as HTMLElement;
+    if (child.hasAttribute(markdownSoftBreakAttribute)) {
+      text += softBreakMarkdown(child);
+      return true;
+    }
+
+    return [...child.childNodes].every(visit);
+  };
+
+  if (![...element.childNodes].every(visit)) return null;
+
+  return text.length > 0 ? text : null;
+}
+
 /**
  * `readPairedText` reads the other half of a substitution. It defaults to the
  * turndown pass a substitution in prose needs, and a fence passes the code
@@ -1648,10 +1706,18 @@ function serializeCriticChangeElement(
     service.turndown(paired.innerHTML).trim(),
 ) {
   const change = getElementChangeAttrs(element);
+  // Every text this marker can write passes through here, whether it comes
+  // from the walk above, from turndown, or from the paired half of a
+  // substitution, so this is where the padding comes back out. One mark can
+  // cover a padded space and formatted text at once, and the padding has to
+  // leave with either.
+  const changeContent = stripCriticWhitespacePlaceholder(content);
 
-  if (!change) return content;
+  if (!change) return changeContent;
 
-  const markerText = escapeCriticMarkupText(content);
+  const markerText = escapeCriticMarkupText(
+    whitespaceOnlyChangeText(element) ?? changeContent,
+  );
   const commentBlocks = getChangeCommentBlocks(
     element,
     comments,
@@ -1697,7 +1763,10 @@ function serializeCriticChangeElement(
       change.changeId,
     )
   ) {
-    const replacement = escapeCriticMarkupText(readPairedText(nextElement));
+    const replacement = escapeCriticMarkupText(
+      whitespaceOnlyChangeText(nextElement) ??
+        stripCriticWhitespacePlaceholder(readPairedText(nextElement)),
+    );
     return `{~~${markerText}~>${replacement}~~}${metadata}${commentBlocks}`;
   }
 
@@ -1912,6 +1981,44 @@ export function criticMarkdownToRenderedHtml(
   return { html, comments, changes, frontmatter, endmatter };
 }
 
+/**
+ * A change span holding only whitespace, padded so the editor's HTML parser
+ * keeps it. That parser collapses whitespace that sits between two inline
+ * elements, so the replacement half of a substitution from one space to
+ * another, and a marker over a space next to other whitespace, were both gone
+ * before the document existed. A span whose content is only whitespace holds
+ * no tags, so this reaches its own closing tag without balancing anything.
+ */
+const whitespaceOnlyChangeSpan =
+  /(<span data-critic-change-kind="[^"]*"[^>]*>)(\s+)(<\/span>)/g;
+
+function padWhitespaceChangeSpans(html: string): string {
+  return html.replace(
+    whitespaceOnlyChangeSpan,
+    (_match, open: string, whitespace: string, close: string) =>
+      `${open}${padCriticWhitespace(whitespace)}${close}`,
+  );
+}
+
+/**
+ * Takes that padding back out of the parsed document, so the text the editor
+ * holds is the text the author wrote. Only a change's own text is touched,
+ * which is the only text the padding was ever added to.
+ */
+function stripWhitespaceChangePadding(node: JSONContent): JSONContent {
+  if (
+    node.type === "text" &&
+    typeof node.text === "string" &&
+    (node.marks ?? []).some((mark) => mark.type === "criticChange")
+  ) {
+    return { ...node, text: stripCriticWhitespacePlaceholder(node.text) };
+  }
+
+  if (!node.content) return node;
+
+  return { ...node, content: node.content.map(stripWhitespaceChangePadding) };
+}
+
 export function criticMarkdownToEditorState(
   markdown: string,
   options?: MarkdownOptions,
@@ -1929,7 +2036,9 @@ export function criticMarkdownToEditorState(
     parsedEndmatter,
   );
   const html = parser.parse(protectRichTextRoundTripMarkdown(body)) as string;
-  const doc = generateJSON(html, extensions) as JSONContent & {
+  const doc = stripWhitespaceChangePadding(
+    generateJSON(padWhitespaceChangeSpans(html), extensions),
+  ) as JSONContent & {
     yamlFrontmatter?: string;
     yamlEndmatter?: string;
   };
@@ -1984,6 +2093,32 @@ function collectCriticChangesFromDoc(
   return changes;
 }
 
+/**
+ * Turndown reads an inline element whose text is only whitespace as blank
+ * before any rule sees it: it drops the element and writes the whitespace back
+ * as ordinary text beside it, which lost every marker covering only a space.
+ * It also lifts whitespace out of an inline element as flanking text, which
+ * takes the space out of a marker that covers one. Padding that whitespace
+ * makes the element ordinary text on both counts, and
+ * `serializeCriticChangeElement` takes the padding back out of every text it
+ * writes.
+ */
+function padWhitespaceChangeText(node: JSONContent): JSONContent {
+  if (
+    node.type === "text" &&
+    typeof node.text === "string" &&
+    node.text.length > 0 &&
+    node.text.trim() === "" &&
+    (node.marks ?? []).some((mark) => mark.type === "criticChange")
+  ) {
+    return { ...node, text: padCriticWhitespace(node.text) };
+  }
+
+  if (!node.content) return node;
+
+  return { ...node, content: node.content.map(padWhitespaceChangeText) };
+}
+
 export function editorStateToCriticMarkdown(
   doc: JSONContent,
   comments: Map<string, CriticComment>,
@@ -1993,7 +2128,7 @@ export function editorStateToCriticMarkdown(
     idCounters?: ReviewIdCounters;
   },
 ): string {
-  const html = generateHTML(doc, extensions);
+  const html = generateHTML(padWhitespaceChangeText(doc), extensions);
   const service = createTurndownService();
   const frontmatter =
     options?.frontmatter ??

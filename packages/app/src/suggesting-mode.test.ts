@@ -781,11 +781,13 @@ function createWrappedEditor() {
   return { editor, comments };
 }
 
-// The save path fills soft-break spans with U+200B before Turndown; every
-// saved string from these tests is checked so the placeholder never leaks.
+// The save path fills soft-break spans with U+200B and pads the whitespace a
+// change mark covers with U+E000, both before Turndown; every saved string
+// from these tests is checked so neither placeholder leaks.
 function saveMarkdown(editor: Editor, comments: Map<string, never>) {
   const markdown = editorStateToCriticMarkdown(editor.getJSON(), comments);
   expect(markdown).not.toContain("\u200b");
+  expect(markdown).not.toContain("\ue000");
   return markdown;
 }
 
@@ -1102,5 +1104,272 @@ describe("editing a suggestion mark", () => {
       'Keep {++clear wording++}{id="s1" by="AI" at="2026-04-23T18:00:00.000Z"} here.\n',
     );
     editor.destroy();
+  });
+});
+
+/**
+ * Helper: put the caret just before `text` and press Backspace in suggesting
+ * mode, which marks the character in front of it as a deletion.
+ */
+function backspaceBefore(editor: Editor, text: string) {
+  selectText(editor, text);
+  const caret = editor.state.selection.from;
+  editor.view.dispatch(
+    editor.state.tr.setSelection(TextSelection.create(editor.state.doc, caret)),
+  );
+  suggestingBackspace(editor);
+}
+
+describe("suggesting mode deleting whitespace inside inline formatting", () => {
+  it("writes a deleted wrap inside bold as one marker between the bold runs", () => {
+    const { editor, comments } = createEditorFromMarkdown(
+      "A **bold phrase\nwrapped tight** ends.\n",
+    );
+
+    backspaceBefore(editor, "wrapped");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^A \*\*bold phrase\*\*\{--\n--\}\{id="s1"[^}]*\}\*\*wrapped tight\*\* ends\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a deleted wrap inside bold", () => {
+    const accepted = createEditorFromMarkdown(
+      "A **bold phrase\nwrapped tight** ends.\n",
+    );
+    backspaceBefore(accepted.editor, "wrapped");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "A **bold phrasewrapped tight** ends.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown(
+      "A **bold phrase\nwrapped tight** ends.\n",
+    );
+    backspaceBefore(rejected.editor, "wrapped");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "A **bold phrase\nwrapped tight** ends.\n",
+    );
+    rejected.editor.destroy();
+  });
+
+  it("writes a deleted wrap inside italics as one marker between the italic runs", () => {
+    const { editor, comments } = createEditorFromMarkdown(
+      "A _slanted phrase\nwrapped tight_ ends.\n",
+    );
+
+    backspaceBefore(editor, "wrapped");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^A _slanted phrase_\{--\n--\}\{id="s1"[^}]*\}_wrapped tight_ ends\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a deleted wrap inside italics", () => {
+    const accepted = createEditorFromMarkdown(
+      "A _slanted phrase\nwrapped tight_ ends.\n",
+    );
+    backspaceBefore(accepted.editor, "wrapped");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "A _slanted phrasewrapped tight_ ends.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown(
+      "A _slanted phrase\nwrapped tight_ ends.\n",
+    );
+    backspaceBefore(rejected.editor, "wrapped");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "A _slanted phrase\nwrapped tight_ ends.\n",
+    );
+    rejected.editor.destroy();
+  });
+
+  it("writes a deleted wrap inside a link as one marker between two links", () => {
+    const { editor, comments } = createEditorFromMarkdown(
+      "A [linked phrase\nwrapped tight](https://example.com) ends.\n",
+    );
+
+    backspaceBefore(editor, "wrapped");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^A \[linked phrase\]\(https:\/\/example\.com\)\{--\n--\}\{id="s1"[^}]*\}\[wrapped tight\]\(https:\/\/example\.com\) ends\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a deleted wrap inside a link", () => {
+    const accepted = createEditorFromMarkdown(
+      "A [linked phrase\nwrapped tight](https://example.com) ends.\n",
+    );
+    backspaceBefore(accepted.editor, "wrapped");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "A [linked phrasewrapped tight](https://example.com) ends.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown(
+      "A [linked phrase\nwrapped tight](https://example.com) ends.\n",
+    );
+    backspaceBefore(rejected.editor, "wrapped");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "A [linked phrase\nwrapped tight](https://example.com) ends.\n",
+    );
+    rejected.editor.destroy();
+  });
+
+  it("writes a deleted space inside bold as one marker between the bold runs", () => {
+    const { editor, comments } = createEditorFromMarkdown(
+      "A **bold phrase here** ends.\n",
+    );
+
+    backspaceBefore(editor, "here");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^A \*\*bold phrase\*\*\{-- --\}\{id="s1"[^}]*\}\*\*here\*\* ends\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a deleted space inside bold", () => {
+    const accepted = createEditorFromMarkdown("A **bold phrase here** ends.\n");
+    backspaceBefore(accepted.editor, "here");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "A **bold phrasehere** ends.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown("A **bold phrase here** ends.\n");
+    backspaceBefore(rejected.editor, "here");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "A **bold phrase here** ends.\n",
+    );
+    rejected.editor.destroy();
+  });
+
+  it("writes a deleted space between two plain words as one marker", () => {
+    const { editor, comments } = createEditorFromMarkdown("Two words here.\n");
+
+    backspaceBefore(editor, "words");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^Two\{-- --\}\{id="s1"[^}]*\}words here\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a deleted space between two plain words", () => {
+    const accepted = createEditorFromMarkdown("Two words here.\n");
+    backspaceBefore(accepted.editor, "words");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "Twowords here.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown("Two words here.\n");
+    backspaceBefore(rejected.editor, "words");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "Two words here.\n",
+    );
+    rejected.editor.destroy();
+  });
+});
+
+describe("suggesting mode adding and replacing whitespace", () => {
+  it("writes a suggested space between two plain words as one marker", () => {
+    const { editor, comments } = createEditorFromMarkdown("Twowords here.\n");
+
+    selectText(editor, "words");
+    editor.view.dispatch(
+      editor.state.tr.setSelection(
+        TextSelection.create(editor.state.doc, editor.state.selection.from),
+      ),
+    );
+    suggestingTypeChar(editor, " ");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^Two\{\+\+ \+\+\}\{id="s1"[^}]*\}words here\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a suggested space between two plain words", () => {
+    const accepted = createEditorFromMarkdown("Twowords here.\n");
+    selectText(accepted.editor, "words");
+    accepted.editor.view.dispatch(
+      accepted.editor.state.tr.setSelection(
+        TextSelection.create(
+          accepted.editor.state.doc,
+          accepted.editor.state.selection.from,
+        ),
+      ),
+    );
+    suggestingTypeChar(accepted.editor, " ");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "Two words here.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown("Twowords here.\n");
+    selectText(rejected.editor, "words");
+    rejected.editor.view.dispatch(
+      rejected.editor.state.tr.setSelection(
+        TextSelection.create(
+          rejected.editor.state.doc,
+          rejected.editor.state.selection.from,
+        ),
+      ),
+    );
+    suggestingTypeChar(rejected.editor, " ");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "Twowords here.\n",
+    );
+    rejected.editor.destroy();
+  });
+
+  it("writes a wrap replaced by a space as one substitution", () => {
+    const { editor, comments } = createEditorFromMarkdown("Two\nwords here.\n");
+
+    selectText(editor, " ");
+    suggestingTypeWithSelection(editor, " ");
+
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /^Two\{~~\n~> ~~\}\{id="s1"[^}]*\}words here\.\n$/,
+    );
+    editor.destroy();
+  });
+
+  it("accepts and rejects a wrap replaced by a space", () => {
+    const accepted = createEditorFromMarkdown("Two\nwords here.\n");
+    selectText(accepted.editor, " ");
+    suggestingTypeWithSelection(accepted.editor, " ");
+    expect(accepted.editor.commands.acceptCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(accepted.editor, accepted.comments)).toBe(
+      "Two words here.\n",
+    );
+    accepted.editor.destroy();
+
+    const rejected = createEditorFromMarkdown("Two\nwords here.\n");
+    selectText(rejected.editor, " ");
+    suggestingTypeWithSelection(rejected.editor, " ");
+    expect(rejected.editor.commands.rejectCriticChange("s1")).toBe(true);
+    expect(saveMarkdown(rejected.editor, rejected.comments)).toBe(
+      "Two\nwords here.\n",
+    );
+    rejected.editor.destroy();
   });
 });

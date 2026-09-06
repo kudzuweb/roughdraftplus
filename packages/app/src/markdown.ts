@@ -207,7 +207,11 @@ function typedMarkdownTableSeparator(
     : null;
 }
 
-function softBreakMarkdown(node: HTMLElement): string {
+/**
+ * The markdown one soft-break span stands for: the newline the author typed,
+ * or a space where the block it sits in cannot span lines.
+ */
+export function softBreakMarkdown(node: HTMLElement): string {
   return node.closest(singleLineBlockSelector) ? " " : "\n";
 }
 
