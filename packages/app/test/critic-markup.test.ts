@@ -2294,6 +2294,8 @@ describe("CriticMarkup delimiter escaping", () => {
       });
     }
 
+    // packages/rfm/src/index.test.ts pins the same bytes against the other
+    // reader, so the two cannot drift apart on one document.
     it("hands escape-inert text back with its escapes removed", () => {
       const input = `See {==${inertText}==}{>>${inertText}<<}${commentMetadata}.\n`;
 

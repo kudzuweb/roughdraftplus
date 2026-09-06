@@ -804,6 +804,25 @@ describe("escaped review delimiters", () => {
     );
   });
 
+  // The same bytes the app pins in packages/app/test/critic-markup.test.ts,
+  // under "escape-inert Markdown contexts stay byte-stable". The two readers
+  // must report one logical text for one document; before escapes were stripped
+  // from code spans and autolinks, the app held a doubled copy of this.
+  it("agrees with the app's reader on escape-inert text", () => {
+    const inertText =
+      "a code span `C:\\\\dir` and `x\\{++y\\++}z`, " +
+      "an autolink <https://example.com/p\\{++q\\++}r>";
+    const markdown = `See {==${inertText}==}{>>${inertText}<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.\n`;
+    const typedText =
+      "a code span `C:\\dir` and `x{++y++}z`, " +
+      "an autolink <https://example.com/p{++q++}r>";
+
+    expect(codes(markdown)).toEqual([]);
+    expect(extractRoughdraftReviewIndex(markdown).items).toMatchObject([
+      { id: "c1", text: typedText, anchorText: typedText },
+    ]);
+  });
+
   it("still reads a body that ends with a bare backslash", () => {
     // Written before escaping existed, so the backslash is ordinary text
     // rather than an escape of the delimiter that closes the comment.
