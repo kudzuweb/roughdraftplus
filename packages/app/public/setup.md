@@ -29,9 +29,11 @@ Create a short example document and open it for the user so they can confirm the
 
 ```bash
 example_file="$HOME/roughdraft-example.md"
-curl -fsSL https://roughdraft.md/example.md -o "$example_file"
+curl -fsSL https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/packages/app/public/example.md -o "$example_file"
 roughdraft open "$example_file"
 ```
+
+That example still keeps its comment metadata in YAML endmatter, the legacy form described below, until the render-or-migrate work lands; read it as legacy and reply inline anyway.
 
 If `curl` is unavailable, create a short Markdown file yourself with a heading, one or two sentences, and an invitation for the user to leave a comment or question.
 
