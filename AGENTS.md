@@ -131,14 +131,15 @@ Before creating or updating a PR:
 
 1. Run `pnpm check`.
 2. Run `pnpm test:smoke`, especially after UI, routing, editor, file-backend, or workflow changes. This mirrors the browser smoke step in CI and is not covered by `pnpm check`.
-3. Fix any lint, format, test, smoke, or build failures.
-4. Confirm `git status --short` only shows intended changes.
-5. Make sure the current branch name is descriptive. If it is random or unclear, rename it before pushing.
-6. Rebase the current branch on the latest `origin/main`.
-7. Commit and push.
-8. Create the PR with `gh pr create --base main --repo kudzuweb/roughdraftplus`. The `--repo`
+3. Run `pnpm test:packaging` whenever you change the root `package.json` — its `dependencies`, `files`, `bin` or `scripts` — and rely on CI otherwise. It packs the repo, installs the tarball into a throwaway prefix and runs the installed CLI, which is the only check that exercises the artifact people install. Run it after `pnpm check`, because it needs the build that `pnpm check` produces. It takes a few seconds and reaches the npm registry, which is why it is not part of `pnpm check`. CI runs it on every pull request, so a manifest change cannot merge without it, but finding out locally is much cheaper than finding out in CI.
+4. Fix any lint, format, test, smoke, packaging, or build failures.
+5. Confirm `git status --short` only shows intended changes.
+6. Make sure the current branch name is descriptive. If it is random or unclear, rename it before pushing.
+7. Rebase the current branch on the latest `origin/main`.
+8. Commit and push.
+9. Create the PR with `gh pr create --base main --repo kudzuweb/roughdraftplus`. The `--repo`
    flag is not optional here — see below.
-9. If the PR resolves GitHub issues, include closing keywords such as `Fixes #123` in the PR body.
+10. If the PR resolves GitHub issues, include closing keywords such as `Fixes #123` in the PR body.
 
 ### This repo is a fork — always name it
 
