@@ -59,7 +59,7 @@ comments:
     at: "2026-04-28T12:00:00.000Z"
 ```
 
-A document-level comment counts as unresolved until it carries `status: resolved` or is removed. Readers MUST report it as a review item; writers MUST NOT add `re` to it or move it into the body.
+A document-level comment counts as unresolved until it carries `status: resolved` or is removed. Readers MUST report it as a review item; writers MUST NOT add `re` to it or move it into the body. Writing one MUST NOT move the rest of the document's metadata into endmatter; see [Legacy Endmatter Metadata](#legacy-endmatter-metadata).
 
 ## Anchored Comments
 
@@ -198,6 +198,8 @@ suggestions:
 In that form, root comment bodies and suggestion text stay inline while their `by` and `at` live under `comments:` or `suggestions:`, and a reply lives entirely in endmatter as an entry with `body` and `re`. An endmatter reply has no marker of its own in the body, so a reader MUST attach it to the item its `re` names and MUST NOT require an inline marker to display it. Roughdraft shows such a reply in the thread of the nearest ancestor that does have a marker.
 
 Readers MUST accept this form and MUST preserve its `comments:` and `suggestions:` maps on items they are not rewriting. Writers MUST NOT emit new body comments, replies, or suggestions in it. The only endmatter entries a writer emits are the `counters` map ([Id Counters](#id-counters)) and a [document-level comment](#document-level-comments); neither is legacy. For compatibility, readers MAY also accept legacy comment metadata of the form `{@id:c1; by:AI; at:2026-04-28T12:00:00.000Z@}`.
+
+A document is in this form when its endmatter holds an entry for an item whose text sits inline behind a compact reference: a `comments:` entry with `by` and `at` and no `body`, or any `suggestions:` entry. An entry carrying a `body` holds the text itself and has no compact reference in the body, so neither a [document-level comment](#document-level-comments) nor an endmatter reply puts a document in this form. A writer MUST NOT rewrite a document's inline attribute blocks into compact references because its endmatter carries one of those entries, and MUST keep such an entry when saving a document that writes its metadata inline.
 
 ## Id Counters
 

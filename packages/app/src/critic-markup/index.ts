@@ -385,11 +385,45 @@ function endmatterEntryForChange(
   };
 }
 
+/**
+ * Whether an endmatter comment entry belongs to an item whose text sits inline
+ * behind a compact `{#cN}` reference. Such an entry carries only `by` and `at`;
+ * an entry with a `body` holds the text itself, which is how a document-level
+ * comment and a legacy endmatter reply are written, and neither has a compact
+ * reference in the body.
+ */
+function isCompactReferenceEntry(entry: Record<string, unknown>): boolean {
+  return typeof entry.body !== "string";
+}
+
+/**
+ * Whether this document keeps review metadata in endmatter behind compact
+ * references. Only the legacy form does, so a document-level comment or an
+ * endmatter reply on an inline-attribute document does not make it one: those
+ * entries have nowhere else to live and would otherwise flip every inline
+ * attribute block in the document to `{#cN}` on the next save.
+ */
 function reviewMetadataLivesInEndmatter(parsed: ParsedEndmatter): boolean {
   return (
-    parsed.data !== null &&
-    ("comments" in parsed.data || "suggestions" in parsed.data)
+    parsed.suggestions.size > 0 ||
+    [...parsed.comments.values()].some(isCompactReferenceEntry)
   );
+}
+
+/**
+ * Whether a comment's text has no home in the body, so its endmatter entry has
+ * to survive a save of an inline-attribute document. A document-level comment
+ * applies to the whole document and has no anchor to sit beside; a legacy
+ * endmatter reply has no marker of its own. Dropping either would delete the
+ * reviewer's words.
+ */
+function commentTextLivesInEndmatter(
+  comment: CriticComment,
+  parsed: ParsedEndmatter,
+): boolean {
+  if (comment.scope === "document") return true;
+  const entry = parsed.comments.get(comment.id);
+  return entry !== undefined && !isCompactReferenceEntry(entry);
 }
 
 function serializeReviewEndmatter(
@@ -419,14 +453,17 @@ function serializeReviewEndmatter(
     ]),
   );
 
-  if (useEndmatter) {
-    for (const comment of comments.values()) {
-      commentEntries.set(
-        comment.id,
-        endmatterEntryForComment(comment, parsed.comments.get(comment.id)),
-      );
+  for (const comment of comments.values()) {
+    if (!useEndmatter && !commentTextLivesInEndmatter(comment, parsed)) {
+      continue;
     }
+    commentEntries.set(
+      comment.id,
+      endmatterEntryForComment(comment, parsed.comments.get(comment.id)),
+    );
+  }
 
+  if (useEndmatter) {
     for (const change of changes.values()) {
       suggestionEntries.set(
         change.changeId,
