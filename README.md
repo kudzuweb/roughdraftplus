@@ -192,6 +192,7 @@ roughdraft open <path> --no-open
 roughdraft open <path> --print-url
 roughdraft open <path> --json
 roughdraft open <path> --no-watch
+roughdraft open <path> --label "<session name>"
 roughdraft start --port <port>
 roughdraft status --json
 roughdraft stop --all
