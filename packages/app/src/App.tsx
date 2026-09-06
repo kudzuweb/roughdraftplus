@@ -45,6 +45,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "./components/ui/dialog";
+import { SuggestionChangedText } from "./DocumentReviewRail";
 import {
   type DocumentOpenedElsewhere,
   DocumentWorkspace,
@@ -275,7 +276,8 @@ const HOMEPAGE_WORKFLOW_REVIEW_ITEMS = [
     key: "nora-suggestion",
     commentIds: ["nora-suggestion"],
     author: "Nora",
-    body: 'Replace: "agent\'s plan" with "homepage plan"',
+    oldText: "Review an agent's plan",
+    newText: "Review a homepage plan",
     kind: "suggestion",
     replies: [],
   },
@@ -1130,7 +1132,24 @@ function RoughdraftPopupMock({ workflowStage }: { workflowStage: number }) {
                               : undefined
                           }
                         >
-                          {item.body}
+                          {item.kind === "comment" ? (
+                            item.body
+                          ) : (
+                            <>
+                              <SuggestionChangedText
+                                changeId={item.key}
+                                variant="deleted"
+                                text={item.oldText}
+                                fallback="Original text"
+                              />{" "}
+                              <SuggestionChangedText
+                                changeId={item.key}
+                                variant="inserted"
+                                text={item.newText}
+                                fallback="Changed text"
+                              />
+                            </>
+                          )}
                         </p>
                         {showAgentReply
                           ? item.replies?.map((reply) => (
