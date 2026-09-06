@@ -381,14 +381,21 @@ function serializeReviewEndmatter(
   const parsed = parseReviewEndmatter(existingEndmatter);
   const commentEntries = new Map<string, Record<string, unknown>>();
   const suggestionEntries = new Map<string, Record<string, unknown>>();
-  const counters = mergeReviewIdCounters(
-    advanceReviewIdCounters(parsed.counters, [
-      ...parsed.comments.keys(),
-      ...parsed.suggestions.keys(),
+  const counters = recordedReviewIdCounters(
+    parsed.counters,
+    mergeReviewIdCounters(
+      advanceReviewIdCounters(parsed.counters, [
+        ...parsed.comments.keys(),
+        ...parsed.suggestions.keys(),
+        ...comments.keys(),
+        ...changes.keys(),
+      ]),
+      idCounters ?? parsed.counters,
+    ),
+    advanceReviewIdCounters(createReviewIdCounters(), [
       ...comments.keys(),
       ...changes.keys(),
     ]),
-    idCounters ?? parsed.counters,
   );
 
   for (const comment of comments.values()) {
@@ -498,6 +505,33 @@ function areReviewIdCountersEqual(
   return (
     left.comments === right.comments && left.suggestions === right.suggestions
   );
+}
+
+function recordedReviewIdCounter(
+  recorded: number,
+  effective: number,
+  present: number,
+): number {
+  return recorded > 0 || effective > present ? effective : 0;
+}
+
+function recordedReviewIdCounters(
+  recorded: ReviewIdCounters,
+  effective: ReviewIdCounters,
+  present: ReviewIdCounters,
+): ReviewIdCounters {
+  return {
+    comments: recordedReviewIdCounter(
+      recorded.comments,
+      effective.comments,
+      present.comments,
+    ),
+    suggestions: recordedReviewIdCounter(
+      recorded.suggestions,
+      effective.suggestions,
+      present.suggestions,
+    ),
+  };
 }
 
 function serializeReviewIdCounters(
