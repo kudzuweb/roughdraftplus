@@ -398,14 +398,19 @@ function isCompactReferenceEntry(entry: Record<string, unknown>): boolean {
 
 /**
  * Whether this document keeps review metadata in endmatter behind compact
- * references. Only the legacy form does, so a document-level comment or an
- * endmatter reply on an inline-attribute document does not make it one: those
- * entries have nowhere else to live and would otherwise flip every inline
- * attribute block in the document to `{#cN}` on the next save.
+ * references. A `comments:` map holding nothing but entries with their own
+ * text does not count: those are document-level comments and legacy endmatter
+ * replies, which have nowhere else to live, and treating them as the legacy
+ * form flipped every inline attribute block in the document to `{#cN}` on the
+ * next save. An emptied map still counts, so a legacy document whose items
+ * have all been removed stays legacy and keeps its counters.
  */
 function reviewMetadataLivesInEndmatter(parsed: ParsedEndmatter): boolean {
+  if (parsed.data === null) return false;
+  if ("suggestions" in parsed.data) return true;
+  if (!("comments" in parsed.data)) return false;
   return (
-    parsed.suggestions.size > 0 ||
+    parsed.comments.size === 0 ||
     [...parsed.comments.values()].some(isCompactReferenceEntry)
   );
 }

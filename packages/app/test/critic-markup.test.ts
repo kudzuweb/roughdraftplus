@@ -72,6 +72,33 @@ const inlineAttributeOverallCommentMarkdown = [
   "",
 ].join("\n");
 
+// Mirrors what the selection menu does to start a thread: the first run of
+// text in the document becomes the new comment's anchor.
+function anchorCommentOnFirstText(
+  node: JSONContent,
+  commentId: string,
+): JSONContent {
+  if (node.type === "text") {
+    return {
+      ...node,
+      marks: [
+        ...(node.marks ?? []),
+        { type: "commentRef", attrs: { commentIds: [commentId] } },
+      ],
+    };
+  }
+
+  let anchored = false;
+  const content = node.content?.map((child) => {
+    if (anchored) return child;
+    const next = anchorCommentOnFirstText(child, commentId);
+    if (next !== child) anchored = true;
+    return next;
+  });
+
+  return content ? { ...node, content } : node;
+}
+
 // Mirrors how the rail attaches a new reply: the reply's id joins the anchor's
 // existing commentRef mark rather than getting an anchor of its own.
 function attachCommentToAnchor(
@@ -293,6 +320,46 @@ describe("CriticMarkup comments", () => {
     expect(editorStateToCriticMarkdown(doc, comments)).toBe(
       inlineAttributeOverallCommentMarkdown,
     );
+  });
+
+  it("keeps a legacy document legacy once its last compact reference is removed", () => {
+    const legacyMarkdown = [
+      "This paragraph has {==first text==}{>>First note<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-04-23T18:00:00.000Z"',
+      "",
+    ].join("\n");
+    const cleared = editorStateToCriticMarkdown(
+      criticMarkdownToEditorState(legacyMarkdown).doc,
+      new Map(),
+    );
+    expect(cleared).toContain("comments: {}");
+
+    // The emptied map is what still says the document is legacy, so the next
+    // comment it takes belongs in the compact form and not inline.
+    const reopened = criticMarkdownToEditorState(cleared);
+    const added = createCriticComment(
+      {
+        content: "Second note",
+        createdAt: "2026-04-23T18:05:00.000Z",
+        authorId: "user",
+      },
+      { existingComments: [], idCounters: reopened.idCounters },
+    );
+
+    const output = editorStateToCriticMarkdown(
+      anchorCommentOnFirstText(reopened.doc, added.id),
+      new Map([[added.id, added]]),
+      { idCounters: reopened.idCounters },
+    );
+
+    expect(added.id).toBe("c2");
+    expect(output).toContain("{>>Second note<<}{#c2}");
+    expect(output).toContain("counters:\n  comments: 2");
   });
 
   it("writes a new reply inline on a document carrying a persisted overall comment", () => {
