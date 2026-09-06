@@ -40,7 +40,10 @@ A writer that escapes MUST escape every one of those sequences wherever it write
 
 A backslash before anything else is ordinary text and a reader MUST leave it as written, so a document from a writer that did not escape keeps its backslashes. One case from such a document is ambiguous: text that ends with a backslash reads as escaping the delimiter that closes the marker, leaving the marker unterminated. A reader that finds no unescaped closing delimiter for a marker SHOULD fall back to the first raw one rather than discarding the marker.
 
-Every escaped form above is also a CommonMark backslash escape, so a Markdown renderer that knows nothing of this specification shows the literal delimiter rather than the backslash. A reader MUST NOT rely on that alone, because a backslash escape is inert inside a code span, a code block, an autolink and raw HTML: text taken from those contexts still carries its escapes and MUST have them removed before it is reported or written again.
+Every escaped form above is also a CommonMark backslash escape, so a Markdown renderer that knows nothing of this specification shows the literal delimiter rather than the backslash. A reader MUST NOT leave the work to its Markdown parser on that account: it MUST remove these escapes itself wherever a backslash survives Markdown parsing. Two separate things put one there, and a reader that accounts for only the first will hand back text that is still escaped and escape it again on the next write:
+
+- Markdown leaves a backslash as ordinary text in some constructs, among them a code span, a code block, an autolink and raw HTML.
+- An implementation's own Markdown serialization may escape a backslash, as a quoted link or image title does, so the text carries that layer as well as this one and reading removes only the serializer's.
 
 Escaping is an extension: an implementation MAY instead reject review text containing a raw closing delimiter, as [Comments](#comments) describes.
 

@@ -87,10 +87,9 @@ const extensions = createEditorExtensions("");
 // read back without it. A comment body is a plain string and unescapes through
 // `unescapeCriticMarkupText`. Marker text is Markdown and stays escaped through
 // the lexer, which both consumes the escapes and keeps a typed delimiter from
-// becoming a marker -- except in a code span and an autolink, where CommonMark
-// makes a backslash ordinary text, so the lexer hands back text that is still
-// escaped. `unescapeInertMarkerTokens` strips those, without which the next
-// save escaped them again and the backslashes doubled on every save.
+// becoming a marker. The lexer consumes those escapes, but not all of them:
+// `unescapeInertMarkerTokens` strips the ones that survive it, without which
+// the next save escaped them again and the backslashes doubled on every save.
 const criticDelimiterEscapePattern =
   /\\|\{==|==\}|\{>>|<<\}|\{\+\+|\+\+\}|\{--|--\}|\{~~|~~\}|~>/g;
 const criticDelimiterUnescapePattern =
@@ -164,13 +163,22 @@ function isAutolinkToken(token: Tokens.Link): boolean {
 }
 
 // Marker text is lexed while still escaped, which is what keeps a delimiter the
-// reviewer typed from becoming a marker. The lexer consumes the escapes as it
-// goes, except in a code span and an autolink, where CommonMark makes a
-// backslash ordinary text. Those are stripped here instead. Every other token
-// has already had its escapes consumed, and unescaping it a second time would
-// eat a backslash the reviewer typed. CommonMark makes a backslash ordinary in
-// raw HTML too, which needs nothing here: inline raw HTML does not survive this
-// editor's round trip at all, with or without a marker around it.
+// reviewer typed from becoming a marker, and the lexer consumes the escapes as
+// it goes. It does not consume all of them, and the ones that survive have two
+// separate causes, so a reader that enumerates only the first misses the rest:
+//
+//  - Markdown leaves a backslash alone in a code span, an autolink and raw
+//    HTML, so text taken from those still carries this format's escapes.
+//  - `createTurndownService` escapes backslashes itself when it writes a quoted
+//    link or image title, and this format's escape then escapes that. Reading
+//    peels the serializer's layer and leaves this one.
+//
+// Either way a backslash survives into the next save, which escapes it again
+// and doubles it. Both are stripped here. Every other token has already had its
+// escapes consumed, and unescaping it a second time would eat a backslash the
+// reviewer typed. Raw HTML needs nothing despite being on the first list:
+// inline raw HTML does not survive this editor's round trip at all, with or
+// without a marker around it.
 function unescapeInertMarkerTokens(tokens: Token[]): Token[] {
   for (const token of tokens) {
     if (token.type === "codespan") {
@@ -178,16 +186,31 @@ function unescapeInertMarkerTokens(tokens: Token[]): Token[] {
       continue;
     }
 
-    if (token.type === "link" && isAutolinkToken(token as Tokens.Link)) {
-      const link = token as Tokens.Link;
-      link.href = unescapeCriticMarkupText(link.href);
-      link.text = unescapeCriticMarkupText(link.text);
-      for (const child of link.tokens ?? []) {
-        if (child.type === "text") {
-          child.text = unescapeCriticMarkupText(child.text);
-        }
+    if (token.type === "image") {
+      const image = token as Tokens.Image;
+      if (image.title) {
+        image.title = unescapeCriticMarkupText(image.title);
       }
       continue;
+    }
+
+    if (token.type === "link") {
+      const link = token as Tokens.Link;
+
+      if (isAutolinkToken(link)) {
+        link.href = unescapeCriticMarkupText(link.href);
+        link.text = unescapeCriticMarkupText(link.text);
+        for (const child of link.tokens ?? []) {
+          if (child.type === "text") {
+            child.text = unescapeCriticMarkupText(child.text);
+          }
+        }
+        continue;
+      }
+
+      if (link.title) {
+        link.title = unescapeCriticMarkupText(link.title);
+      }
     }
 
     const childTokens = (token as Tokens.Generic).tokens;

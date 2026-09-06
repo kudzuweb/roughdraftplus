@@ -2121,6 +2121,21 @@ describe("CriticMarkup delimiter escaping", () => {
   const escapedText = String.raw`back\\slash \{==a\==} \{>>b\<<} \{++c\++} \{--d\--} \{~~e\~>f\~~} g\~>h`;
   const commentMetadata = '{id="c1" by="user" at="2026-04-23T18:00:00.000Z"}';
 
+  function findFirstLinkTitle(node: JSONContent): string | undefined {
+    for (const mark of node.marks ?? []) {
+      if (mark.type === "link" && typeof mark.attrs?.title === "string") {
+        return mark.attrs.title;
+      }
+    }
+
+    for (const child of node.content ?? []) {
+      const title = findFirstLinkTitle(child);
+      if (title !== undefined) return title;
+    }
+
+    return undefined;
+  }
+
   function collectDocText(node: JSONContent): string {
     if (typeof node.text === "string") return node.text;
     return (node.content ?? []).map(collectDocText).join("");
@@ -2293,6 +2308,55 @@ describe("CriticMarkup delimiter escaping", () => {
         expect(saves).toEqual([input, input, input, input]);
       });
     }
+
+    // A quoted link or image title carries a second escaping layer, added by
+    // `createTurndownService` rather than by Markdown, so reading peels the
+    // serializer's layer and leaves this format's. Inside marker text one
+    // logical backslash is therefore four on disk, and two outside.
+    const titledLink = '[text](https://example.com "a\\\\\\\\title")';
+    const singlyEscapedLink = '[text](https://example.com "a\\\\title")';
+
+    const titleCases: Array<[string, string]> = [
+      ["an anchor", `See {==${titledLink}==}{>>Note<<}${commentMetadata}.\n`],
+      [
+        "a comment body",
+        `See {==this==}{>>${singlyEscapedLink}<<}${commentMetadata}.\n`,
+      ],
+      ["an insertion", `Add {++${titledLink}++}${changeMetadata}.\n`],
+      ["a deletion", `Drop {--${titledLink}--}${changeMetadata}.\n`],
+      [
+        "a substitution's old text",
+        `Use {~~${titledLink}~>new~~}${changeMetadata}.\n`,
+      ],
+      [
+        "a substitution's new text",
+        `Use {~~old~>${titledLink}~~}${changeMetadata}.\n`,
+      ],
+      ["no marker at all", `See ${singlyEscapedLink} here.\n`],
+    ];
+
+    for (const [name, input] of titleCases) {
+      it(`keeps a link title in ${name} unchanged across four saves`, () => {
+        const saves: string[] = [];
+        let current = input;
+
+        for (let round = 0; round < 4; round += 1) {
+          const { doc, comments } = criticMarkdownToEditorState(current);
+          current = editorStateToCriticMarkdown(doc, comments);
+          saves.push(current);
+        }
+
+        expect(saves).toEqual([input, input, input, input]);
+      });
+    }
+
+    it("hands a link title back as the one backslash it stands for", () => {
+      const input = `See {==${titledLink}==}{>>Note<<}${commentMetadata}.\n`;
+
+      const { doc } = criticMarkdownToEditorState(input);
+
+      expect(findFirstLinkTitle(doc)).toBe("a\\title");
+    });
 
     // packages/rfm/src/index.test.ts pins the same bytes against the other
     // reader, so the two cannot drift apart on one document.
