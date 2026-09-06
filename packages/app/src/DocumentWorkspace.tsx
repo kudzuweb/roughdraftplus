@@ -1277,7 +1277,11 @@ export function DocumentWorkspace({
                     {documentCopyPath}
                   </span>
                 ) : null}
-                <span data-testid="document-session-label" className="shrink-0">
+                <span
+                  data-testid="document-session-label"
+                  title={documentSessionLabel ?? undefined}
+                  className="min-w-0 max-w-full truncate"
+                >
                   {documentSessionLabel
                     ? `Opened by ${documentSessionLabel}`
                     : "No session label"}

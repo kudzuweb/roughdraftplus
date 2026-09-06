@@ -113,6 +113,44 @@ test.describe("open document path and session in the header", () => {
     );
   });
 
+  test("truncates a long session label and keeps the full label in its title", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "plan.md",
+      "# Plan\n\nPlan body.\n",
+    );
+    const longLabel = Array.from(
+      { length: 40 },
+      (_, index) => `word${index + 1}`,
+    ).join(" ");
+
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.goto(
+      `/?${new URLSearchParams({ path: filePath, label: longLabel })}`,
+    );
+    const label = page.getByTestId("document-session-label");
+    await expect(label).toHaveAttribute("title", longLabel);
+    await expect(label).toContainText("Opened by word1");
+
+    const overflow = await page
+      .getByTestId("document-location")
+      .evaluate((line) => ({
+        line: line.scrollWidth - line.clientWidth,
+        label: (() => {
+          const span = line.querySelector(
+            '[data-testid="document-session-label"]',
+          );
+          return span ? span.scrollWidth - span.clientWidth : -1;
+        })(),
+      }));
+    // The line no longer overflows its box; the label span itself is the
+    // element that clips, which is what shows the ellipsis.
+    expect(overflow.line).toBe(0);
+    expect(overflow.label).toBeGreaterThan(0);
+  });
+
   test("takes a new session label from a repeated open request without reloading", async ({
     page,
   }) => {
@@ -208,9 +246,8 @@ test.describe("open document path and session in the header", () => {
           () =>
             second?.receivedUrls
               .filter((url) => url.startsWith("/api/open-requests"))
-              .map(
-                (url) =>
-                  new URL(url, "http://127.0.0.1").searchParams.get("label"),
+              .map((url) =>
+                new URL(url, "http://127.0.0.1").searchParams.get("label"),
               ),
           { timeout: 15_000 },
         )
