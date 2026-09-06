@@ -83,5 +83,5 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 | Approving a mark accepts it into prose | Agent strips markup on approval | Approve action accepts the suggestion (items 6, 10) |
 | Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |
 | Inline replies canonical | Agent discipline; prompt/spec still say endmatter | Prompt/spec rewrite + legacy rendering (item 4) |
-| Collapsed threads, newest reply visible | Not built | Review rail change (item 5) |
+| Collapsed threads, newest reply visible | Product behavior | Shipped (item 5) |
 | Tab writes only on reviewer edits; stops after Done or until a replaced server is adopted | Product behavior | Shipped (item 2) |
