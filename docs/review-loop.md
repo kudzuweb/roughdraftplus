@@ -63,10 +63,14 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
   so an unwanted rewrite is one checkout away.
 - After a round, diff the file: whitespace-only and joined-line changes are save reflow, not
   reviewer edits (upstream issues 98 and 100; backlog items 1 and 2).
-- Close the tab (or stop the server) before restoring or editing a reviewed file outside the loop.
-  An open tab's watcher can save its reflowed copy over external changes — including a `git
-  checkout`, which is not final while Roughdraft still holds the file. Re-run the checkout after
-  closing if in doubt.
+- A tab writes to the file only when the reviewer edits or comments, so restoring or editing a
+  reviewed file outside the loop is safe while the tab has no unsaved edits: a `git checkout` is
+  final, and the tab reloads the new content without writing. A tab with unsaved edits shows
+  "File changed on disk" and stops saving until the reviewer picks reload or overwrite. After
+  Done Reviewing the tab does not write until a new review starts. If the server is restarted, the
+  tab adopts the replacement and checks the file version first: unsaved edits are kept and saved
+  only when the file did not change while the server was away; otherwise the tab shows "File
+  changed on disk" and stays read-only until the reviewer decides.
 - Author documents destined for review defensively while the reflow bugs live: prefer prose and
   bullets over tables and fenced blocks, and keep blank lines between blocks.
 
@@ -80,3 +84,4 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 | Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |
 | Inline replies canonical | Agent discipline; prompt/spec still say endmatter | Prompt/spec rewrite + legacy rendering (item 4) |
 | Collapsed threads, newest reply visible | Not built | Review rail change (item 5) |
+| Tab writes only on reviewer edits; stops after Done or until a replaced server is adopted | Product behavior | Shipped (item 2) |
