@@ -840,6 +840,11 @@ export function DocumentWorkspace({
   const reviewHandoffButtonDisabled =
     reviewHandoffDisabled && reviewHandoffState !== "notified";
   const trimmedOverallComment = overallComment.trim();
+  // A top notice spans nearly the full width on narrow viewports, so both
+  // fixed status affordances drop below it rather than sitting underneath.
+  const fixedStatusTopClass = hasTopNotice
+    ? "top-[19rem] sm:top-[7rem]"
+    : "top-3";
 
   return (
     <div
@@ -851,7 +856,7 @@ export function DocumentWorkspace({
       <RemoteSessionBanner backend={backend} />
       {documentPage ? (
         <div
-          className="fixed top-3 left-3 z-[60]"
+          className={cn("fixed left-3 z-[60]", fixedStatusTopClass)}
           data-testid="document-save-status-corner"
         >
           <DocumentSaveStatusIndicator
@@ -863,7 +868,7 @@ export function DocumentWorkspace({
       <div
         className={cn(
           "fixed right-3 z-[60] flex max-w-[min(16rem,calc(100vw-1rem))] flex-col items-end gap-1.5",
-          hasTopNotice ? "top-[19rem] sm:top-[7rem]" : "top-3",
+          fixedStatusTopClass,
         )}
         data-testid="document-status-stack"
         data-document-status-stack="true"
