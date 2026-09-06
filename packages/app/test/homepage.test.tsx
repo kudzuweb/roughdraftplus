@@ -800,7 +800,14 @@ describe("Homepage", () => {
     ).toContain("Notion-flavored Markdown");
     expect(container.textContent).toContain("Threaded review");
     expect(container.textContent).toContain("Roughdraft extensions");
-    expect(container.textContent).toContain("YAML metadata");
+    expect(container.textContent).toContain("Inline metadata");
+    expect(container.textContent).toContain(
+      '{>>I can make that edit.<<}{id="r1" by="AI" at="2026-04-28T12:01:00.000Z" re="c1"}',
+    );
+    expect(container.textContent).not.toContain("YAML metadata");
+    expect(container.textContent).not.toContain(
+      "in YAML endmatter by pointing",
+    );
     expect(container.textContent).toContain("Substitution");
     expect(container.textContent).toContain("{~~old text~>new text~~}");
     expect(container.querySelector('a[href="/"]')?.textContent).toContain(

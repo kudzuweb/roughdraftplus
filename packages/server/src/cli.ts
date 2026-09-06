@@ -22,7 +22,7 @@ import { resolveUpdateStatus, type UpdateStatus } from "./update-status.js";
 const AGENT_SETUP_URL =
   "https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/packages/app/public/setup.md";
 const ROUGHDRAFT_FLAVORED_MARKDOWN_SPEC_URL =
-  "https://roughdraft.md/spec/roughdraft-flavored-markdown.md";
+  "https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/docs/spec/roughdraft-flavored-markdown.md";
 const AGENT_SETUP_PROMPT =
   'Install Roughdraft from the roughdraftplus fork: clone https://github.com/kudzuweb/roughdraftplus, run `pnpm install && pnpm build` in the clone, then `npm i -g "$(npm pack --silent)"`. Never run `npm i -g roughdraft`. Then read packages/app/public/setup.md in the clone and set yourself up to use it.';
 const STATUS_PATH = "/api/status";
@@ -1102,41 +1102,45 @@ function printCriticMarkupHelp(log: (message: string) => void) {
   log("");
   log("When adding new review feedback:");
   log(
-    "  Prefer compact references like {>>Comment<<}{#c1} with metadata in final YAML endmatter.",
+    '  Write an inline attribute block right after the marker: {>>Comment<<}{id="c1" by="AI" at="2026-04-28T12:00:00.000Z"}.',
   );
   log(
-    "  Use `c1`, `c2`, etc. for comment ids and `s1`, `s2`, etc. for suggested-change ids.",
+    "  Use `c1`, `c2`, etc. for comment ids, `r1`, `r2`, etc. for reply ids, and `s1`, `s2`, etc. for suggested-change ids.",
   );
   log(
     "  Set `by` to your agent or author label and `at` to the current ISO timestamp.",
   );
+  log(
+    "  Never reuse an id the document has used; a `counters` map in final YAML endmatter records removed ids.",
+  );
   log("");
   log("Anchored comment with id:");
-  log("  Review {==this sentence==}{>>Needs a source<<}{#c1}.");
-  log("  ---");
-  log("  comments:");
-  log("    c1:");
-  log("      by: AI");
-  log('      at: "2026-04-28T12:00:00.000Z"');
+  log(
+    '  Review {==this sentence==}{>>Needs a source<<}{id="c1" by="AI" at="2026-04-28T12:00:00.000Z"}.',
+  );
   log("");
   log("Suggested changes with ids:");
-  log("  Add {++one concrete example++}{#s1}.");
-  log("  Replace {~~vague phrasing~>specific wording~~}{#s2}.");
-  log("  ---");
-  log("  suggestions:");
-  log("    s1:");
-  log("      by: AI");
-  log('      at: "2026-04-28T12:10:00.000Z"');
-  log("    s2:");
-  log("      by: AI");
-  log('      at: "2026-04-28T12:11:00.000Z"');
+  log(
+    '  Add {++one concrete example++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}.',
+  );
+  log(
+    '  Replace {~~vague phrasing~>specific wording~~}{id="s2" by="AI" at="2026-04-28T12:11:00.000Z"}.',
+  );
   log("");
   log("Reply to an existing comment:");
-  log("  Store replies in `comments.<id>.body` with `re: <parent-id>`.");
+  log(
+    "  Write the reply directly after its parent, with `re` set to the parent id:",
+  );
+  log(
+    '  {>>Needs a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}{>>Added one from the intro.<<}{id="r1" by="AI" at="2026-04-28T12:05:00.000Z" re="c1"}',
+  );
   log("");
   log("Reply guidance:");
   log(
-    "  Existing inline attribute metadata is still accepted for compatibility.",
+    "  Legacy documents keep metadata in YAML endmatter behind {#c1} references, with replies as `comments.<id>` entries.",
+  );
+  log(
+    "  Read that form but never write it: Roughdraft does not display endmatter replies.",
   );
   log(
     "  Comment ids are document-local and usually look like `c1`, `c2`, `c3`.",

@@ -48,6 +48,42 @@ describe("createApp", () => {
     expect(fs.readFileSync(filePath, "utf-8")).toBe("# Draft\n");
   });
 
+  describe("canonical agent prompt", () => {
+    const publicDir = path.join(serverRoot, "packages", "app", "public");
+    const promptPath = path.join(publicDir, "prompt.md");
+
+    it("serves /prompt.md byte-for-byte from the static dir it is given (the built dist copy is checked by scripts/copy-app-spec.mjs at build time)", async () => {
+      const { app } = createApp({ homeDir, staticDirPath: publicDir });
+
+      const response = await request(app).get("/prompt.md");
+
+      expect(response.status).toBe(200);
+      expect(response.text).toBe(fs.readFileSync(promptPath, "utf-8"));
+    });
+
+    it("serves a setup.md whose fallback block is the prompt file verbatim", async () => {
+      const { app } = createApp({ homeDir, staticDirPath: publicDir });
+
+      const response = await request(app).get("/setup.md");
+      const fallback = response.text.match(/^````markdown\n([\s\S]*?)\n````$/m);
+
+      expect(response.status).toBe(200);
+      expect(fallback?.[1]).toBe(
+        fs.readFileSync(promptPath, "utf-8").trimEnd(),
+      );
+    });
+
+    it("prescribes inline replies and never endmatter replies", () => {
+      const prompt = fs.readFileSync(promptPath, "utf-8");
+
+      expect(prompt).toContain(
+        '{>>reply text<<}{id="rN" by="AI" at="<ISO timestamp>" re="cN"}',
+      );
+      expect(prompt).not.toMatch(/prefer compact references/i);
+      expect(prompt).not.toMatch(/Replies live in final YAML endmatter/);
+    });
+  });
+
   it("reads nested markdown files inside the project", async () => {
     const nestedDir = path.join(projectDir, "notes");
     fs.mkdirSync(nestedDir, { recursive: true });

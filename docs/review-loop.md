@@ -132,6 +132,6 @@ save still rewrites applies to that file even if it was only ever edited in code
 | Meaningful changes stand out | Agent marks them `{++ins++}` / `{~~sub~~}`, leaves mechanical edits unmarked | Jump-to-next-mark navigation (item 10, deferred behind item 5) |
 | Approving a mark accepts it into prose | Agent strips markup on approval | Approve action accepts the suggestion (items 6, 10) |
 | Approval resolves its comment (per-comment only) | Product behavior: approve button, applied on Done Reviewing | Shipped (item 6) |
-| Inline replies canonical | Agent discipline; prompt/spec still say endmatter | Prompt/spec rewrite + legacy rendering (item 4) |
+| Inline replies canonical | Agent discipline; the prompt, spec, setup, CLI help and README prescribe inline and mark endmatter replies legacy | Legacy rendering (item 4) |
 | Collapsed threads, newest reply visible | Product behavior | Shipped (item 5) |
 | Tab writes only on reviewer edits; stops after Done or until a replaced server is adopted | Product behavior | Shipped (item 2) |

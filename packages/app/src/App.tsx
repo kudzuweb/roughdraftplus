@@ -168,30 +168,32 @@ const HOMEPAGE_WORKFLOW_SCENES = [
 const ROUGHDRAFT_MARKDOWN_SYNTAX = [
   {
     label: "Comment",
-    syntax: "{==selected text==}{>>Comment text<<}{#c1}",
+    syntax:
+      '{==selected text==}{>>Comment text<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
     description:
       "Highlights the reviewed text and attaches a margin comment to it.",
   },
   {
     label: "Reply",
     syntax:
-      'comments:\n  c2:\n    body: I can make that edit.\n    by: AI\n    at: "2026-04-28T12:01:00.000Z"\n    re: c1',
+      '{>>I can make that edit.<<}{id="r1" by="AI" at="2026-04-28T12:01:00.000Z" re="c1"}',
     description:
-      "Adds a threaded reply in YAML endmatter by pointing `re` at the parent id.",
+      "Adds a threaded reply directly after the parent comment by pointing `re` at its id.",
   },
   {
     label: "Insertion",
-    syntax: "{++new text++}{#s1}",
+    syntax: '{++new text++}{id="s1" by="AI" at="2026-04-28T12:02:00.000Z"}',
     description: "Suggests text to add without applying it silently.",
   },
   {
     label: "Deletion",
-    syntax: "{--old text--}{#s2}",
+    syntax: '{--old text--}{id="s2" by="AI" at="2026-04-28T12:03:00.000Z"}',
     description: "Suggests removing text while keeping the original visible.",
   },
   {
     label: "Substitution",
-    syntax: "{~~old text~>new text~~}{#s3}",
+    syntax:
+      '{~~old text~>new text~~}{id="s3" by="AI" at="2026-04-28T12:04:00.000Z"}',
     description: "Suggests replacing one span with another.",
   },
 ] as const;
@@ -219,7 +221,7 @@ const ROUGHDRAFT_MARKDOWN_CONTRACT = [
   {
     title: "Metadata",
     description:
-      "Compact inline references keep review anchors portable, while YAML endmatter stores authors, timestamps, statuses, and reply links.",
+      "An inline attribute block after each marker carries its id, author, timestamp, status, and reply link, so the review item and its metadata travel together. A counters map in YAML endmatter keeps removed ids from being reused.",
   },
   {
     title: "Anchors",
@@ -239,8 +241,8 @@ const ROUGHDRAFT_MARKDOWN_CONTRACT = [
 ] as const;
 const ROUGHDRAFT_MARKDOWN_EXTENSION_DETAILS = [
   {
-    title: "YAML metadata",
-    body: "Roughdraft stores ids inline as compact references such as {>>Looks right.<<}{#c1}, while authors, timestamps, and reply links live in final YAML endmatter.",
+    title: "Inline metadata",
+    body: 'Roughdraft writes ids, authors, timestamps, and reply links inline, such as {>>Looks right.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}. Older documents that keep that metadata in YAML endmatter are still read, but Roughdraft never writes new review items there.',
   },
   {
     title: "Threaded comments",
@@ -1369,8 +1371,9 @@ export function RoughdraftFlavoredMarkdownPage() {
             </h2>
             <p className="mt-4 text-base leading-7 text-stone-600 dark:text-stone-400">
               Standard CriticMarkup captures the visible annotation. Roughdraft
-              keeps the same readable markers, adds compact inline references,
-              and stores review metadata in final YAML endmatter.
+              keeps the same readable markers and adds an inline attribute block
+              after each one, so ids, authors, timestamps, and replies stay next
+              to the text they describe.
             </p>
           </div>
 

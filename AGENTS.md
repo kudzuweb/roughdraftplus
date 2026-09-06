@@ -236,26 +236,4 @@ Use CriticMarkup when reading or writing inline review feedback in markdown:
 - Substitution: `{~~old~>new~~}`
 - Highlight: `{==text==}`
 
-When adding new review feedback, prefer compact inline references plus final YAML endmatter:
-
-```markdown
-{==selected text==}{>>Comment text<<}{#c1}
-{++new text++}{#s1}
-
----
-comments:
-  c1:
-    by: AI
-    at: "2026-04-28T12:00:00.000Z"
-  c2:
-    body: I can make that edit.
-    by: AI
-    at: "2026-04-28T12:05:00.000Z"
-    re: c1
-suggestions:
-  s1:
-    by: AI
-    at: "2026-04-28T12:10:00.000Z"
-```
-
-Older inline attribute blocks such as `{id="c1" by="AI" at="2026-04-28T12:00:00.000Z"}` may appear in existing documents. Preserve them unless you are intentionally rewriting that review item.
+For how to write metadata, ids, and replies, follow `packages/app/public/prompt.md`, the single canonical instruction block this repository ships. It prescribes an inline attribute block after each marker and a reply directly after the comment it answers, and it says which endmatter entries are live and which are legacy. This file does not repeat that guidance, so the two cannot drift.
