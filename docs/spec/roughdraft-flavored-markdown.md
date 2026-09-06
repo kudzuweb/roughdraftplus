@@ -153,7 +153,7 @@ Implementations SHOULD generate simple document-local ids:
 id = ALPHA *( ALPHA / DIGIT / "_" / "-" )
 ```
 
-Roughdraft uses `c1`, `c2`, and so on for comments and `s1`, `s2`, and so on for suggestions. An agent's replies use `r1`, `r2`, and so on, so a reply is distinguishable from a root comment by its id. A writer MUST NOT give a new comment, reply, or suggestion an id the document has already used, even after every item that carried it has been removed; the [Id Counters](#id-counters) section defines how that is recorded. Implementations MUST preserve unknown valid attributes when possible, but they MUST NOT require unknown metadata for correct review rendering.
+Roughdraft uses `c1`, `c2`, and so on for comments and `s1`, `s2`, and so on for suggestions. An agent SHOULD use `r1`, `r2`, and so on for its replies; Roughdraft's own reply writers, the review rail and the `roughdraft_reply_to_comment` MCP tool, allocate `c<n>` ids for replies, so a reply is identified by its `re` attribute and not by its id. A writer MUST NOT give a new comment, reply, or suggestion an id the document has already used, even after every item that carried it has been removed; the [Id Counters](#id-counters) section defines how that is recorded. Implementations MUST preserve unknown valid attributes when possible, but they MUST NOT require unknown metadata for correct review rendering.
 
 ### Legacy Endmatter Metadata
 
