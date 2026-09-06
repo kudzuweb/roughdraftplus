@@ -5,6 +5,7 @@ import {
   logE2eEvent,
   openMarkdownFile,
   removeMarkdownProject,
+  richTextEditor,
   writeProjectFile,
 } from "./helpers";
 
@@ -17,6 +18,40 @@ test.describe("opening local markdown files", () => {
 
   test.afterEach(() => {
     removeMarkdownProject(projectDir);
+  });
+
+  test("shows a placeholder naming a table it cannot render", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "flags.md",
+      [
+        "# Flags",
+        "",
+        "| Flag | Meaning |",
+        "| --- | --- |",
+        "| `a \\| b` | either |",
+        "",
+        "After the table.",
+        "",
+      ].join("\n"),
+    );
+
+    await openMarkdownFile(page, filePath, "rich-text");
+
+    const placeholder = richTextEditor(page).getByTestId(
+      "unrendered-block-placeholder",
+    );
+    await expect(placeholder).toBeVisible();
+    await expect(placeholder).toHaveAttribute("data-block-type", "table");
+    await expect(placeholder).toContainText("Table");
+    await expect(richTextEditor(page)).toContainText("After the table.");
+
+    logE2eEvent("open-file.unrendered-block-placeholder", {
+      file: filePath,
+      blockType: "table",
+    });
   });
 
   test("renders core Markdown blocks from a real file @smoke", async ({

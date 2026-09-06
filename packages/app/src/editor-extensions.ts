@@ -16,12 +16,15 @@ import type {
 } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { ReactNodeViewRenderer } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import {
   markdownSoftBreakAttribute,
   markdownTableSeparatorAttribute,
   rawMarkdownBlockAttribute,
+  rawMarkdownBlockTypeAttribute,
 } from "./markdown";
+import { UnrenderedBlockPlaceholder } from "./UnrenderedBlockPlaceholder";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -765,6 +768,14 @@ const RawMarkdownBlock = Node.create({
           [rawMarkdownBlockAttribute]: attributes.rawMarkdown ?? "",
         }),
       },
+      blockType: {
+        default: "block",
+        parseHTML: (element) =>
+          element.getAttribute(rawMarkdownBlockTypeAttribute) ?? "block",
+        renderHTML: (attributes) => ({
+          [rawMarkdownBlockTypeAttribute]: attributes.blockType ?? "block",
+        }),
+      },
     };
   },
 
@@ -774,6 +785,10 @@ const RawMarkdownBlock = Node.create({
 
   renderHTML({ HTMLAttributes }) {
     return ["div", mergeAttributes(HTMLAttributes)];
+  },
+
+  addNodeView() {
+    return ReactNodeViewRenderer(UnrenderedBlockPlaceholder);
   },
 });
 

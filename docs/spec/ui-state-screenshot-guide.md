@@ -87,6 +87,17 @@ suggestions:
 ```markdown
 # Fenced examples This page should not show a review rail just because examples appear inside code fences. ```text {==example==}{>>comment<<}{#c1} {++inserted++} {--deleted--} {~~old~>new~~} ```
 ```
+### Unrendered Block Document
+```markdown
+# Unrendered blocks
+A table whose cell holds a pipe inside a code span cannot be rendered in rich text:
+
+| Flag | Meaning |
+| --- | --- |
+| `a \| b` | either |
+
+<!-- an HTML comment is kept as source, not rendered -->
+```
 ## Capture Matrix
 | Area | State | How to reach it | Useful selectors | Notes |
 | --- | --- | --- | --- | --- |
@@ -132,6 +143,7 @@ suggestions:
 | Editor | Selection menu on suggestion | Select existing suggestion text | `selection-menu-action-accept-suggestion`, `selection-menu-action-reject-suggestion` | Requires review fixture. |
 | Editor | Link popover | Click a link or choose Link from selection menu | `link-popover`, `link-url-input`, `link-action-open`, `link-action-delete` | Use the plain fixture link. |
 | Editor | Context menu | Right-click in rich editor | `editor-context-menu` | Capture comment, suggestion, paste, and paste-markdown actions. |
+| Editor | Unrendered block placeholder | Open the unrendered block fixture in rich mode | `unrendered-block-placeholder` | One placeholder per block that rich text cannot render, at the block's position; the title names the block type (`Table not rendered`, `HTML comment not rendered`, `Details block not rendered`, `Indented code block not rendered`) and `data-block-type` carries `table`, `html-comment`, `details`, or `indented-code`. The Markdown source is unchanged; the code editor shows it. |
 | Review rail | Comments | Open review fixture in rich mode | `document-review-rail`, `comment-thread-root` | Thread containers use `data-comment-thread-container="true"`. |
 | Review rail | Thread collapsed | Open review fixture in rich mode; the `root` thread carries two replies | `comment-thread-root`, `comment-rail-child2`, `comment-rail-root-action-expand-replies` | Default state for any thread with more than one reply: the anchor comment plus the newest reply, with earlier replies hidden behind a `Show 1 earlier reply` toggle. The same collapsing applies to the `comment-banner-*` fallback below 1100px. |
 | Review rail | Thread expanded | Click the collapsed thread to select it, then click `comment-rail-root-action-expand-replies` | `comment-rail-child`, `comment-rail-child2`, `comment-rail-root-action-collapse-replies` | Every reply in order; the toggle reads `Hide earlier replies` and returns the thread to the collapsed default. |
