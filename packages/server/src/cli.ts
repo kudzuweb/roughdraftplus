@@ -148,6 +148,7 @@ interface ParsedCommandOptions {
   batchWindowSeconds: number;
   help: boolean;
   json: boolean;
+  label?: string;
   loop: boolean;
   noOpen: boolean;
   noWatch: boolean;
@@ -321,6 +322,14 @@ function parseCommandOptions(
       if (!options.allowOpen) throw new Error(`Unknown flag: ${arg}`);
       parsed.printUrl = true;
       parsed.noOpen = true;
+      continue;
+    }
+
+    if (arg === "--label") {
+      if (!options.allowOpen) throw new Error(`Unknown flag: ${arg}`);
+      const next = takeFlagValue(args, index, arg);
+      parsed.label = next.value;
+      index = next.nextIndex;
       continue;
     }
 
@@ -896,7 +905,7 @@ function printCommandHelp(
   if (command === "open") {
     log("Usage:");
     log(
-      "  roughdraft open <path> [--no-open] [--no-watch] [--loop] [--print-url] [--port <port>]",
+      "  roughdraft open <path> [--label <text>] [--no-open] [--no-watch] [--loop] [--print-url] [--port <port>]",
     );
     log("");
     log(
@@ -931,6 +940,9 @@ function printCommandHelp(
     log("  --no-watch           Open the file without waiting");
     log(
       "  --loop               Report whether the round ended with a done-signal",
+    );
+    log(
+      "  --label <text>       Name this session; the document header shows who opened it",
     );
     log("  --timeout <seconds>  Maximum watch time; omitted means no timeout");
     log("  --replay             Allow watch to return retained older events");
@@ -1170,11 +1182,16 @@ function buildLoopbackUrl(host: string, port: number, pathname = "/"): URL {
   return new URL(`http://${baseHost}:${port}${pathname}`);
 }
 
-function buildTargetUrl(baseUrl: string, openPath: string): string {
+function buildTargetUrl(
+  baseUrl: string,
+  openPath: string,
+  sessionLabel: string | null = null,
+): string {
   const url = new URL(baseUrl);
 
   url.pathname = "/";
   url.searchParams.set("path", openPath);
+  if (sessionLabel) url.searchParams.set("label", sessionLabel);
   return url.toString();
 }
 
@@ -1435,13 +1452,18 @@ async function sendOpenRequestToExistingWindow(
   baseUrl: string,
   targetUrl: string,
   openPath: string,
+  sessionLabel: string | null,
 ): Promise<boolean> {
   try {
     const requestUrl = new URL("/api/open-request", baseUrl);
     const response = await deps.fetchImpl(requestUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ path: openPath, url: targetUrl }),
+      body: JSON.stringify({
+        path: openPath,
+        url: targetUrl,
+        ...(sessionLabel ? { label: sessionLabel } : {}),
+      }),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
 
@@ -2840,6 +2862,7 @@ export async function runCli(
       }
 
       const { projectDir, openPath } = resolvedTarget;
+      const sessionLabel = options.label?.trim() || null;
 
       const remoteHost =
         typeof deps.env.ROUGHDRAFT_HOST === "string"
@@ -2872,7 +2895,7 @@ export async function runCli(
         baseUrl = buildPublicBaseUrl(result.server.port);
       }
 
-      const targetUrl = buildTargetUrl(baseUrl, openPath);
+      const targetUrl = buildTargetUrl(baseUrl, openPath, sessionLabel);
       let openMode: OpenMode = "disabled";
       if (!options.noOpen && deps.env.ROUGHDRAFT_NO_OPEN !== "1") {
         openMode = (await sendOpenRequestToExistingWindow(
@@ -2880,6 +2903,7 @@ export async function runCli(
           baseUrl,
           targetUrl,
           openPath,
+          sessionLabel,
         ))
           ? "existing-window"
           : deps.openUrl(targetUrl);

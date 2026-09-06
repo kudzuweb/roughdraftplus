@@ -1319,4 +1319,169 @@ describe("createApp", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  describe("open-document registry", () => {
+    async function listen(app: ReturnType<typeof createApp>["app"]) {
+      const server = await new Promise<Server>((resolve) => {
+        const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+      });
+      return {
+        port: (server.address() as AddressInfo).port,
+        close: async () => {
+          server.closeAllConnections();
+          await new Promise<void>((resolve) => server.close(() => resolve()));
+        },
+      };
+    }
+
+    async function subscribeTab(port: number, documentPath: string) {
+      const stream = await fetch(
+        `http://127.0.0.1:${port}/api/open-requests?path=${encodeURIComponent(documentPath)}`,
+      );
+      const reader = stream.body?.getReader();
+      if (!reader) throw new Error("open-requests stream has no body");
+      // The first chunk is the connected event; the tab is registered once
+      // it has arrived.
+      await reader.read();
+      const decoder = new TextDecoder();
+      return {
+        nextEvent: async () => {
+          const { value } = await reader.read();
+          const raw = decoder.decode(value);
+          return {
+            raw,
+            data: JSON.parse(
+              raw.split("data: ")[1]?.split("\n")[0] ?? "{}",
+            ) as Record<string, unknown>,
+          };
+        },
+        cancel: () => reader.cancel(),
+      };
+    }
+
+    it("delivers the session label to the tab that has the same path open", async () => {
+      const { app } = createApp({ homeDir, staticDirPath: projectDir });
+      const { port, close } = await listen(app);
+      const documentPath = path.join(projectDir, "draft.md");
+
+      try {
+        const tab = await subscribeTab(port, documentPath);
+        const response = await request(app)
+          .post("/api/open-request")
+          .send({
+            path: documentPath,
+            url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(documentPath)}&label=build-15`,
+            label: "build-15",
+          });
+        expect(response.body).toEqual({ delivered: true });
+
+        const event = await tab.nextEvent();
+        expect(event.raw).toContain("event: open-request");
+        expect(event.data).toMatchObject({
+          path: documentPath,
+          label: "build-15",
+        });
+        await tab.cancel();
+      } finally {
+        await close();
+      }
+    });
+
+    it("delivers a null session label when the open request carries none", async () => {
+      const { app } = createApp({ homeDir, staticDirPath: projectDir });
+      const { port, close } = await listen(app);
+      const documentPath = path.join(projectDir, "draft.md");
+
+      try {
+        const tab = await subscribeTab(port, documentPath);
+        await request(app)
+          .post("/api/open-request")
+          .send({
+            path: documentPath,
+            url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(documentPath)}`,
+            label: "   ",
+          });
+
+        const event = await tab.nextEvent();
+        expect(event.data).toMatchObject({ path: documentPath, label: null });
+        await tab.cancel();
+      } finally {
+        await close();
+      }
+    });
+
+    it("tells tabs holding other documents about an open request it could not deliver", async () => {
+      const { app } = createApp({ homeDir, staticDirPath: projectDir });
+      const { port, close } = await listen(app);
+      const reviewingPath = path.join(projectDir, "plan.md");
+      const otherPath = path.join(projectDir, "spec.md");
+      const otherUrl = `http://127.0.0.1:${port}/?path=${encodeURIComponent(otherPath)}&label=build-16`;
+
+      try {
+        const reviewingTab = await subscribeTab(port, reviewingPath);
+        const response = await request(app).post("/api/open-request").send({
+          path: otherPath,
+          url: otherUrl,
+          label: "build-16",
+        });
+        // No window has spec.md, so the CLI still opens a new one; the tab
+        // on plan.md hears about it so it can warn instead of being unaware.
+        expect(response.body).toEqual({ delivered: false });
+
+        const event = await reviewingTab.nextEvent();
+        expect(event.raw).toContain("event: open-request");
+        expect(event.data).toMatchObject({
+          path: otherPath,
+          url: otherUrl,
+          label: "build-16",
+        });
+        await reviewingTab.cancel();
+      } finally {
+        await close();
+      }
+    });
+
+    it("does not notify a tab with no document open", async () => {
+      const { app } = createApp({ homeDir, staticDirPath: projectDir });
+      const { port, close } = await listen(app);
+      const reviewingPath = path.join(projectDir, "plan.md");
+      const otherPath = path.join(projectDir, "spec.md");
+
+      try {
+        const homeStream = await fetch(
+          `http://127.0.0.1:${port}/api/open-requests`,
+        );
+        const homeReader = homeStream.body?.getReader();
+        if (!homeReader) throw new Error("open-requests stream has no body");
+        await homeReader.read();
+        const reviewingTab = await subscribeTab(port, reviewingPath);
+
+        await request(app)
+          .post("/api/open-request")
+          .send({
+            path: otherPath,
+            url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(otherPath)}`,
+          });
+
+        const event = await reviewingTab.nextEvent();
+        expect(event.data).toMatchObject({ path: otherPath, label: null });
+
+        // The homepage tab gets nothing before the next keep-alive comment.
+        const homeNext = await Promise.race([
+          homeReader
+            .read()
+            .then(({ value }) => new TextDecoder().decode(value)),
+          new Promise<string>((resolve) =>
+            setTimeout(() => resolve("<nothing>"), 200),
+          ),
+        ]);
+        expect(homeNext).toBe("<nothing>");
+
+        await reviewingTab.cancel();
+        await homeReader.cancel();
+      } finally {
+        await close();
+      }
+    });
+  });
 });

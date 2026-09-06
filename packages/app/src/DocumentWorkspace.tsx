@@ -1,5 +1,6 @@
 import {
   AlertTriangle,
+  AppWindow,
   Check,
   CheckCheck,
   ChevronDown,
@@ -409,11 +410,18 @@ export function shouldLatchDocumentChangedSinceOpen({
   return isDirty && documentChangeTrackingReady;
 }
 
+export interface DocumentOpenedElsewhere {
+  path: string;
+  sessionLabel: string | null;
+}
+
 interface DocumentWorkspaceProps {
   documentPage: Page | null;
   activeDocumentPath: string | null;
   documentCopyPath: string | null;
   documentFilenameLabel: string;
+  documentSessionLabel: string | null;
+  showDocumentLocation?: boolean;
   documentEditorViewMode: DocumentEditorViewMode;
   onDocumentEditorViewModeChange: (mode: DocumentEditorViewMode) => void;
   onSaveDocument: (id: string, content: string) => Promise<void>;
@@ -427,6 +435,8 @@ interface DocumentWorkspaceProps {
   onOverwriteDocumentOnDisk: () => void | Promise<void>;
   documentServerRestartNotice?: boolean;
   onDismissServerRestartNotice?: () => void;
+  documentOpenedElsewhere?: DocumentOpenedElsewhere | null;
+  onDismissDocumentOpenedElsewhere?: () => void;
   onCompleteReview: (
     options?: CompleteReviewOptions,
   ) => Promise<{ delivered: boolean }>;
@@ -438,6 +448,8 @@ export function DocumentWorkspace({
   activeDocumentPath,
   documentCopyPath,
   documentFilenameLabel,
+  documentSessionLabel,
+  showDocumentLocation = true,
   documentEditorViewMode,
   onDocumentEditorViewModeChange,
   onSaveDocument,
@@ -451,6 +463,8 @@ export function DocumentWorkspace({
   onOverwriteDocumentOnDisk,
   documentServerRestartNotice = false,
   onDismissServerRestartNotice,
+  documentOpenedElsewhere = null,
+  onDismissDocumentOpenedElsewhere,
   onCompleteReview,
   backend,
 }: DocumentWorkspaceProps) {
@@ -721,7 +735,10 @@ export function DocumentWorkspace({
       : conflictNoticeCopy[documentDiskChangeState];
   const showServerRestartNotice =
     documentServerRestartNotice && !conflictNotice;
-  const hasTopNotice = !!conflictNotice || showServerRestartNotice;
+  const showDocumentOpenedElsewhere =
+    !!documentOpenedElsewhere && !conflictNotice && !showServerRestartNotice;
+  const hasTopNotice =
+    !!conflictNotice || showServerRestartNotice || showDocumentOpenedElsewhere;
   const showReviewHandoffButton =
     !!activeDocumentPath &&
     (reviewWatcherCount > 0 || reviewHandoffState !== "idle");
@@ -1001,6 +1018,47 @@ export function DocumentWorkspace({
           </div>
         </div>
       ) : null}
+      {showDocumentOpenedElsewhere && documentOpenedElsewhere ? (
+        <div
+          data-testid="document-opened-elsewhere-notice"
+          role="status"
+          aria-label="Another document opened"
+          className="fixed top-3 left-1/2 z-50 flex w-[min(calc(100vw-1rem),52rem)] -translate-x-1/2 flex-col gap-3 rounded-[8px] border border-sky-300 dark:border-sky-700 bg-sky-50 dark:bg-sky-950 px-3 py-3 text-sky-950 dark:text-sky-100 shadow-[0_14px_40px_rgba(12,74,110,0.18)] dark:shadow-[0_14px_40px_rgba(0,0,0,0.4)] sm:flex-row sm:items-center sm:justify-between sm:px-4"
+        >
+          <div className="flex min-w-0 items-start gap-2.5">
+            <AppWindow
+              className="mt-0.5 size-4 shrink-0 text-sky-700 dark:text-sky-400"
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-5">
+                Another document was opened in a new window
+              </div>
+              <div className="mt-0.5 text-xs leading-5 text-sky-900 dark:text-sky-200">
+                <span className="break-all font-mono">
+                  {documentOpenedElsewhere.path}
+                </span>{" "}
+                {documentOpenedElsewhere.sessionLabel
+                  ? `was opened by ${documentOpenedElsewhere.sessionLabel}.`
+                  : "was opened with no session label."}{" "}
+                This tab still shows {documentFilenameLabel}.
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center sm:justify-end">
+            <Button
+              type="button"
+              data-testid="document-opened-elsewhere-dismiss"
+              variant="ghost"
+              size="sm"
+              className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-sky-950 dark:text-sky-100 hover:bg-white dark:hover:bg-white/20"
+              onClick={onDismissDocumentOpenedElsewhere}
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {conflictNotice ? (
         <div
           data-testid="file-conflict-notice"
@@ -1211,6 +1269,31 @@ export function DocumentWorkspace({
                   </Select>
                 </div>
               </div>
+              {showDocumentLocation ? (
+                <div
+                  data-testid="document-location"
+                  className="mt-1 flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-[0.68rem] leading-4 text-stone-400 dark:text-slate-500"
+                >
+                  {documentCopyPath ? (
+                    <span
+                      data-testid="document-path"
+                      title={documentCopyPath}
+                      className="min-w-0 max-w-full truncate font-mono"
+                    >
+                      {documentCopyPath}
+                    </span>
+                  ) : null}
+                  <span
+                    data-testid="document-session-label"
+                    title={documentSessionLabel ?? undefined}
+                    className="min-w-0 max-w-full truncate"
+                  >
+                    {documentSessionLabel
+                      ? `Opened by ${documentSessionLabel}`
+                      : "No session label"}
+                  </span>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}

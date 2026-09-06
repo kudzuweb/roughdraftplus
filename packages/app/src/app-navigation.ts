@@ -195,6 +195,26 @@ export function buildLocationForDocumentEditorViewMode(
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
+export function getSessionLabelFromLocation(): string | null {
+  const searchParams = new URLSearchParams(window.location.search);
+  return searchParams.get("label")?.trim() || null;
+}
+
+export function syncSessionLabelInUrl(sessionLabel: string | null) {
+  const url = new URL(window.location.href);
+  if (sessionLabel) {
+    url.searchParams.set("label", sessionLabel);
+  } else {
+    url.searchParams.delete("label");
+  }
+
+  const nextLocation = `${url.pathname}${url.search}${url.hash}`;
+  const currentLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextLocation !== currentLocation) {
+    window.history.replaceState(null, "", nextLocation);
+  }
+}
+
 export function syncRequestedPathInUrl(path?: string | null) {
   const nextLocation = buildLocationForPath(path);
   const currentLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;

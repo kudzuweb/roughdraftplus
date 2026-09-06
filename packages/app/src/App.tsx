@@ -28,10 +28,12 @@ import {
   getDocumentEditorViewModeFromLocation,
   getPathLeaf,
   getRequestedPathState,
+  getSessionLabelFromLocation,
   joinPath,
   PREVIEW_PATH,
   ROUGHDRAFT_FLAVORED_MARKDOWN_PATH,
   syncRequestedPathInUrl,
+  syncSessionLabelInUrl,
 } from "./app-navigation";
 import { Button } from "./components/ui/button";
 import {
@@ -43,7 +45,10 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "./components/ui/dialog";
-import { DocumentWorkspace } from "./DocumentWorkspace";
+import {
+  type DocumentOpenedElsewhere,
+  DocumentWorkspace,
+} from "./DocumentWorkspace";
 import { detectBackend } from "./detect-backend";
 import {
   getCommentAnchorMeasurements,
@@ -1467,6 +1472,8 @@ export function PreviewPage() {
         activeDocumentPath={PREVIEW_DOCUMENT_PATH}
         documentCopyPath={PREVIEW_DOCUMENT_PATH}
         documentFilenameLabel={PREVIEW_DOCUMENT_PATH}
+        documentSessionLabel={null}
+        showDocumentLocation={false}
         documentEditorViewMode={editorViewMode}
         onDocumentEditorViewModeChange={setEditorViewMode}
         onSaveDocument={handleSaveDocument}
@@ -1504,6 +1511,11 @@ export function App() {
     string | null
   >(null);
   const [serverRestartNotice, setServerRestartNotice] = useState(false);
+  const [documentSessionLabel, setDocumentSessionLabel] = useState(
+    getSessionLabelFromLocation,
+  );
+  const [documentOpenedElsewhere, setDocumentOpenedElsewhere] =
+    useState<DocumentOpenedElsewhere | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -1570,22 +1582,48 @@ export function App() {
     if (requestedPathState.rawPath) {
       sourceUrl.searchParams.set("path", requestedPathState.rawPath);
     }
+    // The browser reconnects an EventSource with the URL it was created
+    // with, so the subscription is rebuilt on every relabel; otherwise a
+    // server restart would re-register this tab under the label it loaded
+    // with rather than the one last delivered.
+    if (documentSessionLabel) {
+      sourceUrl.searchParams.set("label", documentSessionLabel);
+    }
 
     const source = new EventSource(`${sourceUrl.pathname}${sourceUrl.search}`);
     const handleOpenRequest = (event: Event) => {
       try {
         const payload = JSON.parse((event as MessageEvent<string>).data) as {
+          path?: unknown;
           url?: unknown;
+          label?: unknown;
           instanceId?: unknown;
         };
         if (typeof payload.url !== "string" || !payload.url.trim()) return;
 
         const nextUrl = new URL(payload.url, window.location.origin);
-        window.focus();
-        if (nextUrl.href !== window.location.href) {
-          window.location.assign(nextUrl.href);
+        const nextPath =
+          typeof payload.path === "string" && payload.path.trim()
+            ? payload.path.trim()
+            : nextUrl.searchParams.get("path");
+        const nextSessionLabel =
+          typeof payload.label === "string" && payload.label.trim()
+            ? payload.label.trim()
+            : null;
+
+        // A different document opened while this one is under review: warn,
+        // never switch this tab. The CLI has already opened it elsewhere.
+        if (nextPath !== requestedPathState.rawPath) {
+          setDocumentOpenedElsewhere({
+            path: nextPath ?? nextUrl.href,
+            sessionLabel: nextSessionLabel,
+          });
           return;
         }
+
+        window.focus();
+        setDocumentSessionLabel(nextSessionLabel);
+        syncSessionLabelInUrl(nextSessionLabel);
 
         // The same document opened again from a server this tab has not
         // seen: the server was restarted, so adopt it instead of reloading.
@@ -1606,7 +1644,7 @@ export function App() {
       source.removeEventListener("open-request", handleOpenRequest);
       source.close();
     };
-  }, [requestedPathState.rawPath]);
+  }, [documentSessionLabel, requestedPathState.rawPath]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1770,6 +1808,10 @@ export function App() {
 
   const handleDismissServerRestartNotice = useCallback(() => {
     setServerRestartNotice(false);
+  }, []);
+
+  const handleDismissDocumentOpenedElsewhere = useCallback(() => {
+    setDocumentOpenedElsewhere(null);
   }, []);
 
   const handleSaveDocument = useCallback(
@@ -2079,6 +2121,7 @@ export function App() {
         activeDocumentPath={activeDocumentPath}
         documentCopyPath={documentAbsolutePath}
         documentFilenameLabel={documentFilenameLabel}
+        documentSessionLabel={documentSessionLabel}
         documentEditorViewMode={documentEditorViewMode}
         onDocumentEditorViewModeChange={handleDocumentEditorViewModeChange}
         onSaveDocument={handleSaveDocument}
@@ -2092,6 +2135,8 @@ export function App() {
         onOverwriteDocumentOnDisk={handleOverwriteDocumentOnDisk}
         documentServerRestartNotice={serverRestartNotice}
         onDismissServerRestartNotice={handleDismissServerRestartNotice}
+        documentOpenedElsewhere={documentOpenedElsewhere}
+        onDismissDocumentOpenedElsewhere={handleDismissDocumentOpenedElsewhere}
         onCompleteReview={handleCompleteReview}
         backend={backend}
       />

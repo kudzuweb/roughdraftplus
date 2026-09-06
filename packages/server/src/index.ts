@@ -74,15 +74,21 @@ interface CreateAppResult {
   port: number;
 }
 
+// One connected tab. `path` is the document it has open (null on the
+// homepage) and `sessionLabel` names the agent session that opened it; the
+// tab reports both when it subscribes, and a delivered open request updates
+// the label. Together the entries are the server's record of open documents.
 interface OpenRequestClient {
   id: number;
   path: string | null;
+  sessionLabel: string | null;
   response: Response;
 }
 
 interface OpenRequestPayload {
   path?: string;
   url?: string;
+  label?: string;
 }
 
 interface RemoteSession {
@@ -847,6 +853,24 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     });
   });
 
+  function normalizeSessionLabel(value: unknown): string | null {
+    return typeof value === "string" && value.trim().length > 0
+      ? value.trim()
+      : null;
+  }
+
+  function writeOpenRequestEvent(
+    client: OpenRequestClient,
+    event: { path: string; url: string; label: string | null },
+  ) {
+    client.response.write(
+      `event: open-request\ndata: ${JSON.stringify({
+        ...event,
+        instanceId,
+      })}\n\n`,
+    );
+  }
+
   app.get("/api/open-requests", (req, res) => {
     const requestedPath =
       typeof req.query.path === "string" && req.query.path.trim().length > 0
@@ -855,6 +879,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     const client: OpenRequestClient = {
       id: nextOpenRequestClientId,
       path: requestedPath,
+      sessionLabel: normalizeSessionLabel(req.query.label),
       response: res,
     };
     nextOpenRequestClientId += 1;
@@ -894,22 +919,25 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       return;
     }
 
+    const sessionLabel = normalizeSessionLabel(payload.label);
+    const event = { path: targetPath, url: targetUrl, label: sessionLabel };
     const matchingClient = Array.from(openRequestClients)
       .reverse()
       .find((client) => client.path === targetPath);
 
     if (!matchingClient) {
+      // No window has this document, so the CLI opens a new one. Tabs
+      // reviewing other documents hear about it so they can warn instead of
+      // the reviewer finding a second window stacked on theirs unannounced.
+      for (const client of openRequestClients) {
+        if (client.path !== null) writeOpenRequestEvent(client, event);
+      }
       res.json({ delivered: false });
       return;
     }
 
-    matchingClient.response.write(
-      `event: open-request\ndata: ${JSON.stringify({
-        path: targetPath,
-        url: targetUrl,
-        instanceId,
-      })}\n\n`,
-    );
+    matchingClient.sessionLabel = sessionLabel;
+    writeOpenRequestEvent(matchingClient, event);
     res.json({ delivered: true });
   });
 

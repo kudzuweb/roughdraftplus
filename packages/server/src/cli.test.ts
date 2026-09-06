@@ -95,10 +95,15 @@ describe("cli", () => {
     portByPid = new Map<number, number>();
   });
 
-  function expectedOpenUrl(baseUrl: string, documentPath: string): string {
+  function expectedOpenUrl(
+    baseUrl: string,
+    documentPath: string,
+    sessionLabel?: string,
+  ): string {
     const url = new URL(baseUrl);
     url.pathname = "/";
     url.searchParams.set("path", documentPath);
+    if (sessionLabel) url.searchParams.set("label", sessionLabel);
     return url.toString();
   }
 
@@ -400,6 +405,120 @@ describe("cli", () => {
       ),
     });
     expect(lastOpenedUrl).toBeNull();
+  });
+
+  it("passes the session label to the existing window and puts it in the document URL", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+
+    let postedOpenRequest: Record<string, unknown> | null = null;
+    const deps = createCliDependencies({
+      env: {
+        ...process.env,
+        ROUGHDRAFT_STATE_DIR: stateDir,
+      },
+      cwd: projectDir,
+      fetchImpl: async (input, init) => {
+        const url =
+          input instanceof URL
+            ? input
+            : new URL(
+                typeof input === "string" ? input : input.url,
+                "http://localhost",
+              );
+
+        if (
+          url.pathname === "/api/status" &&
+          url.port === String(ROUGHDRAFT_DEFAULT_PORT)
+        ) {
+          return new Response(
+            JSON.stringify({
+              backend: "local-files",
+              port: ROUGHDRAFT_DEFAULT_PORT,
+              projectDir,
+              serverRoot,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        if (url.pathname === "/api/open-request" && init?.method === "POST") {
+          postedOpenRequest = JSON.parse(String(init.body));
+          return new Response(JSON.stringify({ delivered: true }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        throw new Error("connect ECONNREFUSED");
+      },
+      isProcessRunning: () => false,
+      stopProcess: async () => {},
+      spawnServerProcess: async () => {
+        throw new Error("should not spawn");
+      },
+      openUrl: () => "browser",
+      log: () => {},
+      error: () => {},
+    });
+
+    const exitCode = await runCli(
+      ["open", documentPath, "--no-watch", "--label", "build-15 (claude)"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    expect(postedOpenRequest).toEqual({
+      path: documentPath,
+      url: expectedOpenUrl(
+        `http://localhost:${ROUGHDRAFT_DEFAULT_PORT}`,
+        documentPath,
+        "build-15 (claude)",
+      ),
+      label: "build-15 (claude)",
+    });
+  });
+
+  it("prints the document URL with the session label when asked for the URL only", async () => {
+    const test = createTestDependencies();
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+
+    const exitCode = await runCli(
+      ["open", documentPath, "--print-url", "--label", "build-15"],
+      test.deps,
+    );
+    const persisted = JSON.parse(
+      fs.readFileSync(getServerStateFilePath(test.deps.env), "utf8"),
+    ) as { port: number };
+
+    expect(exitCode).toBe(0);
+    expect(test.logs).toEqual([
+      expectedOpenUrl(
+        `http://localhost:${persisted.port}`,
+        documentPath,
+        "build-15",
+      ),
+    ]);
+    expect(test.getLastOpenedUrl()).toBeNull();
+  });
+
+  it("rejects a session label flag without a value", async () => {
+    const test = createTestDependencies();
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+
+    const exitCode = await runCli(
+      ["open", documentPath, "--no-watch", "--label"],
+      test.deps,
+    );
+
+    expect(exitCode).toBe(2);
+    expect(test.errors).toEqual(["--label requires a value."]);
+    expect(test.getSpawnCount()).toBe(0);
   });
 
   it("opens the default browser on macOS when Chrome is installed but not the default browser", () => {
@@ -1361,7 +1480,7 @@ describe("cli", () => {
 
     expect(exitCode).toBe(0);
     expect(test.logs).toContain(
-      "  roughdraft open <path> [--no-open] [--no-watch] [--loop] [--print-url] [--port <port>]",
+      "  roughdraft open <path> [--label <text>] [--no-open] [--no-watch] [--loop] [--print-url] [--port <port>]",
     );
     expect(test.logs.join("\n")).toContain("  --loop ");
   });
@@ -1925,7 +2044,7 @@ describe("cli", () => {
 
     expect(exitCode).toBe(0);
     expect(test.logs).toContain(
-      "  roughdraft open <path> [--no-open] [--no-watch] [--loop] [--print-url] [--port <port>]",
+      "  roughdraft open <path> [--label <text>] [--no-open] [--no-watch] [--loop] [--print-url] [--port <port>]",
     );
     expect(test.logs).toContain(
       "  --no-watch           Open the file without waiting",

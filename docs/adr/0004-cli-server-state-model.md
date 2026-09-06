@@ -22,6 +22,10 @@ Remote document mode (see `docs/plans/2026-04-30-001-feat-remote-document-mode-p
 
 This state is **deliberately not persisted in the state file**. Sessions live only in the running server process and are evicted on disconnect or server restart. The state file's role — managed background process, port, URL, start time — is unchanged. Treating remote-document sessions as transient in-memory state preserves the boundary above: the state file does not become a document model just because the server now hosts other machines' edits.
 
+## Clarification (2026-09-06): Local Open-Document Record
+
+The same reasoning now extends to local documents. The server keeps, in memory only, a per-tab open-document record in its open-request registry (`openRequestClients` in `packages/server/src/index.ts`): for each connected tab, the absolute path it has open and the session label the CLI passed with `roughdraft open --label`. The record is filled when a tab subscribes to `/api/open-requests` and updated when an open request is delivered to that tab; it is dropped when the tab disconnects and is gone after a server restart, exactly like a remote-document session. Nothing about it reaches the state file, so the boundary above holds: the state file remains a process record, not a document model. This record is the single-file-compatible seed that `.context/multi-document-audit.md` describes; a multi-document workspace beyond it still needs the separate decision ADR 0001 calls for.
+
 ### Trust model and `ROUGHDRAFT_TOKEN`
 
 The hosted Roughdraft is a write-capable peer for every connected CLI: a PUT to a session causes the CLI on the source machine to atomically rewrite the registered file on disk. Loopback-only deployments can rely on the OS for trust, but the moment the server binds to a non-loopback host (e.g. `ROUGHDRAFT_BIND_HOST=0.0.0.0` for Tailscale access), anyone reachable on that interface can register, read, or PUT.

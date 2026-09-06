@@ -7,8 +7,11 @@ implementation items, and Agent Dash works them as one phase.
 
 ## The loop
 
-1. The agent writes or revises a Markdown document on disk and runs `roughdraft open <path>`,
-   leaving the command blocking — its exit is the signal that review happened.
+1. The agent writes or revises a Markdown document on disk and runs
+   `roughdraft open <path> --label "<short session name>"`, leaving the command blocking — its
+   exit is the signal that review happened. The label names this session's work in the document
+   header (for example `plan-review`), so the reviewer can tell which session opened the document;
+   it is never a machine username or anything else that identifies a person.
 2. The reviewer reads, edits, comments, and suggests changes in the browser, then clicks
    **Done Reviewing**.
 3. The agent reads the file from disk, acts on every open thread, and replies inline.

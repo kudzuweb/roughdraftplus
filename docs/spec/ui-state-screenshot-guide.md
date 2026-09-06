@@ -44,6 +44,8 @@ command -v "$roughdraft_cmd" >/dev/null || pnpm dev:install-cli
 "$roughdraft_cmd" start
 "$roughdraft_cmd" open "$worktree_root/.context/ui-state-fixtures/review.md" --print-url --no-open --no-watch
 ```
+
+Pass `--label "<session name>"` on `open` to capture the header with a session label; the printed URL carries it as `?label=`.
 ## Fixture Documents
 Create these under `.context/ui-state-fixtures/` when a capture run needs stable local-file states.
 ### Plain Document
@@ -131,6 +133,9 @@ A table whose cell holds a pipe inside a code span cannot be rendered in rich te
 | Document | Autosave paused | Keep editing after conflict | `file-conflict-notice`, `file-conflict-action-overwrite` | Banner title: `Autosave paused`; no keep-editing action. |
 | Document | Server stopped | Open local file, then mock the API so the next save answers 410 and `/api/status` fails, and edit | `file-conflict-notice`, `document-save-status` | Banner title: `Roughdraft server stopped`; no actions; the copy says edits are kept in the tab and that `roughdraft open` reconnects it; accessible save status label is `Server stopped`. Mocking is required: a stopped CLI alone gives a network error, which shows `Save failed`, not this banner. |
 | Document | Server restarted | Type in a local document, stop and start the CLI, then keep typing | `server-restart-notice`, `server-restart-notice-dismiss` | Banner title: `Roughdraft server restarted`; the kept edits save to the new server; Dismiss clears it. Use API mocking to answer the first save with 410 and the status fetch with a new `instanceId`. |
+| Document | Path and session label | Open a local file with `roughdraft open <path> --label "<session name>"`, or add `&label=<session name>` to the `?path=` URL | `document-location`, `document-path`, `document-session-label` | A line under the header toolbar: the document's absolute path in monospace, truncated from the right with the full path in its `title`, then `Opened by <session name>`. Capture desktop and a narrow viewport so the truncation is seen. |
+| Document | No session label | Open a local file without `--label` | `document-location`, `document-path`, `document-session-label` | Same line; the session text reads `No session label`. |
+| Document | Another document opened | Open a local file, then run `roughdraft open <other path> --label "<session name>"` (or POST `/api/open-request` with a different `path` and a `label`) while the tab is connected | `document-opened-elsewhere-notice`, `document-opened-elsewhere-dismiss` | Banner title: `Another document was opened in a new window`; the copy names the other path, who opened it (or that no session label was given) and the file this tab still shows. The tab never navigates. Dismiss clears it. A disk conflict or server-restart banner takes precedence while it is showing. |
 | Document | Review handoff idle | Open a local file while a watcher is connected | `review-handoff-button` | Header text: `Agent watching`. |
 | Document | Review handoff comment popover | Open a local file while a watcher is connected, then click the handoff dropdown trigger | `review-handoff-comment-trigger`, `review-handoff-comment-popover`, `review-handoff-overall-comment` | Capture the split handoff control and textarea with `Overall comment` placeholder before submission. |
 | Document | Review handoff sending | Click handoff button while watcher is connected | `review-handoff-button` | Button label: `Sending`. |
@@ -193,6 +198,8 @@ These are real product states, but they are awkward to capture deterministically
 - Remote connected/disconnected banners
   
 - Update notice
+  
+- Another document opened (needs a second `roughdraft open`, or a POST to `/api/open-request`, while the tab is connected)
   
 
 The most reliable long-term solution is a dedicated screenshot harness route or Playwright component harness that renders `DocumentWorkspace` with controlled backend, disk, remote, watcher, and save states. Keep the production-route screenshots for broad layout coverage and use the harness for rare operational states.

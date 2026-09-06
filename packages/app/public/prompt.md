@@ -9,8 +9,10 @@ When the user asks for a plan, write the plan as a Markdown file on disk before 
 When you write or modify a Markdown file and want the user to review or comment on it, open it with:
 
 ```bash
-roughdraft open "/absolute/path/to/file.md"
+roughdraft open "/absolute/path/to/file.md" --label "plan-review"
 ```
+
+Pass `--label "<short session name>"` on every `roughdraft open`. The document header shows the label as the session that opened the document, so the user can tell reviews apart when several agent sessions use Roughdraft at once. Use a short name for the work of this session, such as `plan-review` or `spec-edit`, never a machine username or anything else that identifies a person.
 
 Roughdraft is currently a single-file Markdown viewer/editor. Open one `.md` file at a time.
 
