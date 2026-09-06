@@ -17,7 +17,10 @@ import type {
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
-import { rawMarkdownBlockAttribute } from "./markdown";
+import {
+  markdownSoftBreakAttribute,
+  rawMarkdownBlockAttribute,
+} from "./markdown";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -767,6 +770,35 @@ const RawMarkdownBlock = Node.create({
   },
 });
 
+// A newline inside a paragraph, blockquote, or list item in the source.
+// Rendered as a space so the editor reflows prose, and written back as the
+// newline the author typed so a save does not join wrapped lines.
+const MarkdownSoftBreak = Node.create({
+  name: "markdownSoftBreak",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: false,
+
+  parseHTML() {
+    return [{ tag: `span[${markdownSoftBreakAttribute}]` }];
+  },
+
+  renderHTML() {
+    return ["span", { [markdownSoftBreakAttribute]: "" }];
+  },
+
+  renderText() {
+    return " ";
+  },
+
+  extendNodeSchema(extension) {
+    return extension.name === "markdownSoftBreak"
+      ? { leafText: () => " " }
+      : {};
+  },
+});
+
 export function createEditorExtensions(placeholder: string) {
   return [
     StarterKit.configure({
@@ -799,6 +831,7 @@ export function createEditorExtensions(placeholder: string) {
     CommentRef,
     CriticChange,
     RawMarkdownBlock,
+    MarkdownSoftBreak,
     MarkdownCodeBlock,
     CommentHighlight,
     CriticChangeHighlight,

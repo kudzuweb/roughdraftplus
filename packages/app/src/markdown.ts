@@ -4,6 +4,15 @@ import TurndownService from "turndown";
 import { parse as parseYaml } from "yaml";
 
 export const rawMarkdownBlockAttribute = "data-markdown-raw-block";
+// A newline inside a paragraph, blockquote line, or list item. The span is
+// empty on purpose: Turndown lifts any whitespace inside an inline element
+// out as flanking text, so the editor draws the space with CSS instead. It
+// is written back as the newline the author typed.
+export const markdownSoftBreakAttribute = "data-markdown-softbreak";
+const markdownSoftBreakHtml = `<span ${markdownSoftBreakAttribute}=""></span>`;
+// A soft break inside one of these must stay a space: a heading or table
+// cell cannot span lines in markdown.
+const singleLineBlockSelector = "h1, h2, h3, h4, h5, h6, th, td";
 
 export interface MarkdownOptions {
   resolveFileUrl?: (path: string) => string | null;
@@ -162,6 +171,10 @@ function markdownTableDividerForCell(cell: HTMLTableCellElement): string {
 function markdownTableDividerForRow(row: HTMLTableRowElement): string {
   const dividers = Array.from(row.cells).map(markdownTableDividerForCell);
   return `| ${dividers.join(" | ")} |`;
+}
+
+function softBreakMarkdown(node: HTMLElement): string {
+  return node.closest(singleLineBlockSelector) ? " " : "\n";
 }
 
 function resolveRenderedUrl(
@@ -323,6 +336,13 @@ export function createMarkedRenderer(options?: MarkdownOptions) {
     return `<pre><code${classAttr}>${content}</code></pre>\n`;
   };
 
+  renderer.text = function (token) {
+    const html = baseRenderer.text.call(this, token);
+    if ("tokens" in token && token.tokens) return html;
+    if ("escaped" in token && token.escaped) return html;
+    return html.replaceAll("\n", markdownSoftBreakHtml);
+  };
+
   renderer.link = function ({ href, title, tokens, raw }) {
     const rawHref = href || "";
     const renderedHref = resolveRenderedUrl(
@@ -382,6 +402,9 @@ export function createTurndownService(): TurndownService {
     codeBlockStyle: "fenced",
     bulletListMarker: "-",
     blankReplacement(_content, node) {
+      if (node.hasAttribute(markdownSoftBreakAttribute)) {
+        return softBreakMarkdown(node);
+      }
       if (node.hasAttribute(rawMarkdownBlockAttribute)) {
         return `\n\n${decodeRawMarkdownBlock(
           node.getAttribute(rawMarkdownBlockAttribute) ?? "",
@@ -500,6 +523,15 @@ export function createTurndownService(): TurndownService {
         ? ` "${title.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
         : "";
       return `![${alt}](${normalizedSrc}${titleMarkdown})`;
+    },
+  });
+
+  service.addRule("markdownSoftBreak", {
+    filter: (node) =>
+      node.nodeName === "SPAN" &&
+      (node as HTMLElement).hasAttribute(markdownSoftBreakAttribute),
+    replacement(_content, node) {
+      return softBreakMarkdown(node as HTMLElement);
     },
   });
 
