@@ -2249,6 +2249,66 @@ describe("CriticMarkup delimiter escaping", () => {
     );
   });
 
+  // A backslash escape is inert inside a code span and an autolink, so a reader
+  // that leaves those to the Markdown lexer hands back text that is still
+  // escaped and escapes it again on the next save. Four consecutive saves catch
+  // that doubling, where one save cannot.
+  describe("escape-inert Markdown contexts stay byte-stable", () => {
+    const commentMetadata = '{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}';
+    const changeMetadata = '{id="s1" by="AI" at="2026-04-28T12:00:00.000Z"}';
+    // Written as they sit on disk: a Windows path and a marker, both escaped.
+    const codeSpan = "a code span `C:\\\\dir` and `x\\{++y\\++}z`";
+    const autolink = "an autolink <https://example.com/p\\{++q\\++}r>";
+    const inertText = `${codeSpan}, ${autolink}`;
+
+    const cases: Array<[string, string]> = [
+      ["an anchor", `See {==${inertText}==}{>>Note<<}${commentMetadata}.\n`],
+      [
+        "a comment body",
+        `See {==this==}{>>${inertText}<<}${commentMetadata}.\n`,
+      ],
+      ["a deletion", `Drop {--${inertText}--}${changeMetadata}.\n`],
+      [
+        "a fenced code block's anchor and comment body",
+        [
+          "```md",
+          `{==${codeSpan}==}{>>${codeSpan}<<}${commentMetadata}`,
+          "```",
+          "",
+        ].join("\n"),
+      ],
+    ];
+
+    for (const [name, input] of cases) {
+      it(`keeps escape-inert text in ${name} unchanged across four saves`, () => {
+        const saves: string[] = [];
+        let current = input;
+
+        for (let round = 0; round < 4; round += 1) {
+          const { doc, comments } = criticMarkdownToEditorState(current);
+          current = editorStateToCriticMarkdown(doc, comments);
+          saves.push(current);
+        }
+
+        expect(saves).toEqual([input, input, input, input]);
+      });
+    }
+
+    it("hands escape-inert text back with its escapes removed", () => {
+      const input = `See {==${inertText}==}{>>${inertText}<<}${commentMetadata}.\n`;
+
+      const { doc, comments } = criticMarkdownToEditorState(input);
+
+      const typedText =
+        "a code span `C:\\dir` and `x{++y++}z`, " +
+        "an autolink <https://example.com/p{++q++}r>";
+      expect(comments.get("c1")?.content).toBe(typedText);
+      expect(collectDocText(doc)).toContain("C:\\dir");
+      expect(collectDocText(doc)).toContain("x{++y++}z");
+      expect(collectDocText(doc)).toContain("https://example.com/p{++q++}r");
+    });
+  });
+
   it("leaves a document-level comment in endmatter unescaped", () => {
     const input = [
       "Body text.",

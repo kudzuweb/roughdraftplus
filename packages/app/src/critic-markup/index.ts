@@ -82,12 +82,15 @@ interface CriticChangeToken {
 }
 
 const extensions = createEditorExtensions("");
-// Text a reviewer types is written between review delimiters, so a delimiter in
-// that text would reopen or close a marker and turn typed prose into live
-// markup. Every delimiter is written with a leading backslash and read back
-// without it. The escaped forms are also CommonMark backslash escapes, so
-// marker text that is re-lexed as Markdown unescapes itself; comment bodies are
-// kept as plain strings and unescape through `unescapeCriticMarkupText`.
+// Text written between review delimiters would otherwise reopen or close the
+// marker holding it, so every delimiter is written with a leading backslash and
+// read back without it. A comment body is a plain string and unescapes through
+// `unescapeCriticMarkupText`. Marker text is Markdown and stays escaped through
+// the lexer, which both consumes the escapes and keeps a typed delimiter from
+// becoming a marker -- except in a code span and an autolink, where CommonMark
+// makes a backslash ordinary text, so the lexer hands back text that is still
+// escaped. `unescapeInertMarkerTokens` strips those, without which the next
+// save escaped them again and the backslashes doubled on every save.
 const criticDelimiterEscapePattern =
   /\\|\{==|==\}|\{>>|<<\}|\{\+\+|\+\+\}|\{--|--\}|\{~~|~~\}|~>/g;
 const criticDelimiterUnescapePattern =
@@ -119,6 +122,50 @@ export function escapeCriticMarkupText(text: string): string {
 
 export function unescapeCriticMarkupText(text: string): string {
   return text.replace(criticDelimiterUnescapePattern, "$1");
+}
+
+function isAutolinkToken(token: Tokens.Link): boolean {
+  return token.raw.startsWith("<") && token.raw.endsWith(">");
+}
+
+// Marker text is lexed while still escaped, which is what keeps a delimiter the
+// reviewer typed from becoming a marker. The lexer consumes the escapes as it
+// goes, except in a code span and an autolink, where CommonMark makes a
+// backslash ordinary text. Those are stripped here instead. Every other token
+// has already had its escapes consumed, and unescaping it a second time would
+// eat a backslash the reviewer typed. CommonMark makes a backslash ordinary in
+// raw HTML too, which needs nothing here: inline raw HTML does not survive this
+// editor's round trip at all, with or without a marker around it.
+function unescapeInertMarkerTokens(tokens: Token[]): Token[] {
+  for (const token of tokens) {
+    if (token.type === "codespan") {
+      token.text = unescapeCriticMarkupText(token.text);
+      continue;
+    }
+
+    if (token.type === "link" && isAutolinkToken(token as Tokens.Link)) {
+      const link = token as Tokens.Link;
+      link.href = unescapeCriticMarkupText(link.href);
+      link.text = unescapeCriticMarkupText(link.text);
+      for (const child of link.tokens ?? []) {
+        if (child.type === "text") {
+          child.text = unescapeCriticMarkupText(child.text);
+        }
+      }
+      continue;
+    }
+
+    const childTokens = (token as Tokens.Generic).tokens;
+    if (Array.isArray(childTokens)) {
+      unescapeInertMarkerTokens(childTokens);
+    }
+  }
+
+  return tokens;
+}
+
+function lexMarkerText(lexer: TokenizerThis["lexer"], text: string): Token[] {
+  return unescapeInertMarkerTokens(lexer.inlineTokens(text));
 }
 
 function escapeHtml(value: string): string {
@@ -934,7 +981,7 @@ function tokenizeCriticCommentAnchor(
       type: "criticCommentAnchor",
       raw,
       commentIds: parsedComments.map((comment) => comment.id),
-      tokens: lexer.inlineTokens(anchor),
+      tokens: lexMarkerText(lexer, anchor),
     },
     comments: parsedComments,
   };
@@ -1074,7 +1121,7 @@ function tokenizeCriticChange(
         raw: additionMatch[0] + metadata.raw + trailingComments.raw,
         change,
         commentIds: trailingComments.comments.map((comment) => comment.id),
-        tokens: lexer.inlineTokens(text),
+        tokens: lexMarkerText(lexer, text),
       },
       comments: trailingComments.comments,
     };
@@ -1103,7 +1150,7 @@ function tokenizeCriticChange(
         raw: deletionMatch[0] + metadata.raw + trailingComments.raw,
         change,
         commentIds: trailingComments.comments.map((comment) => comment.id),
-        tokens: lexer.inlineTokens(text),
+        tokens: lexMarkerText(lexer, text),
       },
       comments: trailingComments.comments,
     };
@@ -1135,8 +1182,8 @@ function tokenizeCriticChange(
         raw: substitutionMatch[0] + metadata.raw + trailingComments.raw,
         change,
         commentIds: trailingComments.comments.map((comment) => comment.id),
-        oldTokens: lexer.inlineTokens(oldText),
-        newTokens: lexer.inlineTokens(newText),
+        oldTokens: lexMarkerText(lexer, oldText),
+        newTokens: lexMarkerText(lexer, newText),
       },
       comments: trailingComments.comments,
     };
