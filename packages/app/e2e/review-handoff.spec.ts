@@ -73,6 +73,79 @@ test.describe("review handoff", () => {
     });
   });
 
+  test("applies pending approvals in the handoff save and resolves only the approved reply @smoke", async ({
+    page,
+    request,
+  }) => {
+    const relativePath = "approve-reply.md";
+    const filePath = writeProjectFile(
+      projectDir,
+      relativePath,
+      [
+        "# Approve Reply",
+        "",
+        'This paragraph has {==target text==}{>>Needs detail<<}{id="c1" by="user" at="2026-04-23T18:00:00.000Z"}{>>First answer<<}{id="c2" by="AI" at="2026-04-23T18:01:00.000Z" re="c1"}{>>Newest answer<<}{id="c3" by="AI" at="2026-04-23T18:02:00.000Z" re="c1"}.',
+        "",
+      ].join("\n"),
+    );
+
+    pendingWatch = request.post("/api/review-events/watch", {
+      data: {
+        projectPath: projectDir,
+        path: relativePath,
+        timeoutSeconds: 10,
+      },
+    });
+
+    await openMarkdownFile(page, filePath);
+    const rail = page.getByTestId("document-review-rail");
+    await expect(rail.getByTestId("comment-rail-c3")).toBeVisible();
+
+    await page.getByTestId("comment-thread-c1").click();
+    await rail.getByTestId("comment-rail-c3-action-approve").click();
+    await expect(
+      rail.getByTestId("comment-rail-c3-approve-confirm"),
+    ).toContainText("Approve");
+    await rail.getByTestId("comment-rail-c3-action-approve-confirm").click();
+    await expect(
+      rail.getByTestId("comment-rail-c3-approval-pending"),
+    ).toBeVisible();
+
+    // Autosave debounces at 500ms; a pending approval must outlast that
+    // without touching the file.
+    await page.waitForTimeout(1200);
+    expect(readProjectFile(projectDir, relativePath)).toContain(
+      "Newest answer",
+    );
+
+    await expect(page.getByTestId("review-handoff-button")).toBeVisible();
+    await page.getByTestId("review-handoff-button").click();
+    await expect(page.getByTestId("review-handoff-status")).toContainText(
+      "Your agent is now working",
+    );
+
+    await expect
+      .poll(() => readProjectFile(projectDir, relativePath))
+      .not.toContain("Newest answer");
+    const savedMarkdown = readProjectFile(projectDir, relativePath);
+    expect(savedMarkdown).toContain("{==target text==}");
+    expect(savedMarkdown).toContain("Needs detail");
+    expect(savedMarkdown).toContain('id="c1"');
+    expect(savedMarkdown).toContain("First answer");
+    expect(savedMarkdown).toContain('id="c2"');
+    expect(savedMarkdown).not.toContain('id="c3"');
+    await expect(rail.getByTestId("comment-rail-c3")).toHaveCount(0);
+
+    const watchResponse = await pendingWatch;
+    const payload = await watchResponse.json();
+    expect(payload.events).toHaveLength(1);
+    expect(payload.events[0]).toMatchObject({ type: "review.completed" });
+
+    logE2eEvent("review-handoff.pending-approval-applied", {
+      file: relativePath,
+    });
+  });
+
   test("reopens the sent handoff status from the muted primary button", async ({
     page,
     request,
