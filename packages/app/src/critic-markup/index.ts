@@ -385,11 +385,57 @@ function endmatterEntryForChange(
   };
 }
 
+/**
+ * Whether an endmatter comment entry belongs to an item whose text sits inline
+ * behind a compact `{#cN}` reference. Such an entry carries only `by` and `at`;
+ * an entry with a `body` holds the text itself, which is how a document-level
+ * comment and a legacy endmatter reply are written, and neither has a compact
+ * reference in the body.
+ */
+function isCompactReferenceEntry(entry: Record<string, unknown>): boolean {
+  return typeof entry.body !== "string";
+}
+
+/**
+ * Whether this document keeps review metadata in endmatter behind compact
+ * references. A `comments:` map holding nothing but entries with their own
+ * text does not count: those are document-level comments and legacy endmatter
+ * replies, which have nowhere else to live, and treating them as the legacy
+ * form flipped every inline attribute block in the document to `{#cN}` on the
+ * next save. An emptied map still counts, so a legacy document whose items
+ * have all been removed stays legacy and keeps its counters.
+ */
 function reviewMetadataLivesInEndmatter(parsed: ParsedEndmatter): boolean {
+  if (parsed.data === null) return false;
+  if ("suggestions" in parsed.data) return true;
+  if (!("comments" in parsed.data)) return false;
   return (
-    parsed.data !== null &&
-    ("comments" in parsed.data || "suggestions" in parsed.data)
+    parsed.comments.size === 0 ||
+    [...parsed.comments.values()].some(isCompactReferenceEntry)
   );
+}
+
+/**
+ * Whether a comment's text has no home in the body, so its endmatter entry has
+ * to survive a save of an inline-attribute document. A document-level comment
+ * applies to the whole document and has no anchor to sit beside; a legacy
+ * endmatter reply has no marker of its own. Dropping either would delete the
+ * reviewer's words.
+ */
+function commentTextLivesInEndmatter(
+  comment: CriticComment,
+  parsed: ParsedEndmatter,
+): boolean {
+  if (comment.scope === "document") return true;
+  // Only a document-level comment and a reply get a `body` from
+  // endmatterEntryForComment. Anything else would leave an entry holding
+  // neither text nor a reference, and splitYamlDocumentMetadata rejects a
+  // comments map that no `{#id}` in the body names, so the block would come
+  // back as a horizontal rule and literal YAML. The metadata is written inline
+  // in that case, so dropping the entry loses nothing.
+  if (!comment.parentCommentId) return false;
+  const entry = parsed.comments.get(comment.id);
+  return entry !== undefined && !isCompactReferenceEntry(entry);
 }
 
 function serializeReviewEndmatter(
@@ -419,14 +465,17 @@ function serializeReviewEndmatter(
     ]),
   );
 
-  if (useEndmatter) {
-    for (const comment of comments.values()) {
-      commentEntries.set(
-        comment.id,
-        endmatterEntryForComment(comment, parsed.comments.get(comment.id)),
-      );
+  for (const comment of comments.values()) {
+    if (!useEndmatter && !commentTextLivesInEndmatter(comment, parsed)) {
+      continue;
     }
+    commentEntries.set(
+      comment.id,
+      endmatterEntryForComment(comment, parsed.comments.get(comment.id)),
+    );
+  }
 
+  if (useEndmatter) {
     for (const change of changes.values()) {
       suggestionEntries.set(
         change.changeId,

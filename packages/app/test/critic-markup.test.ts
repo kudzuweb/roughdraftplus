@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { Editor } from "@tiptap/core";
+import { Editor, type JSONContent } from "@tiptap/core";
 import type { CriticComment } from "../src/critic-markup";
 import {
   advanceReviewIdCounters,
@@ -56,6 +56,78 @@ const inlineAttributeEndmatterReplyMarkdown = [
   "    re: c1",
   "",
 ].join("\n");
+
+// What the server leaves on disk after the reviewer clicks Done Reviewing with
+// an overall comment: the same inline attribute document, plus the persisted
+// document-level comment as its only endmatter entry.
+const inlineAttributeOverallCommentMarkdown = [
+  'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+  "",
+  "---",
+  "comments:",
+  "  c2:",
+  "    body: Please prioritize the CLI contract.",
+  "    by: user",
+  '    at: "2026-04-28T12:05:00.000Z"',
+  "",
+].join("\n");
+
+// Mirrors what the selection menu does to start a thread: the first run of
+// text in the document becomes the new comment's anchor.
+function anchorCommentOnFirstText(
+  node: JSONContent,
+  commentId: string,
+): JSONContent {
+  if (node.type === "text") {
+    return {
+      ...node,
+      marks: [
+        ...(node.marks ?? []),
+        { type: "commentRef", attrs: { commentIds: [commentId] } },
+      ],
+    };
+  }
+
+  let anchored = false;
+  const content = node.content?.map((child) => {
+    if (anchored) return child;
+    const next = anchorCommentOnFirstText(child, commentId);
+    if (next !== child) anchored = true;
+    return next;
+  });
+
+  return content ? { ...node, content } : node;
+}
+
+// Mirrors how the rail attaches a new reply: the reply's id joins the anchor's
+// existing commentRef mark rather than getting an anchor of its own.
+function attachCommentToAnchor(
+  node: JSONContent,
+  anchorCommentId: string,
+  commentId: string,
+): JSONContent {
+  const marks = node.marks?.map((mark) => {
+    if (mark.type !== "commentRef") return mark;
+    const ids = (mark.attrs?.commentIds ?? []) as string[];
+    if (!ids.includes(anchorCommentId)) return mark;
+    return {
+      ...mark,
+      attrs: { ...mark.attrs, commentIds: [...ids, commentId] },
+    };
+  });
+
+  return {
+    ...node,
+    ...(marks ? { marks } : {}),
+    ...(node.content
+      ? {
+          content: node.content.map((child) =>
+            attachCommentToAnchor(child, anchorCommentId, commentId),
+          ),
+        }
+      : {}),
+  };
+}
 
 describe("CriticMarkup comments", () => {
   it("preserves YAML frontmatter delimiters and raw table-like YAML text", () => {
@@ -211,6 +283,142 @@ describe("CriticMarkup comments", () => {
     expect(output).not.toContain("* * *");
     expect(output).toContain("body: I can add one from the intro.");
     expect(output).toContain("re: c1");
+  });
+
+  it("leaves inline attributes inline when the endmatter holds only a reply", () => {
+    const { doc, comments } = criticMarkdownToEditorState(
+      inlineAttributeEndmatterReplyMarkdown,
+    );
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain(
+      '{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
+    );
+    expect(output).not.toContain("{#c1}");
+  });
+
+  it("drops a textless endmatter entry rather than writing a block the reader rejects", () => {
+    // Malformed input no writer produces: the entry carries a body while the
+    // body still references it compactly. Saving it moves the metadata inline,
+    // which leaves the entry with neither text nor a reference to point at, and
+    // splitYamlDocumentMetadata rejects a comments map no `{#id}` names.
+    const bodyAndReferenceMarkdown = [
+      "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    body: Needs a source.",
+      "    by: user",
+      '    at: "2026-04-28T12:00:00.000Z"',
+      "",
+    ].join("\n");
+    const { doc, comments } = criticMarkdownToEditorState(
+      bodyAndReferenceMarkdown,
+    );
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain(
+      '{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
+    );
+    expect(output).not.toContain("comments:");
+    expect(
+      criticMarkdownToEditorState(output).comments.get("c1"),
+    ).toMatchObject({ id: "c1", content: "Needs a source." });
+  });
+
+  it("leaves inline attributes inline when the endmatter holds a document-level comment", () => {
+    const { doc, comments } = criticMarkdownToEditorState(
+      inlineAttributeOverallCommentMarkdown,
+    );
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain(
+      '{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
+    );
+    expect(output).not.toContain("{#c1}");
+    expect(output).toContain("body: Please prioritize the CLI contract.");
+  });
+
+  it("saves a document carrying a persisted overall comment unchanged", () => {
+    const { doc, comments } = criticMarkdownToEditorState(
+      inlineAttributeOverallCommentMarkdown,
+    );
+
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(
+      inlineAttributeOverallCommentMarkdown,
+    );
+  });
+
+  it("keeps a legacy document legacy once its last compact reference is removed", () => {
+    const legacyMarkdown = [
+      "This paragraph has {==first text==}{>>First note<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-04-23T18:00:00.000Z"',
+      "",
+    ].join("\n");
+    const cleared = editorStateToCriticMarkdown(
+      criticMarkdownToEditorState(legacyMarkdown).doc,
+      new Map(),
+    );
+    expect(cleared).toContain("comments: {}");
+
+    // The emptied map is what still says the document is legacy, so the next
+    // comment it takes belongs in the compact form and not inline.
+    const reopened = criticMarkdownToEditorState(cleared);
+    const added = createCriticComment(
+      {
+        content: "Second note",
+        createdAt: "2026-04-23T18:05:00.000Z",
+        authorId: "user",
+      },
+      { existingComments: [], idCounters: reopened.idCounters },
+    );
+
+    const output = editorStateToCriticMarkdown(
+      anchorCommentOnFirstText(reopened.doc, added.id),
+      new Map([[added.id, added]]),
+      { idCounters: reopened.idCounters },
+    );
+
+    expect(added.id).toBe("c2");
+    expect(output).toContain("{>>Second note<<}{#c2}");
+    expect(output).toContain("counters:\n  comments: 2");
+  });
+
+  it("writes a new reply inline on a document carrying a persisted overall comment", () => {
+    const { doc, comments, idCounters } = criticMarkdownToEditorState(
+      inlineAttributeOverallCommentMarkdown,
+    );
+    const reply = createCriticComment(
+      {
+        content: "Pulled it in.",
+        createdAt: "2026-04-28T12:10:00.000Z",
+        authorType: "ai",
+        parentCommentId: "c1",
+      },
+      { existingComments: comments.values(), idCounters },
+    );
+    comments.set(reply.id, reply);
+
+    const output = editorStateToCriticMarkdown(
+      attachCommentToAnchor(doc, "c1", reply.id),
+      comments,
+      { idCounters },
+    );
+
+    expect(output).toContain(
+      `{>>Pulled it in.<<}{id="${reply.id}" by="AI" at="2026-04-28T12:10:00.000Z" re="c1"}`,
+    );
+    expect(output).not.toContain("body: Pulled it in.");
+    expect(output).toContain("body: Please prioritize the CLI contract.");
   });
 
   it("does not treat horizontal rules and fenced YAML examples as review endmatter", () => {
