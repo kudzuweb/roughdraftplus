@@ -184,9 +184,21 @@ function isAutolinkToken(token: Tokens.Link): boolean {
 // Either way a backslash survives into the next save, which escapes it again
 // and doubles it. Both are stripped here. Every other token has already had its
 // escapes consumed, and unescaping it a second time would eat a backslash the
-// reviewer typed. Raw HTML needs nothing despite being on the first list:
-// inline raw HTML does not survive this editor's round trip at all, with or
-// without a marker around it.
+// reviewer typed.
+//
+// Two of the branches below cannot be covered by a test today, for opposite
+// reasons, and the difference is why one is absent and one is present:
+//
+//  - Raw HTML is on the first list and has no branch. Its content is destroyed
+//    before it ever reaches the writer, so unescaping it could not change a
+//    byte of any output, under this editor or a later one.
+//  - An image title has a branch that no test can reach. An image title is
+//    written back intact on every save; only the image's position changes,
+//    because the editor lifts an inline image out of its paragraph and so
+//    carries it out of the marker, and marker text is the only input this walk
+//    ever sees. Fix that and an image title behaves exactly like a link title,
+//    which does double without this branch. Deleting it as dead code would
+//    reintroduce that doubling through a change that looks unrelated.
 function unescapeInertMarkerTokens(tokens: Token[]): Token[] {
   for (const token of tokens) {
     if (token.type === "codespan") {

@@ -47,7 +47,7 @@ Every escaped form above is also a CommonMark backslash escape, so a Markdown re
 - Markdown leaves a backslash as ordinary text in some constructs, among them a code span, a code block, an autolink and raw HTML.
 - An implementation's own Markdown serialization may escape a backslash, as a quoted link or image title does, so the text carries that layer as well as this one and reading removes only the serializer's.
 
-Escaping is an extension: an implementation MAY instead reject review text containing a raw closing delimiter, as [Comments](#comments) describes.
+Escaping is an extension: an implementation MAY instead reject review text containing a raw delimiter, as [Comments](#comments) describes. A writer that rejects SHOULD do so only for text it writes between delimiters, since text bound for YAML endmatter carries no delimiter that could end a marker and would keep an escape as written.
 
 ## Comments
 

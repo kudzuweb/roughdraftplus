@@ -823,6 +823,37 @@ describe("escaped review delimiters", () => {
     ]);
   });
 
+  it("rejects an unescaped open delimiter in an inline reply and allows it in endmatter", () => {
+    const inlineParent = `Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.\n`;
+    const message = "Use {++ to insert.";
+
+    expect(() =>
+      appendRoughdraftReply(inlineParent, {
+        parentId: "c1",
+        message,
+        at: "2026-04-28T12:10:00.000Z",
+      }),
+    ).toThrow(/unescaped CriticMarkup open delimiter/);
+
+    const escaped = appendRoughdraftReply(inlineParent, {
+      parentId: "c1",
+      message: String.raw`Use \{++ to insert.`,
+      at: "2026-04-28T12:10:00.000Z",
+    });
+    expect(extractRoughdraftReviewIndex(escaped).items).toMatchObject([
+      { id: "c1" },
+      { id: "c2", text: message },
+    ]);
+
+    // A document-level comment is written to YAML, where a delimiter is inert
+    // and an escape would survive into the reviewer's own text.
+    const documentComment = appendRoughdraftDocumentComment("Body text.\n", {
+      message,
+      at: "2026-04-28T12:10:00.000Z",
+    });
+    expect(documentComment).toContain(`body: ${message}`);
+  });
+
   it("keeps a later comment when an earlier body ends with a backslash", () => {
     const markdown = [
       'See {==first==}{>>ends with a backslash\\<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',

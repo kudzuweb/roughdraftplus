@@ -721,6 +721,8 @@ export function appendRoughdraftReply(
     });
   }
 
+  assertSafeMarkerText(options.message);
+
   const reply = `{>>${options.message}<<}${serializeMetadataAttributes({
     id: replyId,
     by: options.author ?? "AI",
@@ -743,6 +745,21 @@ function assertSafeCommentBodyText(message: string): void {
 
     throw new Error(
       `Reply text contains an unescaped CriticMarkup close delimiter "${delimiter}". Write it as "\\${delimiter}" or rewrite the reply without it.`,
+    );
+  }
+}
+
+// Marker text must not contain an unescaped opening delimiter either, since an
+// unescaped opener is another marker beginning and a reader ends the marker
+// there. This applies only to text written between delimiters: a document-level
+// comment and a reply to an endmatter-backed item are written to YAML, where a
+// delimiter is inert and an escape would survive into the text.
+function assertSafeMarkerText(message: string): void {
+  for (const delimiter of CRITICMARKUP_OPEN_DELIMITERS) {
+    if (indexOfUnescaped(message, delimiter, 0) === -1) continue;
+
+    throw new Error(
+      `Reply text contains an unescaped CriticMarkup open delimiter "${delimiter}". Write it as "\\${delimiter}" or rewrite the reply without it.`,
     );
   }
 }
