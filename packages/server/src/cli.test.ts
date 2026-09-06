@@ -1106,17 +1106,33 @@ describe("cli", () => {
     });
   });
 
+  // Resolves once the CLI's watch is registered on the server, not merely once
+  // the server is up: a Done Reviewing posted before the priming watch poll is
+  // excluded by its fromNow cursor, and the open would then wait forever.
   async function waitForPersistedPort(env: NodeJS.ProcessEnv): Promise<number> {
-    for (let attempt = 0; attempt < 50; attempt += 1) {
+    let port: number | null = null;
+    for (let attempt = 0; attempt < 200; attempt += 1) {
       const stateFile = getServerStateFilePath(env);
-      if (fs.existsSync(stateFile)) {
-        return (
+      if (port === null && fs.existsSync(stateFile)) {
+        port = (
           JSON.parse(fs.readFileSync(stateFile, "utf8")) as { port: number }
         ).port;
       }
+      if (port !== null) {
+        const params = new URLSearchParams({
+          projectPath: projectDir,
+          path: "draft.md",
+        });
+        const status = (await (
+          await fetch(
+            `http://localhost:${port}/api/review-events/status?${params.toString()}`,
+          )
+        ).json()) as { watching?: boolean };
+        if (status.watching) return port;
+      }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    throw new Error("server state was never persisted");
+    throw new Error("the CLI never registered a review watcher");
   }
 
   async function submitDoneReviewing(
