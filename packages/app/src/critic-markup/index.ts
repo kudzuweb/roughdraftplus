@@ -1394,19 +1394,9 @@ function addCriticCommentRule(
       node.nodeName === "SPAN" &&
       (node as HTMLElement).hasAttribute("data-comment-ids"),
     replacement(content, node) {
-      const commentIdsText = (node as HTMLElement).getAttribute(
-        "data-comment-ids",
-      );
+      const commentIds = parseCommentIdsAttribute(node as HTMLElement);
 
-      if (!commentIdsText) return content;
-
-      let commentIds: string[] = [];
-
-      try {
-        commentIds = JSON.parse(commentIdsText) as string[];
-      } catch {
-        return content;
-      }
+      if (!commentIds) return content;
 
       const criticChangeElement = (node as HTMLElement).querySelector(
         "span[data-critic-change-kind]",
@@ -1435,7 +1425,81 @@ function addCriticCommentRule(
   });
 }
 
-function addCriticCodeBlockRule(service: TurndownService) {
+/**
+ * A fence's content is source text, so it cannot go back through
+ * `service.turndown`: turndown reads the code element as inline HTML and
+ * collapses every newline in a text node to a space, which saves a multi-line
+ * fence as one line. This walk reads the element's children directly instead,
+ * writing each text node byte for byte and each review mark back as its own
+ * marker, so the only bytes that change are the markers themselves.
+ */
+function serializeCriticCodeContent(
+  service: TurndownService,
+  codeElement: HTMLElement,
+  comments: Map<string, CriticComment>,
+  useEndmatter: boolean,
+): string {
+  let result = "";
+
+  for (const child of codeElement.childNodes) {
+    if (!(child instanceof HTMLElement)) {
+      result += child.textContent ?? "";
+      continue;
+    }
+
+    const commentIds = parseCommentIdsAttribute(child) ?? [];
+    const changeElement = child.hasAttribute("data-critic-change-kind")
+      ? child
+      : child.querySelector("span[data-critic-change-kind]");
+
+    if (changeElement instanceof HTMLElement) {
+      result += serializeCriticChangeElement(
+        service,
+        changeElement,
+        changeElement.textContent ?? "",
+        comments,
+        commentIds,
+        useEndmatter,
+      );
+      continue;
+    }
+
+    if (commentIds.length > 0) {
+      const commentBlocks = serializeCommentBlocks(
+        commentIds,
+        comments,
+        useEndmatter,
+      );
+      result += commentBlocks
+        ? `{==${escapeCriticMarkupText(child.textContent ?? "")}==}${commentBlocks}`
+        : (child.textContent ?? "");
+      continue;
+    }
+
+    result += child.textContent ?? "";
+  }
+
+  return result;
+}
+
+/** The ids a comment anchor carries, or null when it carries no readable list. */
+function parseCommentIdsAttribute(element: HTMLElement): string[] | null {
+  const commentIdsText = element.getAttribute("data-comment-ids");
+
+  if (!commentIdsText) return null;
+
+  try {
+    return JSON.parse(commentIdsText) as string[];
+  } catch {
+    return null;
+  }
+}
+
+function addCriticCodeBlockRule(
+  service: TurndownService,
+  comments: Map<string, CriticComment>,
+  useEndmatter = false,
+) {
   service.addRule("criticCodeBlock", {
     filter: (node) => {
       if (node.nodeName !== "PRE") return false;
@@ -1459,7 +1523,15 @@ function addCriticCodeBlockRule(service: TurndownService) {
         [...codeElement.classList]
           .find((className) => className.startsWith("language-"))
           ?.slice("language-".length) ?? "";
-      const content = service.turndown(codeElement.innerHTML).trimEnd();
+      // Turndown's own fenced-code rule drops exactly one trailing newline, so
+      // this drops one too and a fence carrying a marker saves the same bytes
+      // as the plain fence beside it.
+      const content = serializeCriticCodeContent(
+        service,
+        codeElement,
+        comments,
+        useEndmatter,
+      ).replace(/\n$/, "");
 
       return `\n\n\`\`\`${language}\n${content}\n\`\`\`\n\n`;
     },
@@ -1905,7 +1977,7 @@ export function editorStateToCriticMarkdown(
   );
   addCriticCommentRule(service, comments, useEndmatter);
   addCriticChangeRule(service, comments, useEndmatter);
-  addCriticCodeBlockRule(service);
+  addCriticCodeBlockRule(service, comments, useEndmatter);
   const endmatter = serializeReviewEndmatter(
     sourceEndmatter,
     comments,

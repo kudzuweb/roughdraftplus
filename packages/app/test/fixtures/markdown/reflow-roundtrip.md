@@ -17,6 +17,22 @@ code line
 still code
 ```
 
+```text
+a fence that carries a comment
+{==keeps its own line breaks==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}
+
+and its blank lines
+```
+
+```md
+a fence whose suggestion stays literal
+{++inserted++}
+{--deleted--}
+{~~old~>new~~}
+
+and keeps its blank lines
+```
+
 | Item | Status |
 |------|--------|
 | First | Ready |

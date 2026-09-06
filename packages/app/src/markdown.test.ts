@@ -33,6 +33,16 @@ function saveCriticMarkdown(markdown: string): string {
   return editorStateToCriticMarkdown(doc, comments);
 }
 
+// A one-time normalization and a compounding corruption look the same after a
+// single save, so fence fidelity is asserted over a run of them.
+function saveCriticMarkdownRepeatedly(markdown: string, times: number): string {
+  let saved = markdown;
+  for (let round = 0; round < times; round += 1) {
+    saved = saveCriticMarkdown(saved);
+  }
+  return saved;
+}
+
 function readMarkdownFixture(name: string): string {
   return fs.readFileSync(
     path.join(process.cwd(), "test", "fixtures", "markdown", name),
@@ -412,6 +422,76 @@ describe("reserialize fidelity", () => {
     );
   });
 
+  it("keeps a multi-line fenced block that holds an anchored comment", () => {
+    const markdown = [
+      "```text",
+      "first line",
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      "",
+      "last line",
+      "```",
+      "",
+    ].join("\n");
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+    expect(saveCriticMarkdownRepeatedly(markdown, 4)).toBe(markdown);
+  });
+
+  it("keeps the comment inside a fenced block on the review rail", () => {
+    const markdown = [
+      "```text",
+      "first line",
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      "",
+      "last line",
+      "```",
+      "",
+    ].join("\n");
+
+    const { comments } = criticMarkdownToEditorState(markdown);
+
+    expect(comments.get("c1")).toMatchObject({
+      id: "c1",
+      content: "Note",
+      authorId: "user",
+    });
+  });
+
+  it("keeps a multi-line fenced block that holds a literal suggestion", () => {
+    const markdown = [
+      "```md",
+      "first line",
+      "{++inserted++}",
+      "{--deleted--}",
+      "{~~old~>new~~}",
+      "",
+      "last line",
+      "```",
+      "",
+    ].join("\n");
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+    expect(saveCriticMarkdownRepeatedly(markdown, 4)).toBe(markdown);
+  });
+
+  it("keeps a fenced block whose comment metadata lives in the endmatter", () => {
+    const markdown = [
+      "```text",
+      "first line",
+      "{==anchor==}{>>Note<<}{#c1}",
+      "",
+      "last line",
+      "```",
+      "",
+      commentEndmatter,
+    ].join("\n");
+
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+    expect(saveCriticMarkdownRepeatedly(markdown, 4)).toBe(markdown);
+  });
+
   it("round-trips the reflow fixture through the save path", () => {
     const markdown = readMarkdownFixture("reflow-roundtrip.md");
     const saved = saveCriticMarkdown(markdown);
@@ -419,7 +499,7 @@ describe("reserialize fidelity", () => {
     expect(saved).toBe(markdown);
     expect(saved).not.toMatch(/[ \t]+\n/);
     expect(saved).not.toContain("\u200b");
-    expect(saveCriticMarkdown(saved)).toBe(markdown);
+    expect(saveCriticMarkdownRepeatedly(markdown, 4)).toBe(markdown);
   });
 });
 
