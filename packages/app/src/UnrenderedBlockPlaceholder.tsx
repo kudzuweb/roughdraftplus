@@ -34,7 +34,7 @@ export function UnrenderedBlockPlaceholder({ node }: NodeViewProps) {
         <AlertTitle>{label} not rendered</AlertTitle>
         <AlertDescription>
           Roughdraft could not render this {label.toLowerCase()} in rich text.
-          Its Markdown is kept exactly as written; open the code editor to read
+          Its Markdown is kept exactly as written; switch to code view to read
           or edit it.
         </AlertDescription>
       </Alert>
