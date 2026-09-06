@@ -156,25 +156,47 @@ describe("CommentEditorList reply collapsing", () => {
     ).toContain("1 earlier reply");
   });
 
-  it("keeps a collapsed thread expanded when a hidden reply is pending focus", async () => {
+  it("keeps a collapsed thread expanded while a hidden reply is being edited, even after the pending focus clears", async () => {
     const comments = createThread(3);
+    const renderWithPendingFocus = async (
+      pendingFocusCommentId: string | null,
+    ) => {
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <CommentEditorList
+              comments={comments}
+              variant="rail"
+              pendingFocusCommentId={pendingFocusCommentId}
+              onDeleteComment={vi.fn()}
+              onUpdateComment={vi.fn()}
+              onReplyComment={vi.fn()}
+            />
+          </TooltipProvider>,
+        );
+      });
+    };
 
-    await act(async () => {
-      root.render(
-        <TooltipProvider>
-          <CommentEditorList
-            comments={comments}
-            variant="rail"
-            pendingFocusCommentId="r1"
-            onDeleteComment={vi.fn()}
-            onUpdateComment={vi.fn()}
-            onReplyComment={vi.fn()}
-          />
-        </TooltipProvider>,
-      );
-    });
+    await renderWithPendingFocus("r1");
 
     expect(queryByTestId(container, "comment-rail-r1-editor")).not.toBeNull();
     expect(queryByTestId(container, "comment-rail-r2")).not.toBeNull();
+
+    await renderWithPendingFocus(null);
+
+    expect(queryByTestId(container, "comment-rail-r1-editor")).not.toBeNull();
+    expect(queryByTestId(container, "comment-rail-r2")).not.toBeNull();
+    expect(
+      queryByTestId(container, "comment-rail-root-action-collapse-replies"),
+    ).not.toBeNull();
+
+    await click(getByTestId(container, "comment-rail-r1-action-cancel"));
+
+    expect(queryByTestId(container, "comment-rail-r1-editor")).toBeNull();
+    expect(queryByTestId(container, "comment-rail-r1")).toBeNull();
+    expect(queryByTestId(container, "comment-rail-r3")).not.toBeNull();
+    expect(
+      queryByTestId(container, "comment-rail-root-action-expand-replies"),
+    ).not.toBeNull();
   });
 });

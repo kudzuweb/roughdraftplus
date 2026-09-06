@@ -153,13 +153,13 @@ export function CommentEditorList({
         const visibleReplyIds = new Set(
           getCommentThreadReplies(collapsed.thread).map((reply) => reply.id),
         );
+        const isEditingHiddenReply = getCommentThreadReplies(thread).some(
+          (reply) =>
+            !visibleReplyIds.has(reply.id) &&
+            editingCommentIds.includes(reply.id),
+        );
         const isExpanded =
-          expandedThreadIds.includes(rootCommentId) ||
-          (!!pendingFocusCommentId &&
-            !visibleReplyIds.has(pendingFocusCommentId) &&
-            getCommentThreadReplies(thread).some(
-              (reply) => reply.id === pendingFocusCommentId,
-            ));
+          expandedThreadIds.includes(rootCommentId) || isEditingHiddenReply;
         const onToggle = () => {
           setExpandedThreadIds((current) =>
             isExpanded
@@ -177,7 +177,7 @@ export function CommentEditorList({
           },
         };
       }),
-    [expandedThreadIds, pendingFocusCommentId, threads],
+    [editingCommentIds, expandedThreadIds, threads],
   );
   const commentMap = useMemo(
     () => new Map(comments.map((comment) => [comment.id, comment])),
