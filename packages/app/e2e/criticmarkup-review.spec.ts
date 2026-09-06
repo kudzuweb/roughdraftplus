@@ -144,6 +144,69 @@ test.describe("CriticMarkup review flows", () => {
     });
   });
 
+  test("allocates a fresh comment id after every thread has been deleted @smoke", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "cleared-threads.md",
+      [
+        "# Cleared Threads",
+        "",
+        "This paragraph has {==first text==}{>>First note<<}{#c1} and {==second text==}{>>Second note<<}{#c2}.",
+        "",
+        "It also has target text to review.",
+        "",
+        "---",
+        "comments:",
+        "  c1:",
+        "    by: user",
+        '    at: "2026-04-23T18:00:00.000Z"',
+        "  c2:",
+        "    by: user",
+        '    at: "2026-04-23T18:01:00.000Z"',
+        "",
+      ].join("\n"),
+    );
+
+    await openMarkdownFile(page, filePath);
+    await expect(page.getByTestId("document-review-rail")).toContainText(
+      "Second note",
+    );
+
+    for (const commentId of ["c1", "c2"]) {
+      await page.getByTestId(`comment-thread-${commentId}`).click();
+      await page
+        .getByTestId(`comment-rail-${commentId}-action-delete-thread`)
+        .evaluate((element) => {
+          (element as HTMLButtonElement).click();
+        });
+    }
+
+    await expect
+      .poll(() => readProjectFile(projectDir, "cleared-threads.md"))
+      .toContain("counters:\n  comments: 2\n");
+    expect(readProjectFile(projectDir, "cleared-threads.md")).not.toContain(
+      "{#c",
+    );
+
+    await selectRichText(page, "target text");
+    await page.getByTestId("selection-menu-action-comment").click();
+    await page.getByTestId("comment-rail-c3-editor").fill("Third note.");
+    await page.getByTestId("comment-rail-c3-action-save").click();
+
+    await expect
+      .poll(() => readProjectFile(projectDir, "cleared-threads.md"))
+      .toContain("{==target text==}{>>Third note.<<}{#c3}");
+    expect(readProjectFile(projectDir, "cleared-threads.md")).toContain(
+      "counters:\n  comments: 3\n",
+    );
+
+    logE2eEvent("criticmarkup.fresh-id-after-clear", {
+      file: "cleared-threads.md",
+    });
+  });
+
   test("animates the document layout when the review rail appears and disappears @smoke", async ({
     page,
   }) => {
