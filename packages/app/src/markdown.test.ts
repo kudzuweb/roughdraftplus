@@ -10,6 +10,7 @@ import {
   toHtml,
   toMarkdown,
   rawMarkdownBlockAttribute,
+  rawMarkdownBlockTypeAttribute,
 } from "./markdown";
 
 const paddedTable = ["| A   | B   |", "| --- | --- |", "| 1   | 2   |"].join(
@@ -117,6 +118,36 @@ describe("toHtml", () => {
     expect(html).toContain(
       '<img src="./images/sketch.png" alt="Sketch" title="Sketch title" data-markdown-src="./images/sketch.png">',
     );
+  });
+
+  it("tags protected blocks with the block type the placeholder names", () => {
+    const pipeTable = ["| Flag | Meaning |", "| --- | --- |", "| `a \\| b` | either |"].join("\n");
+
+    expect(toHtml(`${pipeTable}\n`)).toContain(
+      `${rawMarkdownBlockTypeAttribute}="table"`,
+    );
+    expect(toHtml("<!-- note -->\n")).toContain(
+      `${rawMarkdownBlockTypeAttribute}="html-comment"`,
+    );
+    expect(toHtml("<details>\n<summary>More</summary>\n</details>\n")).toContain(
+      `${rawMarkdownBlockTypeAttribute}="details"`,
+    );
+    expect(toHtml("- item\n\n    indented code\n")).toContain(
+      `${rawMarkdownBlockTypeAttribute}="indented-code"`,
+    );
+    expect(toHtml(`${paddedTable}\n`)).not.toContain(rawMarkdownBlockTypeAttribute);
+  });
+
+  it("round-trips a protected table unchanged through the editor state", () => {
+    const input = ["# Flags", "", "| Flag | Meaning |", "| --- | --- |", "| `a \\| b` | either |", ""].join("\n");
+
+    const { doc } = criticMarkdownToEditorState(input);
+    const rawBlocks = (doc.content ?? []).filter(
+      (node) => node.type === "rawMarkdownBlock",
+    );
+
+    expect(rawBlocks.map((node) => node.attrs?.blockType)).toEqual(["table"]);
+    expect(saveCriticMarkdown(input)).toBe(input);
   });
 
   it("round-trips headerless HTML tables to valid GFM table markdown", () => {
