@@ -258,6 +258,14 @@ export function CommentEditorList({
   }, [comments]);
 
   useEffect(() => {
+    // A decision made by another control (reject, edit) supersedes an open
+    // approve confirm, which would otherwise come back when it is undone.
+    setConfirmingApprovalCommentId((current) =>
+      current && pendingApprovalCommentIds.includes(current) ? null : current,
+    );
+  }, [pendingApprovalCommentIds]);
+
+  useEffect(() => {
     if (!interactive) return;
     if (!pendingFocusCommentId) return;
 

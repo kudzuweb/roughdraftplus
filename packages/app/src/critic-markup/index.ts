@@ -1795,7 +1795,7 @@ export function getSuggestionThreadCommentIds(
   ];
 }
 
-export interface PendingApprovals {
+interface PendingApprovals {
   commentIds?: Iterable<string>;
   changeDecisions?: readonly CriticChangeDecision[];
 }

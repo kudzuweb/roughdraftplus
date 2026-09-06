@@ -332,14 +332,21 @@ function acceptCriticChangeInTransform(tr: Transform, changeId: string) {
         range.from,
         range.to,
       );
+      // Map through this range's own deletions only: in a chain the
+      // transform already carries earlier commands' steps, and the range
+      // was collected from the document those steps produced.
+      const stepsBefore = tr.steps.length;
 
       for (const position of [...sentinelPositions].reverse()) {
         tr.delete(position, position + SUGGESTED_PARAGRAPH_SENTINEL.length);
       }
 
-      const from = tr.mapping.map(range.from, -1);
-      const to = tr.mapping.map(range.to, -1);
-      tr.removeMark(from, to, markType);
+      const mapping = tr.mapping.slice(stepsBefore);
+      tr.removeMark(
+        mapping.map(range.from, -1),
+        mapping.map(range.to, -1),
+        markType,
+      );
     }
   }
 
@@ -412,7 +419,9 @@ function editCriticChangeInTransform(
 
   if (replacement.length === 0) return true;
 
-  const insertAt = tr.mapping.map(ranges[0].from, -1);
+  // Every later range was deleted first, so the first range still starts
+  // where it did.
+  const insertAt = ranges[0].from;
   const proseMarks = tr.doc
     .resolve(insertAt)
     .marks()

@@ -1073,6 +1073,24 @@ describe("editing a suggestion mark", () => {
     editor.destroy();
   });
 
+  it("applies several decisions on one chain without earlier steps shifting later positions", () => {
+    const { editor, comments } = createEditorFromMarkdown(
+      'Keep {++clear wording++}{id="s1" by="AI" at="2026-04-23T18:00:00.000Z"} and {~~old~>new~~}{id="s2" by="AI" at="2026-04-23T18:01:00.000Z"} and {~~a~>b~~}{id="s3" by="AI" at="2026-04-23T18:02:00.000Z"} here.\n',
+    );
+
+    editor
+      .chain()
+      .acceptCriticChange("s1")
+      .rejectCriticChange("s2")
+      .editCriticChange("s3", "c")
+      .run();
+
+    expect(saveMarkdown(editor, comments)).toBe(
+      "Keep clear wording and old and c here.\n",
+    );
+    editor.destroy();
+  });
+
   it("returns false for an unknown change id and leaves the document alone", () => {
     const { editor, comments } = createEditorFromMarkdown(
       'Keep {++clear wording++}{id="s1" by="AI" at="2026-04-23T18:00:00.000Z"} here.\n',
