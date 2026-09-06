@@ -61,10 +61,21 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 
 - Review the file at its real path. If it is git-tracked, confirm it is committed before opening,
   so an unwanted rewrite is one checkout away.
-- After a round, diff the file. Wrapped lines, blank lines between blocks, fenced-block
-  interiors, and table delimiter rows survive a save (#2, #3). The save path still removes the
-  blank line after a heading, pads table cells to three characters, and tightens loose lists;
-  anything else in the diff is a reviewer edit.
+- After a round, diff the file, and read it knowing what a save rewrites on its own. Kept as
+  typed (#2, #3): wrapped lines, the blank line between blocks other than around a heading,
+  fence interiors, table delimiter rows, `_em_`, `**strong**`, hard breaks, autolinks, images,
+  strikethrough. Still rewritten by a save, in four groups:
+  1. Block spacing and shape: the blank line before a heading after a paragraph or list, and
+     the blank line after a heading, are removed; table cells are padded to three characters;
+     loose lists are tightened (#23); runs of blank lines collapse to one outside fences.
+  2. Marker and delimiter style: `*` and `+` bullets become `-`; `1)` becomes `1.`; `*em*`
+     becomes `_em_` and `__strong__` becomes `**strong**`; a `---` rule becomes `* * *`.
+  3. Syntax-form normalization: setext headings become ATX; indented code blocks become
+     fenced; reference-style links become inline and their definition lines are dropped;
+     footnotes break; backslash escapes are dropped; HTML entities are decoded; inline HTML is
+     converted or unwrapped; tabs become spaces.
+  4. Task lists are corrupted: `- [x] Done` splits across lines (#22).
+  A diff hunk outside those groups is a reviewer edit.
 - Close the tab (or stop the server) before restoring or editing a reviewed file outside the loop.
   An open tab's watcher can save its reflowed copy over external changes — including a `git
   checkout`, which is not final while Roughdraft still holds the file. Re-run the checkout after
