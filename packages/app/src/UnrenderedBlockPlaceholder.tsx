@@ -57,8 +57,9 @@ export function UnrenderedBlockPlaceholder({
             data-testid="unrendered-block-deletion-refused"
             className="font-medium text-foreground"
           >
-            Rich text will not delete this {label.toLowerCase()}. Switch to code
-            view to remove its Markdown.
+            Rich text will not delete this {label.toLowerCase()}, and will not
+            delete a selection that includes it. Switch to code view to remove
+            its Markdown.
           </AlertDescription>
         ) : null}
       </Alert>

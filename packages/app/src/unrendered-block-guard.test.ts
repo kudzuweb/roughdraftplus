@@ -1,6 +1,5 @@
 import { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { Slice } from "@tiptap/pm/model";
 import { AllSelection, NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -21,7 +20,13 @@ const protectedTableMarkdown = [
   "",
   "Trailing paragraph.",
   "",
+  "Another paragraph.",
+  "",
 ].join("\n");
+
+const plainMarkdown = ["First paragraph.", "", "Second paragraph.", ""].join(
+  "\n",
+);
 
 const editors: Editor[] = [];
 
@@ -31,22 +36,26 @@ afterEach(() => {
   }
 });
 
-/**
- * Helper: build a tiptap Editor in JSDOM holding one protected table, the
- * document shape a rich-text reader sees for Markdown that cannot round-trip.
- */
-function createEditorWithProtectedTable(): Editor {
+function createEditor(markdown: string): Editor {
   const element = document.createElement("div");
   document.body.appendChild(element);
 
   const editor = new Editor({
     element,
     extensions: createEditorExtensions(""),
-    content: criticMarkdownToEditorState(protectedTableMarkdown).doc,
+    content: criticMarkdownToEditorState(markdown).doc,
   });
   editors.push(editor);
 
   return editor;
+}
+
+/**
+ * Helper: build an editor holding one protected table between prose, the
+ * document shape a rich-text reader sees for Markdown that cannot round-trip.
+ */
+function createEditorWithProtectedTable(): Editor {
+  return createEditor(protectedTableMarkdown);
 }
 
 function findRawMarkdownBlockPos(editor: Editor): number {
@@ -65,53 +74,29 @@ function findRawMarkdownBlockPos(editor: Editor): number {
   return found;
 }
 
+function blockRange(editor: Editor): { from: number; to: number } {
+  const from = findRawMarkdownBlockPos(editor);
+  const node = editor.state.doc.nodeAt(from);
+  if (!node) throw new Error("Expected a rawMarkdownBlock at that position");
+  return { from, to: from + node.nodeSize };
+}
+
 function selectPlaceholder(editor: Editor): void {
-  const pos = findRawMarkdownBlockPos(editor);
   const { state } = editor.view;
   editor.view.dispatch(
-    state.tr.setSelection(NodeSelection.create(state.doc, pos)),
+    state.tr.setSelection(
+      NodeSelection.create(state.doc, findRawMarkdownBlockPos(editor)),
+    ),
   );
 }
 
 /**
  * Helper: press one key on the editor's own DOM node, so the keystroke runs
- * through ProseMirror's keymap the way a reader's Backspace does. Editing mode
- * is what `PageCard` leaves in place when its suggesting-mode handlers decline
- * the event, so the bare editor stands in for it.
+ * through ProseMirror's keymap the way a reader's Backspace does.
  */
 function pressKey(editor: Editor, key: string): void {
   editor.view.dom.dispatchEvent(
-    new KeyboardEvent("keydown", {
-      key,
-      bubbles: true,
-      cancelable: true,
-    }),
-  );
-}
-
-/**
- * Helper: select from the start of the document to its end, the range a reader
- * gets from Select All or a shift-arrow sweep past the placeholder.
- */
-function selectWholeDocument(editor: Editor): void {
-  const { state } = editor.view;
-  editor.view.dispatch(state.tr.setSelection(new AllSelection(state.doc)));
-}
-
-/**
- * Helper: select a text range that spans the placeholder without being a node
- * selection on it, which is what shift-arrow produces.
- */
-function selectRangeAcrossPlaceholder(editor: Editor): void {
-  const { state } = editor.view;
-  const blockPos = findRawMarkdownBlockPos(editor);
-  const block = state.doc.nodeAt(blockPos);
-  if (!block) throw new Error("Expected a rawMarkdownBlock to select across");
-
-  editor.view.dispatch(
-    state.tr.setSelection(
-      TextSelection.create(state.doc, 1, blockPos + block.nodeSize + 1),
-    ),
+    new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
   );
 }
 
@@ -128,8 +113,46 @@ function countRawMarkdownBlocks(editor: Editor): number {
   return count;
 }
 
-describe("selected unrendered-block placeholder in editing mode", () => {
-  it("keeps the protected block when Backspace is pressed", () => {
+function refusedPos(editor: Editor): number | null {
+  return (
+    rawMarkdownBlockGuardPluginKey.getState(editor.state)?.refusedPos ?? null
+  );
+}
+
+describe("a transaction that would drop a protected block", () => {
+  it("is refused when it deletes the block on its own", () => {
+    const editor = createEditorWithProtectedTable();
+    const { from, to } = blockRange(editor);
+
+    editor.view.dispatch(editor.state.tr.delete(from, to));
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
+  });
+
+  it("is refused when it deletes a range that spans the block", () => {
+    const editor = createEditorWithProtectedTable();
+    const { to } = blockRange(editor);
+
+    editor.view.dispatch(editor.state.tr.delete(1, to + 1));
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
+  });
+
+  it("is refused when it replaces the whole document", () => {
+    const editor = createEditorWithProtectedTable();
+    const { state } = editor.view;
+
+    editor.view.dispatch(
+      state.tr.setSelection(new AllSelection(state.doc)).deleteSelection(),
+    );
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
+  });
+
+  it("is refused when Backspace lands on the selected placeholder", () => {
     const editor = createEditorWithProtectedTable();
     selectPlaceholder(editor);
 
@@ -139,7 +162,7 @@ describe("selected unrendered-block placeholder in editing mode", () => {
     expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
   });
 
-  it("keeps the protected block when Delete is pressed", () => {
+  it("is refused when Delete lands on the selected placeholder", () => {
     const editor = createEditorWithProtectedTable();
     selectPlaceholder(editor);
 
@@ -149,139 +172,88 @@ describe("selected unrendered-block placeholder in editing mode", () => {
     expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
   });
 
-  it("keeps the protected block when the reader types over it", () => {
+  it("notes the refusal on the block that would have gone", async () => {
     const editor = createEditorWithProtectedTable();
-    selectPlaceholder(editor);
+    const { from, to } = blockRange(editor);
+    expect(refusedPos(editor)).toBe(null);
 
-    expect(
-      editor.view.someProp("handleTextInput", (handler) =>
-        handler(
-          editor.view,
-          editor.state.selection.from,
-          editor.state.selection.to,
-          "x",
-        ),
-      ),
-    ).toBe(true);
+    editor.view.dispatch(editor.state.tr.delete(from, to));
+    await Promise.resolve();
 
-    expect(countRawMarkdownBlocks(editor)).toBe(1);
-    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
+    expect(refusedPos(editor)).toBe(from);
   });
 
-  it("notes the refusal on the placeholder that was selected", () => {
+  it("clears the refusal note once the reader moves the selection", async () => {
     const editor = createEditorWithProtectedTable();
-    selectPlaceholder(editor);
-
-    expect(rawMarkdownBlockGuardPluginKey.getState(editor.state)).toEqual({
-      refusedPos: null,
-    });
-
-    pressKey(editor, "Backspace");
-
-    expect(rawMarkdownBlockGuardPluginKey.getState(editor.state)).toEqual({
-      refusedPos: findRawMarkdownBlockPos(editor),
-    });
-  });
-
-  it("clears the refusal note once the reader moves the selection", () => {
-    const editor = createEditorWithProtectedTable();
-    selectPlaceholder(editor);
-    pressKey(editor, "Backspace");
+    const { from, to } = blockRange(editor);
+    editor.view.dispatch(editor.state.tr.delete(from, to));
+    await Promise.resolve();
 
     editor.commands.setTextSelection(1);
 
-    expect(rawMarkdownBlockGuardPluginKey.getState(editor.state)).toEqual({
-      refusedPos: null,
-    });
+    expect(refusedPos(editor)).toBe(null);
   });
+});
 
-  it("keeps the protected block when the selection is cut", () => {
+describe("a transaction that keeps every protected block", () => {
+  it("goes through when it deletes a range holding nothing protected", () => {
     const editor = createEditorWithProtectedTable();
-    selectPlaceholder(editor);
+    const { to } = blockRange(editor);
+    const before = editor.state.doc.content.size;
 
-    const cut = new Event("cut", { bubbles: true, cancelable: true });
-    expect(
-      editor.view.someProp("handleDOMEvents", (handlers) =>
-        handlers.cut?.(editor.view, cut),
-      ),
-    ).toBe(true);
-    expect(cut.defaultPrevented).toBe(true);
+    editor.view.dispatch(
+      editor.state.tr.delete(to + 1, editor.state.doc.content.size - 1),
+    );
 
     expect(countRawMarkdownBlocks(editor)).toBe(1);
-    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
+    expect(editor.state.doc.content.size).toBeLessThan(before);
+    expect(refusedPos(editor)).toBe(null);
   });
 
-  it("keeps the protected block when the selection is pasted over", () => {
-    const editor = createEditorWithProtectedTable();
-    selectPlaceholder(editor);
+  it("goes through when the document holds nothing protected", () => {
+    const editor = createEditor(plainMarkdown);
 
-    expect(
-      editor.view.someProp("handlePaste", (handler) =>
-        handler(editor.view, new Event("paste"), Slice.empty),
-      ),
-    ).toBe(true);
+    editor.view.dispatch(
+      editor.state.tr.delete(1, editor.state.doc.content.size - 1),
+    );
 
-    expect(countRawMarkdownBlocks(editor)).toBe(1);
-    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
+    expect(editor.state.doc.textContent).not.toContain("First paragraph.");
   });
 
-  it("keeps the protected block when a text range sweeps across it", () => {
-    const editor = createEditorWithProtectedTable();
-    selectRangeAcrossPlaceholder(editor);
-
-    pressKey(editor, "Backspace");
-
-    expect(countRawMarkdownBlocks(editor)).toBe(1);
-    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
-  });
-
-  it("keeps the protected block when the whole document is selected", () => {
-    const editor = createEditorWithProtectedTable();
-    selectWholeDocument(editor);
-
-    pressKey(editor, "Backspace");
-
-    expect(countRawMarkdownBlocks(editor)).toBe(1);
-    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
-  });
-
-  it("keeps the protected block when the whole document is typed over", () => {
-    const editor = createEditorWithProtectedTable();
-    selectWholeDocument(editor);
-
-    expect(
-      editor.view.someProp("handleTextInput", (handler) =>
-        handler(
-          editor.view,
-          editor.state.selection.from,
-          editor.state.selection.to,
-          "x",
-        ),
-      ),
-    ).toBe(true);
-
-    expect(countRawMarkdownBlocks(editor)).toBe(1);
-    expect(toMarkdown(editor)).toBe(protectedTableMarkdown);
-  });
-
-  it("leaves a caret typing beside the placeholder alone", () => {
+  it("goes through for a caret typing beside the placeholder", () => {
     const editor = createEditorWithProtectedTable();
     editor.commands.setTextSelection(1);
 
-    expect(
-      editor.view.someProp("handleTextInput", (handler) =>
-        handler(editor.view, 1, 1, "x"),
-      ),
-    ).toBeFalsy();
+    editor.view.dispatch(editor.state.tr.insertText("x", 1, 1));
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(editor.state.doc.textContent).toContain("xFlags in use:");
   });
 
-  it("leaves ordinary content deletable", () => {
+  it("goes through when a document is loaded over one holding a block", () => {
     const editor = createEditorWithProtectedTable();
-    editor.commands.setTextSelection({ from: 1, to: 6 });
 
-    pressKey(editor, "Backspace");
+    editor.commands.setContent(criticMarkdownToEditorState(plainMarkdown).doc, {
+      emitUpdate: false,
+    });
 
-    expect(editor.state.doc.textBetween(1, 9)).not.toContain("Flags");
-    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(countRawMarkdownBlocks(editor)).toBe(0);
+    expect(editor.state.doc.textContent).toContain("First paragraph.");
+  });
+
+  it("goes through when undo restores a document without the block", () => {
+    const editor = createEditorWithProtectedTable();
+    const blocksBefore = countRawMarkdownBlocks(editor);
+
+    editor.view.dispatch(
+      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1)),
+    );
+    editor.view.dispatch(editor.state.tr.insertText("x", 1, 1));
+    expect(editor.state.doc.textContent).toContain("xFlags in use:");
+
+    editor.commands.undo();
+
+    expect(countRawMarkdownBlocks(editor)).toBe(blocksBefore);
+    expect(editor.state.doc.textContent).not.toContain("xFlags in use:");
   });
 });

@@ -22,6 +22,8 @@ const protectedTableMarkdown = [
   "",
   "Trailing paragraph.",
   "",
+  "Another paragraph.",
+  "",
 ].join("\n");
 
 const isMac = process.platform === "darwin";
@@ -65,6 +67,28 @@ async function sweepRangeAcrossPlaceholder(page: Page) {
   await page.keyboard.press("Shift+ArrowDown");
   await page.keyboard.press("Shift+ArrowDown");
   await page.keyboard.press("Shift+End");
+}
+
+/**
+ * Drag-select the two paragraphs below the placeholder. A real drag leaves the
+ * view's own selection matching what the reader sees, where a shift-arrow sweep
+ * does not, so this is the gesture that can assert an unprotected range every
+ * run instead of most runs.
+ */
+async function dragRangeBelowPlaceholder(page: Page) {
+  const editorBox = await richTextEditor(page).boundingBox();
+  const placeholderBox = await placeholder(page).boundingBox();
+  if (!editorBox || !placeholderBox) {
+    throw new Error("Could not measure the editor or the placeholder");
+  }
+
+  const firstLine = placeholderBox.y + placeholderBox.height + 8;
+  await page.mouse.move(editorBox.x + 4, firstLine);
+  await page.mouse.down();
+  await page.mouse.move(editorBox.x + editorBox.width - 8, firstLine + 40, {
+    steps: 10,
+  });
+  await page.mouse.up();
 }
 
 async function expectFileUnchanged(page: Page, projectDir: string) {
@@ -225,6 +249,31 @@ test.describe("selected unrendered-block placeholder", () => {
     await expect(deletionRefusedNote(page)).toBeHidden();
     await expect(placeholder(page)).toBeVisible();
     await expect(richTextEditor(page)).toContainText("Flags in use: tail");
+  });
+
+  test("deletes a dragged range that holds nothing protected", async ({
+    page,
+  }) => {
+    // Repeated, because the failure this covers was intermittent: a refusal
+    // that appears three runs in five reads as a pass on the other two.
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await openMarkdownFile(page, writeProtectedFile(projectDir));
+      await expect(placeholder(page)).toBeVisible();
+      await chooseEditingMode(page);
+
+      await dragRangeBelowPlaceholder(page);
+      await page.keyboard.press("Backspace");
+
+      await expect(deletionRefusedNote(page)).toBeHidden();
+      await expect(placeholder(page)).toBeVisible();
+      await expect(richTextEditor(page)).not.toContainText(
+        "Trailing paragraph.",
+      );
+      await page.waitForTimeout(900);
+      expect(readProjectFile(projectDir, "protected.md")).not.toContain(
+        "Trailing paragraph.",
+      );
+    }
   });
 
   test("leaves viewing mode untouched", async ({ page }) => {
