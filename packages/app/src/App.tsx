@@ -59,6 +59,7 @@ import {
   type CompleteReviewOptions,
   MarkdownFileConflictError,
   type Page,
+  ServerInstanceGoneError,
   type StorageBackend,
 } from "./storage";
 import { UpdateNotice } from "./UpdateNotice";
@@ -68,7 +69,8 @@ export type DocumentDiskChangeState =
   | "clean"
   | "changed"
   | "conflict"
-  | "paused";
+  | "paused"
+  | "server-gone";
 
 export function shouldWarnBeforeUnload({
   activeDocumentPath,
@@ -1689,6 +1691,9 @@ export function App() {
         if (error instanceof MarkdownFileConflictError) {
           setDocumentDiskChangeState("conflict");
         }
+        if (error instanceof ServerInstanceGoneError) {
+          setDocumentDiskChangeState("server-gone");
+        }
         throw error;
       }
 
@@ -1775,10 +1780,20 @@ export function App() {
     const fallbackTitle =
       currentDocument.id.split("/").at(-1) || currentDocument.id;
     const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
-    const savedDocument = (await currentBackend.saveMarkdownFile(
-      currentPath,
-      content,
-    )) ?? {
+    let savedDocument: Page | undefined;
+    try {
+      savedDocument = await currentBackend.saveMarkdownFile(
+        currentPath,
+        content,
+      );
+    } catch (error) {
+      if (error instanceof ServerInstanceGoneError) {
+        setDocumentDiskChangeState("server-gone");
+        return;
+      }
+      throw error;
+    }
+    savedDocument ??= {
       ...currentDocument,
       content,
       title,
@@ -1804,29 +1819,41 @@ export function App() {
 
       const content =
         documentDraftContentRef.current ?? currentDocument.content;
-      const expectedVersion = currentDocument.version;
-      const firstLine = content.split("\n")[0] || "";
-      const fallbackTitle =
-        currentDocument.id.split("/").at(-1) || currentDocument.id;
-      const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
 
-      const savedDocument = (await currentBackend.saveMarkdownFile(
-        currentPath,
-        content,
-        expectedVersion,
-      )) ?? {
-        ...currentDocument,
-        content,
-        title,
-      };
+      try {
+        // Only write when the reviewer's draft differs from what is on disk;
+        // approving an untouched document must leave its bytes alone.
+        if (content !== currentDocument.content) {
+          const expectedVersion = currentDocument.version;
+          const firstLine = content.split("\n")[0] || "";
+          const fallbackTitle =
+            currentDocument.id.split("/").at(-1) || currentDocument.id;
+          const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
 
-      applyDocumentPage(savedDocument);
-      documentDirtyRef.current = false;
-      setDocumentDiskChangeState("clean");
+          const savedDocument = (await currentBackend.saveMarkdownFile(
+            currentPath,
+            content,
+            expectedVersion,
+          )) ?? {
+            ...currentDocument,
+            content,
+            title,
+          };
 
-      return currentBackend.completeReview
-        ? currentBackend.completeReview(currentPath, options)
-        : { delivered: false };
+          applyDocumentPage(savedDocument);
+          documentDirtyRef.current = false;
+          setDocumentDiskChangeState("clean");
+        }
+
+        return currentBackend.completeReview
+          ? await currentBackend.completeReview(currentPath, options)
+          : { delivered: false };
+      } catch (error) {
+        if (error instanceof ServerInstanceGoneError) {
+          setDocumentDiskChangeState("server-gone");
+        }
+        throw error;
+      }
     },
     [applyDocumentPage],
   );
@@ -1850,7 +1877,10 @@ export function App() {
           return;
         }
 
-        if (documentDiskChangeState === "paused") {
+        if (
+          documentDiskChangeState === "paused" ||
+          documentDiskChangeState === "server-gone"
+        ) {
           return;
         }
 

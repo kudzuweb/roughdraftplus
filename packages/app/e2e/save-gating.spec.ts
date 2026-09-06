@@ -40,7 +40,8 @@ function trackFileWrites(page: Page) {
   const writes: string[] = [];
   page.on("request", (request) => {
     const isMarkdownWrite =
-      request.method() === "PUT" && request.url().includes("/api/markdown-file");
+      request.method() === "PUT" &&
+      request.url().includes("/api/markdown-file");
     const isReviewEvent =
       request.method() === "POST" &&
       request.url().includes("/api/review-events") &&

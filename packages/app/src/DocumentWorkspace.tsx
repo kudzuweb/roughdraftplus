@@ -49,7 +49,12 @@ import { RobotsHighFiveToy } from "./RobotsHighFiveToy";
 import type { CompleteReviewOptions, Page, StorageBackend } from "./storage";
 import { useReviewLayoutShiftAnimation } from "./useReviewLayoutShiftAnimation";
 
-type DiskChangeState = "clean" | "changed" | "conflict" | "paused";
+type DiskChangeState =
+  | "clean"
+  | "changed"
+  | "conflict"
+  | "paused"
+  | "server-gone";
 type ReviewHandoffState =
   | "idle"
   | "notifying"
@@ -139,6 +144,10 @@ const conflictNoticeCopy: Record<
   paused: {
     title: "Autosave paused",
     body: "Keep editing locally, then reload from disk to discard your draft or overwrite the disk file when you are ready.",
+  },
+  "server-gone": {
+    title: "Roughdraft server stopped",
+    body: "This tab was opened by a Roughdraft server that is no longer running, so it will not write to the file. Reopen the file to keep editing.",
   },
 };
 
@@ -258,6 +267,15 @@ function getSaveStatusViewModel(
     };
   }
 
+  if (diskChangeState === "server-gone") {
+    return {
+      label: "Server stopped",
+      ariaLabel: "Server stopped",
+      tone: "warning" as const,
+      Icon: AlertTriangle,
+    };
+  }
+
   if (saveState === "saving") {
     return {
       label: "Saving",
@@ -346,6 +364,20 @@ export function isReviewHandoffDisabled({
     saveState === "error" ||
     reviewHandoffState !== "idle" ||
     documentDiskChangeState !== "clean"
+  );
+}
+
+export function isDocumentSaveBlocked({
+  documentDiskChangeState,
+  reviewHandoffState,
+}: {
+  documentDiskChangeState: DiskChangeState;
+  reviewHandoffState: ReviewHandoffState;
+}) {
+  // A delivered handoff ends the review. The tab stops writing until an agent
+  // watches again, which returns the handoff state to idle for a new review.
+  return (
+    documentDiskChangeState !== "clean" || reviewHandoffState === "notified"
   );
 }
 
@@ -937,43 +969,45 @@ export function DocumentWorkspace({
               </div>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
-            <Button
-              type="button"
-              data-testid="file-conflict-action-reload"
-              variant="ghost"
-              size="sm"
-              className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-amber-950 dark:text-amber-100 hover:bg-white dark:hover:bg-white/20"
-              onClick={() => void onReloadDocumentFromDisk()}
-            >
-              <RefreshCcw className="size-3.5" />
-              Reload from disk
-            </Button>
-            {documentDiskChangeState !== "paused" ? (
+          {documentDiskChangeState !== "server-gone" ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
               <Button
                 type="button"
-                data-testid="file-conflict-action-keep-editing"
+                data-testid="file-conflict-action-reload"
                 variant="ghost"
                 size="sm"
                 className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-amber-950 dark:text-amber-100 hover:bg-white dark:hover:bg-white/20"
-                onClick={onKeepEditingWithoutAutosave}
+                onClick={() => void onReloadDocumentFromDisk()}
               >
-                <PencilLine className="size-3.5" />
-                Keep editing with autosave paused
+                <RefreshCcw className="size-3.5" />
+                Reload from disk
               </Button>
-            ) : null}
-            <Button
-              type="button"
-              data-testid="file-conflict-action-overwrite"
-              variant="ghost"
-              size="sm"
-              className="h-8 rounded-[7px] bg-amber-900 dark:bg-amber-600 px-2 text-xs text-white hover:bg-amber-800 dark:hover:bg-amber-500"
-              onClick={() => void onOverwriteDocumentOnDisk()}
-            >
-              <Upload className="size-3.5" />
-              Overwrite disk file
-            </Button>
-          </div>
+              {documentDiskChangeState !== "paused" ? (
+                <Button
+                  type="button"
+                  data-testid="file-conflict-action-keep-editing"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-amber-950 dark:text-amber-100 hover:bg-white dark:hover:bg-white/20"
+                  onClick={onKeepEditingWithoutAutosave}
+                >
+                  <PencilLine className="size-3.5" />
+                  Keep editing with autosave paused
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                data-testid="file-conflict-action-overwrite"
+                variant="ghost"
+                size="sm"
+                className="h-8 rounded-[7px] bg-amber-900 dark:bg-amber-600 px-2 text-xs text-white hover:bg-amber-800 dark:hover:bg-amber-500"
+                onClick={() => void onOverwriteDocumentOnDisk()}
+              >
+                <Upload className="size-3.5" />
+                Overwrite disk file
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className="mx-auto min-h-full max-w-[1080px]">
@@ -1145,7 +1179,10 @@ export function DocumentWorkspace({
               onSaveControllerChange={(controller) => {
                 saveControllerRef.current = controller;
               }}
-              saveBlocked={documentDiskChangeState !== "clean"}
+              saveBlocked={isDocumentSaveBlocked({
+                documentDiskChangeState,
+                reviewHandoffState,
+              })}
               forceResetKey={documentForceResetKey}
             />
           ) : null
