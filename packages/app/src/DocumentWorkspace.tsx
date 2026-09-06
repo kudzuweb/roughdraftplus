@@ -979,8 +979,8 @@ export function DocumentWorkspace({
                 Roughdraft server restarted
               </div>
               <div className="mt-0.5 text-xs leading-5 text-emerald-900 dark:text-emerald-200">
-                Your unsaved edits were kept in this tab and now save to the
-                restarted server.
+                Your unsaved edits are kept in this tab and will save with your
+                next edit once a review is open.
               </div>
             </div>
           </div>
