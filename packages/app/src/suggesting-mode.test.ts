@@ -974,4 +974,33 @@ describe("change and comment walkers across a soft break", () => {
 
     editor.destroy();
   });
+
+  it("removing a comment anchored across a wrap point clears the soft break too", () => {
+    const { editor, comments } = createWrappedEditor();
+
+    selectText(editor, "across", "two");
+    expect(editor.commands.setCommentRef({ commentIds: ["c1"] })).toBe(true);
+    let atomMarks: string[] = [];
+    editor.state.doc.descendants((node) => {
+      if (node.type.name === "markdownSoftBreak") {
+        atomMarks = node.marks.map((mark) => mark.type.name);
+      }
+    });
+    expect(atomMarks).toEqual(["commentRef"]);
+
+    expect(editor.commands.removeCommentId("c1")).toBe(true);
+
+    let commentMarks = 0;
+    editor.state.doc.descendants((node) => {
+      commentMarks += node.marks.filter(
+        (mark) => mark.type.name === "commentRef",
+      ).length;
+    });
+    expect(commentMarks).toBe(0);
+    expect(saveMarkdown(editor, comments)).toBe(
+      "This paragraph wraps across\ntwo source lines here.\n",
+    );
+
+    editor.destroy();
+  });
 });

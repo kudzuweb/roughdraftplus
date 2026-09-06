@@ -114,7 +114,7 @@ const CommentRef = Mark.create({
           let found = false;
 
           state.doc.descendants((node, pos) => {
-            if (!node.isText) return;
+            if (!isInlineAtomOrText(node)) return;
 
             const mark = node.marks.find(
               (candidate) =>
