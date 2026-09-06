@@ -77,6 +77,13 @@ no separate diff view (backlog item 10).
   different questions in one stack can have different answers. The agent removes the resolved
   markup when processing the round; the anchor text stays if it is real prose, and the thread's
   other comments survive untouched.
+- A comment written on filler text, a sentence added only to carry the thread because nothing
+  in the document was a natural anchor, carries `anchor="disposable"`. Clearing the last comment
+  on that anchor takes the filler sentence with it, so answering a question does not leave the
+  question's scaffolding in the document. The flag goes on the root comment and never on a
+  comment anchored to real prose, which would be deleted the same way. Both Done Reviewing paths
+  apply the same rule: the anchor goes when the comments being cleared empty it and any of them
+  carried the flag.
 - No other text is read as approval: approval is the explicit reply (or button), nothing inferred.
 - An approval with a further question or request attached is not a full stop: the agent acts on
   the approval, answers the question, and the thread (or its live tail) survives until the
@@ -132,6 +139,7 @@ save still rewrites applies to that file even if it was only ever edited in code
 | Meaningful changes stand out | Agent marks them `{++ins++}` / `{~~sub~~}`, leaves mechanical edits unmarked | Jump-to-next-mark navigation (item 10, deferred behind item 5) |
 | Approving a mark accepts it into prose | Agent strips markup on approval | Approve action accepts the suggestion (items 6, 10) |
 | Approval resolves its comment (per-comment only) | Product behavior: approve button, applied on Done Reviewing | Shipped (item 6) |
+| Filler anchor text leaves with its thread | Product behavior: a comment flagged `anchor="disposable"` takes its anchor text when the last comment on it is cleared | Shipped (item 12) |
 | Inline replies canonical | Agent discipline; the prompt, spec, setup, CLI help and README prescribe inline and mark endmatter replies legacy | Legacy rendering (item 4) |
 | Collapsed threads, newest reply visible | Product behavior | Shipped (item 5) |
 | Tab writes only on reviewer edits; stops after Done or until a replaced server is adopted | Product behavior | Shipped (item 2) |
