@@ -41,6 +41,21 @@ function readSpecFixture(name: string): SpecFixture {
   ) as SpecFixture;
 }
 
+// The shape the fork's own UI writes: inline attribute comments, with an
+// endmatter reply an agent appended by following the upstream prompt.
+const inlineAttributeEndmatterReplyMarkdown = [
+  'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+  "",
+  "---",
+  "comments:",
+  "  c2:",
+  "    body: I can add one from the intro.",
+  "    by: AI",
+  '    at: "2026-04-28T12:05:00.000Z"',
+  "    re: c1",
+  "",
+].join("\n");
+
 describe("CriticMarkup comments", () => {
   it("preserves YAML frontmatter delimiters and raw table-like YAML text", () => {
     const input = [
@@ -168,6 +183,31 @@ describe("CriticMarkup comments", () => {
     const output = editorStateToCriticMarkdown(doc, comments);
 
     expect(output).toContain("{==this claim==}{>>Needs a source.<<}{#c1}");
+    expect(output).toContain("body: I can add one from the intro.");
+    expect(output).toContain("re: c1");
+  });
+
+  it("reads an endmatter reply on a document whose comments carry inline attributes", () => {
+    const { comments, endmatter } = criticMarkdownToEditorState(
+      inlineAttributeEndmatterReplyMarkdown,
+    );
+
+    expect(endmatter).toContain("comments:");
+    expect(comments.get("c2")).toMatchObject({
+      id: "c2",
+      content: "I can add one from the intro.",
+      parentCommentId: "c1",
+    });
+  });
+
+  it("keeps the endmatter block when saving a document whose comments carry inline attributes", () => {
+    const { doc, comments } = criticMarkdownToEditorState(
+      inlineAttributeEndmatterReplyMarkdown,
+    );
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).not.toContain("* * *");
     expect(output).toContain("body: I can add one from the intro.");
     expect(output).toContain("re: c1");
   });
