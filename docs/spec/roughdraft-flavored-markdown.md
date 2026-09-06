@@ -259,8 +259,9 @@ Round trips SHOULD preserve:
 
 - YAML frontmatter delimiters and content.
 - Local links and image paths.
-- Tables and task lists.
-- Inline code and fenced code blocks.
+- Tables and task lists, including the table delimiter row as written.
+- Inline code and fenced code blocks, including blank lines inside a fence.
+- Soft line breaks inside paragraphs, blockquotes, and list items.
 - Raw review marker text inside code contexts.
 - Metadata values, including escaped quotes and backslashes.
 

@@ -41,3 +41,54 @@ All five failed against the old function and pass after the fix. The tests commi
 
 - A blank line inside a fenced code block before a line starting with `# ` is still stripped, as before: the function does not track fence state. Out of scope for this issue.
 - A heading followed by a table, fence, or blockquote still compacts, for the reason above. If that direction should keep its blank line too, the four tests named above need new expectations, which is a separate decision.
+
+## #3 — Stop the serializer from joining wrapped lines, adding trailing whitespace, and rewriting table separators
+
+### What the issue planned
+
+Harden the marked-in, turndown-out save path so that lines are never joined across a heading, fence, blockquote, or table row; a blank line is kept between every block and its neighbor; no trailing whitespace is emitted; and table separators are not rewritten. Stay inside the parse-and-reserialize design. The review comment on the issue added two binding facts: make the `normalizeBlockSpacing` line walk fence-aware (a blank line inside a fence before a `# ` line was still stripped), and reproduce wrapped-line joining and the paragraph-after-table path rather than heading absorption.
+
+### What was built
+
+- **Wrapped lines survive a save.** `createMarkedRenderer` in `packages/app/src/markdown.ts` renders every newline inside a leaf text token as `<span data-markdown-softbreak=""> </span>`. A new inline atom node `markdownSoftBreak` in `packages/app/src/editor-extensions.ts` carries it through the editor, rendering a real space (so prose reflows, find-in-page and copied text read it as a space) and reporting `" "` through `renderText` and `leafText`. Turndown writes it back as `\n`, or as a space inside a heading or table cell where markdown cannot wrap. Because Turndown lifts whitespace inside an inline element out as flanking text, `emptySoftBreakSpans` strips the space from the HTML string right before `turndown()` in both `toMarkdown` and `editorStateToCriticMarkdown` (`packages/app/src/critic-markup/index.ts`). The blockquote and list-item rules then prefix each line, so `> a\n> b` and `- item\n  continues` round-trip.
+- **Fence interiors are untouched.** `normalizeBlockSpacing` tracks fence state (backtick or tilde, three or more, matched close) and copies fenced lines through verbatim. The collapse of blank-line runs moved from a global regex into the walk so it no longer collapses blank lines inside code either.
+- **No trailing whitespace.** A `blockquoteWithoutTrailingSpace` rule writes a blank quote line as `>` instead of `> `. The `compactListItem` rule no longer indents blank lines or the item's trailing newline, which removes the `  ` lines Turndown left between items; a blank line between an item's paragraph and its nested list is collapsed so a tight nested list stays tight.
+- **Table separators are kept as typed.** `renderer.table` stashes the source delimiter row (line two of the token's `raw`, trailing whitespace trimmed) on the `<table>` as `data-markdown-table-separator`; a `MarkdownTable` extension keeps it as a node attribute; the `tiptapHeaderTable` rule emits it in place of the computed divider when it is a valid delimiter row with the same column count as the header row, and falls back to the computed one otherwise.
+- `docs/spec/roughdraft-flavored-markdown.md` lists soft line breaks, fence interiors, and delimiter rows under what round trips preserve; `docs/review-loop.md` hygiene now says what the save path still rewrites instead of warning against tables and fences.
+
+### Why they differ
+
+- **Heading blank lines still compact.** The criterion "a blank line separates every block from its neighbor" conflicts with the existing compact-heading round-trip test and the four tests named in the #2 entry, and the issue also requires every existing test to pass. The #2 decision stands: the blank line after a heading is removed, and the one before it is removed unless the line above is a table row, fence, or blockquote. Every other block pair keeps its blank line.
+- **Files outside the issue's list.** The soft break and the separator attribute need editor schema nodes, so `packages/app/src/editor-extensions.ts` changed. The fixture went to `packages/app/test/fixtures/markdown/reflow-roundtrip.md`, where `readMarkdownFixture` reads, rather than `docs/spec/fixtures/`, which holds review-index JSON.
+- **Lists.** Before this change a tight list saved as a loose list with whitespace-only lines between items. Now a tight list round-trips tight, and a loose list (`- a\n\n- b`) saves tight. Preserving looseness would need a `loose` attribute carried from marked's list token; not done here.
+- **One existing assertion loosened.** The `toHtml` fixture test in `markdown.test.ts` asserted the literal `<table>` open tag; it now asserts `<table` because the tag carries the separator attribute. The behavior it checks, that a table renders, is unchanged.
+- **Table cell padding** to three characters (`| 1   |`) is unchanged; the issue names only separators, and the headerless-table test pins the padding.
+- **Hard breaks** still serialize as two trailing spaces before the newline, because that is the markdown syntax the author typed.
+
+### Tests added
+
+All in `packages/app/src/markdown.test.ts`. Each of these failed before its fix and passes after; the tests commit precedes every fix commit on the branch:
+
+- keeps a blank line inside a fenced code block before a heading-like line
+- keeps consecutive blank lines inside a fenced code block
+- keeps wrapped paragraph lines
+- keeps wrapped lines inside a blockquote
+- keeps wrapped lines inside a list item
+- keeps a comment anchored across a wrapped line (CriticMarkup save path)
+- writes a blank blockquote line as a bare marker
+- emits no trailing whitespace for list items on save (also pins `- a\n  - nested\n- b\n`)
+- keeps the table separator row as typed
+- keeps an aligned table separator row as typed
+- round-trips the reflow fixture through the save path (wrapped paragraphs, blockquote, fence with blank lines, table; byte-identical, no trailing whitespace, stable on a second save)
+
+Three guard tests passed before the change and pin behavior the issue names: the blank line between a table and a following paragraph, between a fence and a following paragraph, and the computed-separator fallback when the stored row's column count no longer matches.
+
+### Verification
+
+`pnpm check` passed: biome over 113 files, the selector check, 29 rfm tests, 244 app tests, 124 server tests, and the build. `pnpm test:smoke` passed 12 of 12. A temporary Playwright spec (not committed) opened the reflow fixture in the real rich-text editor, confirmed four soft-break spans rendered with width, typed an edit, and read the file the app saved: wrapped lines, the bare `>` line, both blank lines inside the fence, the `|------|--------|` row, and the blank lines between blocks were intact, with no trailing whitespace.
+
+### Left undone
+
+- Task lists are corrupted by the save path independent of this issue: `- [x] Done` saves as `- [x] \n\n  Done` because the joplin task-list rule sees tiptap's `<label><input><span></span></label><div>` markup. Pre-existing, reproduced by probe, not touched.
+- A loose list saves tight (above).
+- The fence tracker recognizes fences indented up to three spaces, so a fence nested four or more spaces deep inside a list still gets the heading-gap treatment.

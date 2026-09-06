@@ -61,14 +61,14 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 
 - Review the file at its real path. If it is git-tracked, confirm it is committed before opening,
   so an unwanted rewrite is one checkout away.
-- After a round, diff the file: whitespace-only and joined-line changes are save reflow, not
-  reviewer edits (upstream issues 98 and 100; backlog items 1 and 2).
+- After a round, diff the file. Wrapped lines, blank lines between blocks, fenced-block
+  interiors, and table delimiter rows survive a save (#2, #3). The save path still removes the
+  blank line after a heading, pads table cells to three characters, and tightens loose lists;
+  anything else in the diff is a reviewer edit.
 - Close the tab (or stop the server) before restoring or editing a reviewed file outside the loop.
   An open tab's watcher can save its reflowed copy over external changes — including a `git
   checkout`, which is not final while Roughdraft still holds the file. Re-run the checkout after
   closing if in doubt.
-- Author documents destined for review defensively while the reflow bugs live: prefer prose and
-  bullets over tables and fenced blocks, and keep blank lines between blocks.
 
 ## Status
 
