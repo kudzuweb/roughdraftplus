@@ -18,8 +18,11 @@ import {
   ROUGHDRAFT_DEFAULT_PORT,
   ROUGHDRAFT_LOOPBACK_HOSTS,
   ROUGHDRAFT_PUBLIC_HOST,
+  ROUGHDRAFT_TOKEN_ENV,
   resolveBindHosts,
 } from "./network.js";
+
+export { ROUGHDRAFT_TOKEN_ENV } from "./network.js";
 import { ReviewEventQueue } from "./review-events.js";
 import { resolveUpdateStatus } from "./update-status.js";
 
@@ -1147,8 +1150,6 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
 
   return { app, port };
 }
-
-export const ROUGHDRAFT_TOKEN_ENV = "ROUGHDRAFT_TOKEN";
 
 export async function createServer(
   port = ROUGHDRAFT_DEFAULT_PORT,

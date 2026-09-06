@@ -10,10 +10,12 @@ import {
   validateRoughdraftMarkdown,
 } from "@roughdraft/rfm";
 import {
+  configuredToken,
   ROUGHDRAFT_BIND_HOST,
   ROUGHDRAFT_DEFAULT_PORT,
   ROUGHDRAFT_LOOPBACK_HOSTS,
   ROUGHDRAFT_PUBLIC_HOST,
+  tokenAuthHeaders,
 } from "./network.js";
 import { findAvailablePort } from "./ports.js";
 import type { ReviewDoneReason } from "./review-events.js";
@@ -1333,12 +1335,8 @@ async function runRemoteOpen(
   options: RemoteOpenOptions,
 ): Promise<number> {
   const baseUrl = options.host.replace(/\/$/, "");
-  const remoteToken =
-    typeof deps.env.ROUGHDRAFT_TOKEN === "string"
-      ? deps.env.ROUGHDRAFT_TOKEN.trim()
-      : "";
-  const authHeaders: Record<string, string> =
-    remoteToken.length > 0 ? { Authorization: `Bearer ${remoteToken}` } : {};
+  const remoteToken = configuredToken(deps.env);
+  const authHeaders = tokenAuthHeaders(deps.env);
 
   let content: string;
   try {
@@ -2020,6 +2018,7 @@ async function describeOpenDocument(
     reviewIndexUrl.searchParams.set("projectPath", path.dirname(documentPath));
     reviewIndexUrl.searchParams.set("path", path.basename(documentPath));
     const response = await deps.fetchImpl(reviewIndexUrl, {
+      headers: tokenAuthHeaders(deps.env),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
     if (!response.ok) {
