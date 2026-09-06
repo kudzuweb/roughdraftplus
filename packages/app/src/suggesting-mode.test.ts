@@ -780,8 +780,12 @@ function createWrappedEditor() {
   return { editor, comments };
 }
 
+// The save path fills soft-break spans with U+200B before Turndown; every
+// saved string from these tests is checked so the placeholder never leaks.
 function saveMarkdown(editor: Editor, comments: Map<string, never>) {
-  return editorStateToCriticMarkdown(editor.getJSON(), comments);
+  const markdown = editorStateToCriticMarkdown(editor.getJSON(), comments);
+  expect(markdown).not.toContain("\u200b");
+  return markdown;
 }
 
 function selectText(editor: Editor, text: string, endAfter?: string) {
@@ -904,6 +908,24 @@ describe("suggesting mode across a soft break", () => {
     editor.commands.acceptCriticChange(changeId);
     expect(saveMarkdown(editor, comments)).toBe(
       "This paragraph wraps acrosstwo source lines here.\n",
+    );
+
+    editor.destroy();
+  });
+});
+
+describe("change and comment walkers across a soft break", () => {
+  it("rejecting a deletion across a wrap point restores the wrap", () => {
+    const { editor, comments } = createWrappedEditor();
+
+    selectText(editor, "across", "two");
+    suggestingBackspace(editor);
+    const [changeId] = changeIds(editor);
+    expect(editor.commands.rejectCriticChange(changeId)).toBe(true);
+
+    expect(changeIds(editor).size).toBe(0);
+    expect(saveMarkdown(editor, comments)).toBe(
+      "This paragraph wraps across\ntwo source lines here.\n",
     );
 
     editor.destroy();

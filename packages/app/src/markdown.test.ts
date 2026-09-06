@@ -253,6 +253,24 @@ describe("reserialize fidelity", () => {
     expect(saveCriticMarkdown(markdown)).toBe(markdown);
   });
 
+  it("keeps a deletion across a wrapped line", () => {
+    const markdown =
+      'Review {--this line\ncontinues--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"} here.\n';
+    const saved = saveCriticMarkdown(markdown);
+
+    expect(saved).toBe(markdown);
+    expect(saved).not.toContain("\u200b");
+  });
+
+  it("keeps a deletion that covers only the wrap", () => {
+    const markdown =
+      'Review this line{--\n--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}continues here.\n';
+    const saved = saveCriticMarkdown(markdown);
+
+    expect(saved).toBe(markdown);
+    expect(saved).not.toContain("\u200b");
+  });
+
   it("writes a blank blockquote line as a bare marker", () => {
     const markdown =
       "> First quoted paragraph.\n>\n> Second quoted paragraph.\n";
@@ -298,6 +316,7 @@ describe("reserialize fidelity", () => {
 
     expect(saved).toBe(markdown);
     expect(saved).not.toMatch(/[ \t]+\n/);
+    expect(saved).not.toContain("\u200b");
     expect(saveCriticMarkdown(saved)).toBe(markdown);
   });
 });
