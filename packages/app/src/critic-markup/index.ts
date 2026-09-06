@@ -97,11 +97,19 @@ const criticDelimiterUnescapePattern =
 // Scanning for a marker's closing delimiter treats a backslash as covering the
 // character after it, which is what makes an escaped delimiter literal. A
 // document written before escaping existed can end a marker's text with a bare
-// backslash, and that scan reads it as escaping the close, leaving the marker
-// unterminated. Each marker therefore has a legacy form as well, tried only
-// when the escape-aware form finds no close at all, which reads every backslash
-// as ordinary text. Both forms come from one shape so they cannot drift.
-const markerTextAtom = String.raw`(?:\\[\s\S]|[^\\])`;
+// backslash, and that scan reads it as escaping the close. Each marker
+// therefore has a legacy form as well, which reads every backslash as ordinary
+// text, tried when the escape-aware form does not match. Both forms come from
+// one shape so they cannot drift.
+//
+// What bounds the escape-aware form is that a marker's text cannot contain an
+// unescaped opening delimiter: an unescaped opener is another marker starting,
+// so the text ended before it. Without that bound the scan ran on to a later
+// marker's closing delimiter and the first marker swallowed everything between,
+// taking the marker in between with it. The bound never fires on a document
+// this format wrote, because every opener in its marker text is escaped.
+const markerOpenerAlternatives = String.raw`\{==|\{>>|\{\+\+|\{--|\{~~`;
+const markerTextAtom = String.raw`(?:\\[\s\S]|(?!${markerOpenerAlternatives})[^\\])`;
 const legacyMarkerTextAtom = String.raw`[\s\S]`;
 
 interface MarkerPattern {

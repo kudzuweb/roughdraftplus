@@ -120,17 +120,37 @@ function indexOfUnescaped(
   return -1;
 }
 
+const CRITICMARKUP_OPEN_DELIMITERS = ["{==", "{>>", "{++", "{--", "{~~"];
+
 // A document written before escaping existed can end a marker's text with a
-// bare backslash, which the scan above reads as escaping the delimiter that
-// closes the marker. Falling back to the first raw delimiter keeps that marker
-// readable, and only when nothing else closes it.
+// bare backslash, which an escape-aware scan reads as escaping the delimiter
+// that closes the marker. The scan stops at an unescaped opening delimiter,
+// since that is another marker starting and so the text ended before it, and
+// falls back to the first raw closing delimiter. Without that bound the scan
+// ran on to a later marker's close and the first marker swallowed the marker in
+// between. The bound never fires on a document this format wrote, because every
+// opener in its marker text is escaped.
 function indexOfMarkerDelimiter(
   markdown: string,
   delimiter: string,
   from: number,
 ): number {
-  const unescaped = indexOfUnescaped(markdown, delimiter, from);
-  return unescaped === -1 ? markdown.indexOf(delimiter, from) : unescaped;
+  for (let offset = from; offset < markdown.length; offset += 1) {
+    if (markdown[offset] === "\\") {
+      offset += 1;
+      continue;
+    }
+    if (markdown.startsWith(delimiter, offset)) return offset;
+    if (
+      CRITICMARKUP_OPEN_DELIMITERS.some((opener) =>
+        markdown.startsWith(opener, offset),
+      )
+    ) {
+      break;
+    }
+  }
+
+  return markdown.indexOf(delimiter, from);
 }
 
 interface IdReference {

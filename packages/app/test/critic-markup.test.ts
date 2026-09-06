@@ -2390,6 +2390,34 @@ describe("CriticMarkup delimiter escaping", () => {
     );
   });
 
+  it("keeps a later comment when an earlier body ends with a backslash", () => {
+    // The escape-aware scan reads that backslash as escaping the close, so
+    // without a bound it runs on to the next comment's close and swallows the
+    // comment in between.
+    const legacyBody = "ends with a backslash\\";
+    const input = [
+      `See {==first==}{>>${legacyBody}<<}${commentMetadata}`,
+      ' and {==second==}{>>second note<<}{id="c2" by="user" at="2026-04-28T12:01:00.000Z"}.\n',
+    ].join("");
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    expect([...comments.keys()]).toEqual(["c1", "c2"]);
+    expect(comments.get("c1")?.content).toBe(legacyBody);
+    expect(comments.get("c2")?.content).toBe("second note");
+
+    // The lone backslash gains its escaped form once and nothing else moves.
+    const saved = editorStateToCriticMarkdown(doc, comments);
+    expect(saved).toBe(
+      input.replace(`{>>${legacyBody}<<}`, "{>>ends with a backslash\\\\<<}"),
+    );
+
+    const reloaded = criticMarkdownToEditorState(saved);
+    expect([...reloaded.comments.keys()]).toEqual(["c1", "c2"]);
+    expect(editorStateToCriticMarkdown(reloaded.doc, reloaded.comments)).toBe(
+      saved,
+    );
+  });
+
   it("leaves a document-level comment in endmatter unescaped", () => {
     const input = [
       "Body text.",

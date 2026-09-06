@@ -823,6 +823,19 @@ describe("escaped review delimiters", () => {
     ]);
   });
 
+  it("keeps a later comment when an earlier body ends with a backslash", () => {
+    const markdown = [
+      'See {==first==}{>>ends with a backslash\\<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
+      ' and {==second==}{>>second note<<}{id="c2" by="user" at="2026-04-28T12:01:00.000Z"}.\n',
+    ].join("");
+
+    expect(codes(markdown)).toEqual([]);
+    expect(extractRoughdraftReviewIndex(markdown).items).toMatchObject([
+      { id: "c1", text: "ends with a backslash\\", anchorText: "first" },
+      { id: "c2", text: "second note", anchorText: "second" },
+    ]);
+  });
+
   it("still reads a body that ends with a bare backslash", () => {
     // Written before escaping existed, so the backslash is ordinary text
     // rather than an escape of the delimiter that closes the comment.
