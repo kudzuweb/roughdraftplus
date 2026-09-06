@@ -21,6 +21,13 @@ const singleLineBlockSelector = "h1, h2, h3, h4, h5, h6, th, td";
 export const markdownTableSeparatorAttribute = "data-markdown-table-separator";
 const markdownTableSeparatorLine =
   /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
+export const rawMarkdownBlockTypeAttribute = "data-markdown-raw-block-type";
+
+export type RawMarkdownBlockType =
+  | "table"
+  | "details"
+  | "html-comment"
+  | "indented-code";
 
 export interface MarkdownOptions {
   resolveFileUrl?: (path: string) => string | null;
@@ -66,27 +73,30 @@ export function decodeRawMarkdownBlock(encoded: string): string {
   }
 }
 
-function createRawMarkdownBlock(markdown: string): string {
+function createRawMarkdownBlock(
+  markdown: string,
+  blockType: RawMarkdownBlockType,
+): string {
   return `<div ${rawMarkdownBlockAttribute}="${escapeHtml(
     encodeRawMarkdownBlock(markdown),
-  )}"></div>\n`;
+  )}" ${rawMarkdownBlockTypeAttribute}="${blockType}"></div>\n`;
 }
 
 function protectRawHtmlBlocks(markdown: string): string {
   return markdown
     .replace(
       /^[ \t]*<details\b[\s\S]*?<\/details>[ \t]*(?:\r?\n|$)/gim,
-      (raw) => createRawMarkdownBlock(raw),
+      (raw) => createRawMarkdownBlock(raw, "details"),
     )
     .replace(/^[ \t]*<!--[\s\S]*?-->[ \t]*(?:\r?\n|$)/gm, (raw) =>
-      createRawMarkdownBlock(raw),
+      createRawMarkdownBlock(raw, "html-comment"),
     );
 }
 
 function protectIndentedCodeAfterLists(markdown: string): string {
   return markdown.replace(
     /^(?:[-*+]|\d+[.)]) [^\r\n]*(?:\r?\n)[ \t]*(?:\r?\n)(?:(?: {4}|\t)[^\r\n]*(?:\r?\n|$))+/gm,
-    (raw) => createRawMarkdownBlock(raw),
+    (raw) => createRawMarkdownBlock(raw, "indented-code"),
   );
 }
 
@@ -122,7 +132,7 @@ function protectPipeSensitiveTables(markdown: string): string {
 
     const raw = tableLines.join("");
     const needsProtection = raw.includes("\\|") || codeSpanContainsPipe(raw);
-    output.push(needsProtection ? createRawMarkdownBlock(raw) : raw);
+    output.push(needsProtection ? createRawMarkdownBlock(raw, "table") : raw);
     index -= 1;
   }
 

@@ -9,6 +9,7 @@ import {
   splitYamlFrontmatter,
   toHtml,
   toMarkdown,
+  protectRichTextRoundTripMarkdown,
   rawMarkdownBlockAttribute,
   rawMarkdownBlockTypeAttribute,
 } from "./markdown";
@@ -121,25 +122,40 @@ describe("toHtml", () => {
   });
 
   it("tags protected blocks with the block type the placeholder names", () => {
-    const pipeTable = ["| Flag | Meaning |", "| --- | --- |", "| `a \\| b` | either |"].join("\n");
+    const pipeTable = [
+      "| Flag | Meaning |",
+      "| --- | --- |",
+      "| `a \\| b` | either |",
+    ].join("\n");
 
-    expect(toHtml(`${pipeTable}\n`)).toContain(
+    expect(protectRichTextRoundTripMarkdown(`${pipeTable}\n`)).toContain(
       `${rawMarkdownBlockTypeAttribute}="table"`,
     );
-    expect(toHtml("<!-- note -->\n")).toContain(
+    expect(protectRichTextRoundTripMarkdown("<!-- note -->\n")).toContain(
       `${rawMarkdownBlockTypeAttribute}="html-comment"`,
     );
-    expect(toHtml("<details>\n<summary>More</summary>\n</details>\n")).toContain(
-      `${rawMarkdownBlockTypeAttribute}="details"`,
+    expect(
+      protectRichTextRoundTripMarkdown(
+        "<details>\n<summary>More</summary>\n</details>\n",
+      ),
+    ).toContain(`${rawMarkdownBlockTypeAttribute}="details"`);
+    expect(
+      protectRichTextRoundTripMarkdown("- item\n\n    indented code\n"),
+    ).toContain(`${rawMarkdownBlockTypeAttribute}="indented-code"`);
+    expect(protectRichTextRoundTripMarkdown(`${paddedTable}\n`)).not.toContain(
+      rawMarkdownBlockTypeAttribute,
     );
-    expect(toHtml("- item\n\n    indented code\n")).toContain(
-      `${rawMarkdownBlockTypeAttribute}="indented-code"`,
-    );
-    expect(toHtml(`${paddedTable}\n`)).not.toContain(rawMarkdownBlockTypeAttribute);
   });
 
   it("round-trips a protected table unchanged through the editor state", () => {
-    const input = ["# Flags", "", "| Flag | Meaning |", "| --- | --- |", "| `a \\| b` | either |", ""].join("\n");
+    const input = [
+      "Flags in use:",
+      "",
+      "| Flag | Meaning |",
+      "| --- | --- |",
+      "| `a \\| b` | either |",
+      "",
+    ].join("\n");
 
     const { doc } = criticMarkdownToEditorState(input);
     const rawBlocks = (doc.content ?? []).filter(

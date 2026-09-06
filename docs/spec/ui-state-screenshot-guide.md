@@ -92,6 +92,17 @@ suggestions:
 ```markdown
 # Fenced examples This page should not show a review rail just because examples appear inside code fences. ```text {==example==}{>>comment<<}{#c1} {++inserted++} {--deleted--} {~~old~>new~~} ```
 ```
+### Unrendered Block Document
+```markdown
+# Unrendered blocks
+A table whose cell holds a pipe inside a code span cannot be rendered in rich text:
+
+| Flag | Meaning |
+| --- | --- |
+| `a \| b` | either |
+
+<!-- an HTML comment is kept as source, not rendered -->
+```
 ## Capture Matrix
 | Area | State | How to reach it | Useful selectors | Notes |
 | --- | --- | --- | --- | --- |
@@ -137,6 +148,7 @@ suggestions:
 | Editor | Selection menu on suggestion | Select existing suggestion text | `selection-menu-action-accept-suggestion`, `selection-menu-action-reject-suggestion` | Requires review fixture. |
 | Editor | Link popover | Click a link or choose Link from selection menu | `link-popover`, `link-url-input`, `link-action-open`, `link-action-delete` | Use the plain fixture link. |
 | Editor | Context menu | Right-click in rich editor | `editor-context-menu` | Capture comment, suggestion, paste, and paste-markdown actions. |
+| Editor | Unrendered block placeholder | Open the unrendered block fixture in rich mode | `unrendered-block-placeholder` | One placeholder per block that rich text cannot render, at the block's position; the title names the block type (`Table not rendered`, `HTML comment not rendered`, `Details block not rendered`, `Indented code block not rendered`) and `data-block-type` carries `table`, `html-comment`, `details`, or `indented-code`. The Markdown source is unchanged; the code editor shows it. |
 | Review rail | Comments | Open review fixture in rich mode | `document-review-rail`, `comment-thread-root` | Thread containers use `data-comment-thread-container="true"`. |
 | Review rail | Suggestions | Open review fixture in rich mode | `suggestion-thread-s1`, `suggestion-thread-s2`, `suggestion-thread-s3` | Thread containers use `data-suggestion-thread-container="true"`. |
 | Review rail | Draft suggestion | Select text and choose a suggestion action | `draft-suggestion-thread`, `draft-suggestion-editor` | Capture dismiss/cancel/apply actions. |
