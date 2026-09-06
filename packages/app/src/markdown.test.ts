@@ -2,11 +2,33 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  criticMarkdownToEditorState,
+  editorStateToCriticMarkdown,
+} from "./critic-markup";
+import {
   splitYamlFrontmatter,
   toHtml,
   toMarkdown,
   rawMarkdownBlockAttribute,
 } from "./markdown";
+
+const paddedTable = ["| A   | B   |", "| --- | --- |", "| 1   | 2   |"].join(
+  "\n",
+);
+const fence = ["```", "code", "```"].join("\n");
+const commentEndmatter = [
+  "---",
+  "comments:",
+  "  c1:",
+  "    by: AI",
+  '    at: "2026-09-05T00:00:00.000Z"',
+  "",
+].join("\n");
+
+function saveCriticMarkdown(markdown: string): string {
+  const { doc, comments } = criticMarkdownToEditorState(markdown);
+  return editorStateToCriticMarkdown(doc, comments);
+}
 
 function readMarkdownFixture(name: string): string {
   return fs.readFileSync(
@@ -133,6 +155,36 @@ describe("normalizeBlockSpacing", () => {
     const spaced = "First paragraph.\n\nSecond paragraph.\n";
 
     expect(toMarkdown(toHtml(spaced))).toBe(spaced);
+  });
+
+  it("keeps the blank line between a table and a following heading", () => {
+    const markdown = `${paddedTable}\n\n## After\n`;
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+  });
+
+  it("keeps the blank line between a fenced code block and a following heading", () => {
+    const markdown = `${fence}\n\n## After\n`;
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+  });
+
+  it("keeps the blank line between a blockquote and a following heading", () => {
+    const markdown = "> Quoted\n\n## After\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+  });
+
+  it("keeps a CriticMarkup comment anchored on the heading after a table across a save", () => {
+    const markdown = `${paddedTable}\n\n## {==After==}{>>Rename<<}{#c1}\n\n${commentEndmatter}`;
+
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps a CriticMarkup comment anchored on the heading after a fence across a save", () => {
+    const markdown = `${fence}\n\n## {==After==}{>>Rename<<}{#c1}\n\n${commentEndmatter}`;
+
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
   });
 
   it("uses dash bullet markers and compact list indentation", () => {
