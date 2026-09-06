@@ -1,7 +1,8 @@
 import type { Editor } from "@tiptap/react";
-import { Check, Reply, X } from "lucide-react";
+import { Check, Pencil, Reply, X } from "lucide-react";
 import {
   type CSSProperties,
+  type MouseEvent,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -14,9 +15,11 @@ import {
   type CommentActionsRenderContext,
   type CommentContentRenderContext,
   CommentEditorList,
+  type PendingApprovalBadge,
 } from "./CommentEditorList";
 import type {
   CriticChangeAttrs,
+  CriticChangeDecision,
   CriticChangeKind,
   CriticComment,
 } from "./critic-markup";
@@ -64,8 +67,6 @@ interface DocumentReviewRailProps {
   onSelectComment: (commentId: string) => void;
   onFocusComment: (commentId: string) => void;
   onHoverComment: (commentId: string | null) => void;
-  onAcceptSuggestion: (changeId: string) => void;
-  onRejectSuggestion: (changeId: string) => void;
   onReplySuggestion: (changeId: string) => void;
   onSelectSuggestion: (changeId: string) => void;
   onFocusSuggestion: (changeId: string) => void;
@@ -76,6 +77,9 @@ interface DocumentReviewRailProps {
   pendingApprovalCommentIds?: string[];
   onApproveComment?: (commentId: string) => void;
   onRevokeApproval?: (commentId: string) => void;
+  pendingChangeDecisions?: CriticChangeDecision[];
+  onDecideSuggestion?: (decision: CriticChangeDecision) => void;
+  onRevokeSuggestionDecision?: (changeId: string) => void;
   draftSuggestion?: DraftSuggestionState | null;
   onDraftSuggestionTextChange?: (text: string) => void;
   onApplyDraftSuggestion?: () => void;
@@ -112,12 +116,28 @@ function getSuggestionRootComment(
 ): CriticComment {
   return {
     id: suggestion.changeId,
-    content: getSuggestionPreview(suggestion),
+    // The root's content is what the edit action starts from: the text the
+    // mark would leave in the prose. A deletion leaves none and has no edit.
+    content:
+      suggestion.kind === "deletion"
+        ? getSuggestionPreview(suggestion)
+        : suggestion.newText
+            .replaceAll(SUGGESTED_PARAGRAPH_SENTINEL, "")
+            .trim(),
     createdAt: suggestion.change.createdAt,
     authorType: suggestion.change.authorType,
     authorId: suggestion.change.authorId,
   };
 }
+
+const PENDING_DECISION_BADGES: Record<
+  CriticChangeDecision["action"],
+  PendingApprovalBadge
+> = {
+  accept: { label: "Approved", title: "Applies when you finish reviewing" },
+  reject: { label: "Rejected", title: "Applies when you finish reviewing" },
+  edit: { label: "Edited", title: "Applies when you finish reviewing" },
+};
 
 function truncateSuggestionText(text: string) {
   if (text.length <= SUGGESTION_TEXT_PREVIEW_LIMIT) return text;
@@ -235,8 +255,6 @@ export function DocumentReviewRail({
   onSelectComment,
   onFocusComment,
   onHoverComment,
-  onAcceptSuggestion,
-  onRejectSuggestion,
   onReplySuggestion,
   onSelectSuggestion,
   onFocusSuggestion,
@@ -247,6 +265,9 @@ export function DocumentReviewRail({
   pendingApprovalCommentIds = [],
   onApproveComment,
   onRevokeApproval,
+  pendingChangeDecisions = [],
+  onDecideSuggestion,
+  onRevokeSuggestionDecision,
   draftSuggestion = null,
   onDraftSuggestionTextChange,
   onApplyDraftSuggestion,
@@ -632,6 +653,15 @@ export function DocumentReviewRail({
                     parentCommentId: suggestion.changeId,
                   },
           );
+          const pendingDecision =
+            pendingChangeDecisions.find(
+              (decision) => decision.changeId === suggestion.changeId,
+            ) ?? null;
+          const displayedSuggestion =
+            pendingDecision?.action === "edit"
+              ? { ...suggestion, newText: pendingDecision.text }
+              : suggestion;
+          const canEditSuggestion = suggestion.kind !== "deletion";
           const suggestionRootComment = getSuggestionRootComment(suggestion);
           const suggestionThreadComments = [
             suggestionRootComment,
@@ -642,49 +672,94 @@ export function DocumentReviewRail({
             defaultContent,
           }: CommentContentRenderContext) =>
             comment.id === suggestion.changeId ? (
-              <SuggestionCommentContent suggestion={suggestion} />
+              <SuggestionCommentContent suggestion={displayedSuggestion} />
             ) : (
               defaultContent
             );
+          const revokeDecision = (event: MouseEvent) => {
+            event.stopPropagation();
+            onRevokeSuggestionDecision?.(suggestion.changeId);
+          };
           const getCommentActions = ({
             comment,
+            isEditing,
             defaultActions,
-          }: CommentActionsRenderContext): CommentActionDefinition[] =>
-            comment.id === suggestion.changeId
-              ? [
-                  {
-                    key: "accept",
-                    label: "Accept suggestion",
-                    icon: <Check className="size-3.5" />,
-                    compact: true,
-                    onClick: (event) => {
-                      event.stopPropagation();
-                      onAcceptSuggestion(suggestion.changeId);
-                    },
-                  },
-                  {
-                    key: "reject",
-                    label: "Reject suggestion",
-                    tone: "danger",
-                    icon: <X className="size-3.5" />,
-                    compact: true,
-                    onClick: (event) => {
-                      event.stopPropagation();
-                      onRejectSuggestion(suggestion.changeId);
-                    },
-                  },
-                  {
-                    key: "reply",
-                    label: "Reply",
-                    icon: <Reply className="size-3.5" />,
-                    compact: true,
-                    onClick: (event) => {
-                      event.stopPropagation();
-                      onReplySuggestion(suggestion.changeId);
-                    },
-                  },
-                ]
-              : defaultActions;
+          }: CommentActionsRenderContext): CommentActionDefinition[] => {
+            if (comment.id !== suggestion.changeId || isEditing) {
+              return defaultActions;
+            }
+
+            const replyAction: CommentActionDefinition = {
+              key: "reply",
+              label: "Reply",
+              icon: <Reply className="size-3.5" />,
+              compact: true,
+              onClick: (event) => {
+                event.stopPropagation();
+                onReplySuggestion(suggestion.changeId);
+              },
+            };
+
+            if (pendingDecision) {
+              // Approve keeps its own lit undo; reject and edit light theirs.
+              const undoAction: CommentActionDefinition[] =
+                pendingDecision.action === "accept"
+                  ? defaultActions.filter(
+                      (action) => action.key === "unapprove",
+                    )
+                  : pendingDecision.action === "reject"
+                    ? [
+                        {
+                          key: "unreject",
+                          label: "Undo rejection",
+                          tone: "danger",
+                          active: true,
+                          icon: <X className="size-3.5" />,
+                          compact: true,
+                          onClick: revokeDecision,
+                        },
+                      ]
+                    : [
+                        {
+                          key: "unedit",
+                          label: "Undo edit",
+                          active: true,
+                          icon: <Pencil className="size-3.5" />,
+                          compact: true,
+                          onClick: revokeDecision,
+                        },
+                      ];
+
+              return [...undoAction, replyAction];
+            }
+
+            const editAction = defaultActions.find(
+              (action) => action.key === "edit",
+            );
+
+            return [
+              // The approve checkmark and its confirm swap come from the list.
+              ...defaultActions.filter((action) => action.key === "approve"),
+              {
+                key: "reject",
+                label: "Reject suggestion",
+                tone: "danger",
+                icon: <X className="size-3.5" />,
+                compact: true,
+                onClick: (event) => {
+                  event.stopPropagation();
+                  onDecideSuggestion?.({
+                    changeId: suggestion.changeId,
+                    action: "reject",
+                  });
+                },
+              },
+              ...(canEditSuggestion && editAction
+                ? [{ ...editAction, label: "Edit suggestion" }]
+                : []),
+              replyAction,
+            ];
+          };
 
           return (
             <div
@@ -717,8 +792,24 @@ export function DocumentReviewRail({
                 hoveredCommentId={
                   hoveredCommentId ?? (isHovered ? suggestion.changeId : null)
                 }
-                onDeleteComment={onDeleteComment}
-                onUpdateComment={onUpdateComment}
+                onDeleteComment={(commentId) => {
+                  // An edit saved empty on the mark itself is a cancel.
+                  if (commentId === suggestion.changeId) return;
+
+                  onDeleteComment(commentId);
+                }}
+                onUpdateComment={(commentId, nextContent) => {
+                  if (commentId === suggestion.changeId) {
+                    onDecideSuggestion?.({
+                      changeId: suggestion.changeId,
+                      action: "edit",
+                      text: nextContent,
+                    });
+                    return;
+                  }
+
+                  onUpdateComment(commentId, nextContent);
+                }}
                 onReplyComment={(commentId) => {
                   if (commentId === suggestion.changeId) {
                     onReplySuggestion(suggestion.changeId);
@@ -754,9 +845,41 @@ export function DocumentReviewRail({
                 pendingFocusCommentId={pendingFocusCommentId}
                 newCommentDraftIds={newCommentDraftIds}
                 onAutoFocusComment={onAutoFocusComment}
-                pendingApprovalCommentIds={pendingApprovalCommentIds}
-                onApproveComment={onApproveComment}
-                onRevokeApproval={onRevokeApproval}
+                approvableCommentIds={
+                  onDecideSuggestion ? [suggestion.changeId] : []
+                }
+                pendingApprovalCommentIds={
+                  pendingDecision
+                    ? [...pendingApprovalCommentIds, suggestion.changeId]
+                    : pendingApprovalCommentIds
+                }
+                pendingApprovalBadges={
+                  pendingDecision
+                    ? {
+                        [suggestion.changeId]:
+                          PENDING_DECISION_BADGES[pendingDecision.action],
+                      }
+                    : undefined
+                }
+                onApproveComment={(commentId) => {
+                  if (commentId === suggestion.changeId) {
+                    onDecideSuggestion?.({
+                      changeId: suggestion.changeId,
+                      action: "accept",
+                    });
+                    return;
+                  }
+
+                  onApproveComment?.(commentId);
+                }}
+                onRevokeApproval={(commentId) => {
+                  if (commentId === suggestion.changeId) {
+                    onRevokeSuggestionDecision?.(suggestion.changeId);
+                    return;
+                  }
+
+                  onRevokeApproval?.(commentId);
+                }}
                 renderCommentContent={renderCommentContent}
                 getCommentActions={getCommentActions}
               />

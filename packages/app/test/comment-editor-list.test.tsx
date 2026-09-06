@@ -465,3 +465,194 @@ describe("CommentEditorList approve focus", () => {
     );
   });
 });
+
+function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLTextAreaElement.prototype,
+    "value",
+  )?.set;
+  setter?.call(textarea, value);
+  textarea.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function OptedInRootHarness({
+  badge,
+  undoActionKey,
+}: {
+  badge?: { label: string; title: string };
+  undoActionKey?: string;
+}) {
+  const [pendingApprovalCommentIds, setPendingApprovalCommentIds] = useState<
+    string[]
+  >([]);
+
+  return (
+    <TooltipProvider>
+      <CommentEditorList
+        comments={createAgentThread()}
+        variant="rail"
+        approvableCommentIds={["root"]}
+        pendingApprovalCommentIds={pendingApprovalCommentIds}
+        pendingApprovalBadges={badge ? { root: badge } : undefined}
+        onApproveComment={(commentId) => {
+          setPendingApprovalCommentIds((current) => [...current, commentId]);
+        }}
+        onRevokeApproval={(commentId) => {
+          setPendingApprovalCommentIds((current) =>
+            current.filter((pendingId) => pendingId !== commentId),
+          );
+        }}
+        getCommentActions={({ comment, defaultActions }) =>
+          undoActionKey &&
+          comment.id === "root" &&
+          pendingApprovalCommentIds.includes("root")
+            ? [
+                {
+                  key: undoActionKey,
+                  label: "Undo",
+                  tone: "danger",
+                  active: true,
+                  compact: true,
+                  icon: <span />,
+                  onClick: () => setPendingApprovalCommentIds([]),
+                },
+              ]
+            : defaultActions
+        }
+        onDeleteComment={vi.fn()}
+        onUpdateComment={vi.fn()}
+        onReplyComment={vi.fn()}
+      />
+    </TooltipProvider>
+  );
+}
+
+describe("CommentEditorList approve action on an opted-in comment", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("offers the approve action on a root comment the caller opts in, whoever wrote it", async () => {
+    const onApproveComment = vi.fn();
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <CommentEditorList
+            comments={createAgentThread()}
+            variant="rail"
+            approvableCommentIds={["root"]}
+            onApproveComment={onApproveComment}
+            onRevokeApproval={vi.fn()}
+            onDeleteComment={vi.fn()}
+            onUpdateComment={vi.fn()}
+            onReplyComment={vi.fn()}
+          />
+        </TooltipProvider>,
+      );
+    });
+
+    await click(getByTestId(container, "comment-rail-root-action-approve"));
+    await click(
+      getByTestId(container, "comment-rail-root-action-approve-confirm"),
+    );
+
+    expect(onApproveComment).toHaveBeenCalledWith("root");
+    expect(
+      queryByTestId(container, "comment-rail-a2-action-approve"),
+    ).not.toBeNull();
+    expect(
+      queryByTestId(container, "comment-rail-u1-action-approve"),
+    ).toBeNull();
+  });
+
+  it("shows the caller's badge for a pending decision instead of Approved", async () => {
+    await act(async () => {
+      root.render(
+        <OptedInRootHarness
+          badge={{
+            label: "Rejected",
+            title: "Applies when you finish reviewing",
+          }}
+        />,
+      );
+    });
+
+    await click(getByTestId(container, "comment-rail-root-action-approve"));
+    await click(
+      getByTestId(container, "comment-rail-root-action-approve-confirm"),
+    );
+
+    const badge = getByTestId(container, "comment-rail-root-approval-pending");
+    expect(badge.textContent).toBe("Rejected");
+    expect(badge.title).toBe("Applies when you finish reviewing");
+  });
+
+  it("moves keyboard focus to whichever lit undo control the caller renders for the pending state", async () => {
+    await act(async () => {
+      root.render(<OptedInRootHarness undoActionKey="unreject" />);
+    });
+
+    const approveButton = getByTestId(
+      container,
+      "comment-rail-root-action-approve",
+    );
+    approveButton.focus();
+    await click(approveButton);
+    await click(
+      getByTestId(container, "comment-rail-root-action-approve-confirm"),
+    );
+
+    expect(document.activeElement).toBe(
+      getByTestId(container, "comment-rail-root-action-unreject"),
+    );
+
+    await click(getByTestId(container, "comment-rail-root-action-unreject"));
+
+    expect(document.activeElement).toBe(
+      getByTestId(container, "comment-rail-root-action-approve"),
+    );
+  });
+
+  it("closes the editor when an edit is saved empty, even if the comment is not deleted", async () => {
+    const onDeleteComment = vi.fn();
+    await act(async () => {
+      root.render(
+        <TooltipProvider>
+          <CommentEditorList
+            comments={createAgentThread()}
+            variant="rail"
+            onDeleteComment={onDeleteComment}
+            onUpdateComment={vi.fn()}
+            onReplyComment={vi.fn()}
+          />
+        </TooltipProvider>,
+      );
+    });
+
+    await click(getByTestId(container, "comment-rail-root-action-edit"));
+    const editor = getByTestId<HTMLTextAreaElement>(
+      container,
+      "comment-rail-root-editor",
+    );
+    await act(async () => {
+      setTextareaValue(editor, "");
+      await Promise.resolve();
+    });
+    await click(getByTestId(container, "comment-rail-root-action-save"));
+
+    expect(onDeleteComment).toHaveBeenCalledWith("root");
+    expect(queryByTestId(container, "comment-rail-root-editor")).toBeNull();
+  });
+});

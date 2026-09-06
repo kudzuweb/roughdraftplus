@@ -71,8 +71,14 @@ and rule on it: new text as an insertion (`{++new text++}`), reworded text as a 
 applying a change approved last round) are left unmarked, so the marks are signal, not a full diff.
 Approving a mark **accepts** it: the markup collapses to the final text as ordinary prose. Rejecting
 reverts it; editing replaces it with what the reviewer typed. This is the item-6 approval action
-applied to a suggestion instead of a comment. The marks are the reviewer's change surface — there is
-no separate diff view (backlog item 10).
+applied to a suggestion instead of a comment, and it is product behavior (issue #12): each
+suggestion card in the rail offers approve, reject and, for an insertion or substitution, edit. A
+decision is tab state until Done Reviewing, shown as an `Approved`, `Rejected` or `Edited` marker
+with an undo, and the handoff applies every pending decision in the same save as the pending reply
+approvals, from rich text or code view alike. A decided mark takes its reply thread with it, and
+the removed ids stay reserved in the `counters` endmatter, per the Id Counters section of
+`docs/spec/roughdraft-flavored-markdown.md`, so the agent never reuses them. The marks are the
+reviewer's change surface — there is no separate diff view (backlog item 10).
 
 ## Approvals
 
@@ -146,7 +152,7 @@ save still rewrites applies to that file even if it was only ever edited in code
 |---|---|---|
 | Auto-reopen until done-signal | `roughdraft open --loop` reports the done-signal after each round (item 14) | The reopen on `done: false` remains agent discipline |
 | Meaningful changes stand out | Agent marks them `{++ins++}` / `{~~sub~~}`, leaves mechanical edits unmarked | Jump-to-next-mark navigation (item 10, deferred behind item 5) |
-| Approving a mark accepts it into prose | Agent strips markup on approval | Approve action accepts the suggestion (items 6, 10) |
+| Approving a mark accepts it into prose | Product behavior: approve, reject and edit on the suggestion card, applied on Done Reviewing | Shipped (#12) |
 | Approval resolves its comment (per-comment only) | Product behavior: approve button, applied on Done Reviewing | Shipped (item 6) |
 | Filler anchor text leaves with its thread | Product behavior: a comment flagged `anchor="disposable"` takes its anchor text when the last comment on it is cleared | Shipped (item 12) |
 | Inline replies canonical | Agent discipline; the prompt, spec, setup, CLI help and README prescribe inline and mark endmatter replies legacy | Shipped (item 4): legacy endmatter replies render and survive a save |

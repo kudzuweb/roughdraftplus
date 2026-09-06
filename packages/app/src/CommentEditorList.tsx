@@ -56,6 +56,13 @@ interface CommentEditorListProps {
   newCommentDraftIds?: string[];
   onAutoFocusComment?: (commentId: string) => void;
   pendingApprovalCommentIds?: string[];
+  /**
+   * Comments that take the approve action whoever wrote them and wherever
+   * they sit in the thread; by default only agent replies do.
+   */
+  approvableCommentIds?: string[];
+  /** Per-comment wording for the pending marker, in place of "Approved". */
+  pendingApprovalBadges?: Record<string, PendingApprovalBadge>;
   onApproveComment?: (commentId: string) => void;
   onRevokeApproval?: (commentId: string) => void;
   renderCommentContent?: (context: CommentContentRenderContext) => ReactNode;
@@ -63,6 +70,16 @@ interface CommentEditorListProps {
     context: CommentActionsRenderContext,
   ) => CommentActionDefinition[];
 }
+
+export interface PendingApprovalBadge {
+  label: string;
+  title: string;
+}
+
+const DEFAULT_PENDING_APPROVAL_BADGE: PendingApprovalBadge = {
+  label: "Approved",
+  title: "Resolves when you finish reviewing",
+};
 
 export interface CommentActionDefinition {
   key: string;
@@ -140,6 +157,8 @@ export function CommentEditorList({
   newCommentDraftIds = [],
   onAutoFocusComment,
   pendingApprovalCommentIds = [],
+  approvableCommentIds = [],
+  pendingApprovalBadges = {},
   onApproveComment,
   onRevokeApproval,
   renderCommentContent,
@@ -239,6 +258,14 @@ export function CommentEditorList({
   }, [comments]);
 
   useEffect(() => {
+    // A decision made by another control (reject, edit) supersedes an open
+    // approve confirm, which would otherwise come back when it is undone.
+    setConfirmingApprovalCommentId((current) =>
+      current && pendingApprovalCommentIds.includes(current) ? null : current,
+    );
+  }, [pendingApprovalCommentIds]);
+
+  useEffect(() => {
     if (!interactive) return;
     if (!pendingFocusCommentId) return;
 
@@ -305,11 +332,10 @@ export function CommentEditorList({
     const nextContent = (drafts[commentId] ?? comment.content).trim();
 
     if (nextContent.length === 0) {
+      // A comment that the owner does not actually delete (a suggestion's
+      // root, say) would otherwise stay stuck in edit mode.
       onDeleteComment(commentId);
-      return;
-    }
-
-    if (nextContent !== comment.content) {
+    } else if (nextContent !== comment.content) {
       onUpdateComment(commentId, nextContent);
     }
 
@@ -384,6 +410,8 @@ export function CommentEditorList({
           onSubmitEditingComment={submitEditingComment}
           onCancelEditingComment={cancelEditingComment}
           pendingApprovalCommentIds={pendingApprovalCommentIds}
+          approvableCommentIds={approvableCommentIds}
+          pendingApprovalBadges={pendingApprovalBadges}
           confirmingApprovalCommentId={confirmingApprovalCommentId}
           onConfirmingApprovalChange={setConfirmingApprovalCommentId}
           onApproveComment={onApproveComment}
@@ -428,6 +456,8 @@ interface CommentThreadNodeProps {
   onSubmitEditingComment: (commentId: string) => void;
   onCancelEditingComment: (commentId: string) => void;
   pendingApprovalCommentIds: string[];
+  approvableCommentIds: string[];
+  pendingApprovalBadges: Record<string, PendingApprovalBadge>;
   confirmingApprovalCommentId: string | null;
   onConfirmingApprovalChange: (commentId: string | null) => void;
   onApproveComment?: (commentId: string) => void;
@@ -486,12 +516,16 @@ function CommentActionButton({
         presentation === "popover"
           ? ""
           : tone === "danger"
-            ? "text-stone-400 hover:bg-rose-100 hover:text-rose-700 dark:text-stone-500 dark:hover:bg-rose-900/40 dark:hover:text-rose-400"
+            ? active
+              ? "bg-rose-100 text-rose-700 hover:bg-rose-200 hover:text-rose-800 dark:bg-rose-900/40 dark:text-rose-400 dark:hover:bg-rose-900/60 dark:hover:text-rose-300"
+              : "text-stone-400 hover:bg-rose-100 hover:text-rose-700 dark:text-stone-500 dark:hover:bg-rose-900/40 dark:hover:text-rose-400"
             : tone === "success"
               ? active
                 ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 hover:text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/60 dark:hover:text-emerald-300"
                 : "text-stone-400 hover:bg-emerald-100 hover:text-emerald-700 dark:text-stone-500 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-400"
-              : "text-stone-400 hover:bg-[#DED8CE]/45 hover:text-stone-600 dark:text-stone-500 dark:hover:bg-slate-700 dark:hover:text-stone-300",
+              : active
+                ? "bg-[#DED8CE]/70 text-stone-700 hover:bg-[#DED8CE] hover:text-stone-800 dark:bg-slate-700 dark:text-stone-200 dark:hover:bg-slate-600 dark:hover:text-stone-100"
+                : "text-stone-400 hover:bg-[#DED8CE]/45 hover:text-stone-600 dark:text-stone-500 dark:hover:bg-slate-700 dark:hover:text-stone-300",
         className,
       )}
       onPointerDown={(event) => event.stopPropagation()}
@@ -538,6 +572,8 @@ function CommentThreadNode({
   onSubmitEditingComment,
   onCancelEditingComment,
   pendingApprovalCommentIds,
+  approvableCommentIds,
+  pendingApprovalBadges,
   confirmingApprovalCommentId,
   onConfirmingApprovalChange,
   onApproveComment,
@@ -601,14 +637,18 @@ function CommentThreadNode({
       isEditing,
       defaultContent,
     }) ?? defaultContent;
-  const approvalState: CommentApprovalState =
-    depth === 0 || !isAiAuthor || !onApproveComment
-      ? "none"
-      : pendingApprovalCommentIds.includes(comment.id)
-        ? "pending"
-        : confirmingApprovalCommentId === comment.id
-          ? "confirming"
-          : "available";
+  const canApprove =
+    Boolean(onApproveComment) &&
+    (approvableCommentIds.includes(comment.id) || (depth > 0 && isAiAuthor));
+  const approvalState: CommentApprovalState = !canApprove
+    ? "none"
+    : pendingApprovalCommentIds.includes(comment.id)
+      ? "pending"
+      : confirmingApprovalCommentId === comment.id
+        ? "confirming"
+        : "available";
+  const pendingBadge =
+    pendingApprovalBadges[comment.id] ?? DEFAULT_PENDING_APPROVAL_BADGE;
   const approvalActions: CommentActionDefinition[] =
     approvalState === "available"
       ? [
@@ -708,6 +748,12 @@ function CommentThreadNode({
     }) ?? defaultVisibleActions;
   const nodeRef = useRef<HTMLDivElement>(null);
   const previousApprovalStateRef = useRef<CommentApprovalState>(approvalState);
+  // The pending state's undo control is whichever lit action the owner
+  // renders, so its key is read off the rendered action rather than fixed
+  // here. That keeps the focus target a full test id owned by this comment,
+  // without this list having to know the owner's action vocabulary.
+  const pendingUndoActionKey =
+    actions.find((action) => action.active)?.key ?? null;
 
   useLayoutEffect(() => {
     const previousApprovalState = previousApprovalStateRef.current;
@@ -718,24 +764,20 @@ function CommentThreadNode({
     // that replaced it.
     if (previousApprovalState === approvalState) return;
 
-    const focusActionKey =
+    const focusSelector =
       approvalState === "confirming"
-        ? "approve-confirm"
-        : approvalState === "pending"
-          ? "unapprove"
+        ? `[data-testid="comment-${variant}-${comment.id}-action-approve-confirm"]`
+        : approvalState === "pending" && pendingUndoActionKey
+          ? `[data-testid="comment-${variant}-${comment.id}-action-${pendingUndoActionKey}"]`
           : approvalState === "available" &&
               (previousApprovalState === "confirming" ||
                 previousApprovalState === "pending")
-            ? "approve"
+            ? `[data-testid="comment-${variant}-${comment.id}-action-approve"]`
             : null;
-    if (!focusActionKey) return;
+    if (!focusSelector) return;
 
-    nodeRef.current
-      ?.querySelector<HTMLElement>(
-        `[data-testid="comment-${variant}-${comment.id}-action-${focusActionKey}"]`,
-      )
-      ?.focus();
-  }, [approvalState, comment.id, variant]);
+    nodeRef.current?.querySelector<HTMLElement>(focusSelector)?.focus();
+  }, [approvalState, comment.id, variant, pendingUndoActionKey]);
 
   const ancestorGuideOffsets = parentLines.reduce<number[]>(
     (offsets, showLine, guideIndex) => {
@@ -883,10 +925,10 @@ function CommentThreadNode({
                 {approvalState === "pending" ? (
                   <span
                     data-testid={`comment-${variant}-${comment.id}-approval-pending`}
-                    title="Resolves when you finish reviewing"
+                    title={pendingBadge.title}
                     className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-px text-[10px] font-semibold tracking-[0.08em] text-emerald-700 uppercase dark:bg-emerald-900/40 dark:text-emerald-400"
                   >
-                    Approved
+                    {pendingBadge.label}
                   </span>
                 ) : null}
               </div>
@@ -1070,6 +1112,8 @@ function CommentThreadNode({
               onSubmitEditingComment={onSubmitEditingComment}
               onCancelEditingComment={onCancelEditingComment}
               pendingApprovalCommentIds={pendingApprovalCommentIds}
+              approvableCommentIds={approvableCommentIds}
+              pendingApprovalBadges={pendingApprovalBadges}
               confirmingApprovalCommentId={confirmingApprovalCommentId}
               onConfirmingApprovalChange={onConfirmingApprovalChange}
               onApproveComment={onApproveComment}
