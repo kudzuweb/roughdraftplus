@@ -1,5 +1,5 @@
 import { tables, taskListItems } from "@joplin/turndown-plugin-gfm";
-import { marked } from "marked";
+import { Marked, marked, type TokenizerObject } from "marked";
 import TurndownService from "turndown";
 import { parse as parseYaml } from "yaml";
 
@@ -388,6 +388,17 @@ export function appendYamlEndmatter(
     : markdown;
 }
 
+// GFM opens strikethrough on one tilde as well as two, so ordinary prose like
+// `~57% (~100h)` parses as `<del>57% (</del>100h)` and saves back as
+// `~~57% (~~100h)`. Only `~~text~~` is strikethrough here; a lone `~` is text.
+// Returning false hands the source to marked's own rule, undefined matches
+// nothing.
+export const strictStrikethroughTokenizer: TokenizerObject = {
+  del(src) {
+    return src.startsWith("~~") ? false : undefined;
+  },
+};
+
 export function createMarkedRenderer(options?: MarkdownOptions) {
   const renderer = new marked.Renderer();
   const baseRenderer = new marked.Renderer();
@@ -736,9 +747,12 @@ export function toMarkdown(html: string): string {
 }
 
 export function toHtml(markdown: string, options?: MarkdownOptions): string {
-  return marked.parse(markdown, {
+  const parser = new Marked({
     async: false,
     gfm: true,
     renderer: createMarkedRenderer(options),
-  }) as string;
+    tokenizer: strictStrikethroughTokenizer,
+  });
+
+  return parser.parse(markdown) as string;
 }
