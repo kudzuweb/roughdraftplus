@@ -24,6 +24,7 @@ import {
   createCriticComment,
   criticMarkdownHasReviewRail,
   criticMarkdownToEditorState,
+  disposableAnchorCommentIds,
   editorStateToCriticMarkdown,
   getCommentDescendantIds,
   removeCommentsFromCriticMarkdown,
@@ -1736,13 +1737,16 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
         nextComments.delete(id);
       }
 
-      const chain = currentEditor.chain().focus();
-      for (const id of commentIdsToDelete) {
-        chain.removeCommentId(id, {
-          disposeAnchor: previousComments.get(id)?.anchor === "disposable",
-        });
-      }
-      chain.run();
+      currentEditor
+        .chain()
+        .focus()
+        .removeCommentIds(commentIdsToDelete, {
+          disposableCommentIds: disposableAnchorCommentIds(
+            commentIdsToDelete,
+            previousComments,
+          ),
+        })
+        .run();
 
       commentsRef.current = nextComments;
       setComments(nextComments);
@@ -1835,13 +1839,16 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       commentsRef.current = nextComments;
       setComments(nextComments);
 
-      const chain = currentEditor.chain().focus();
-      for (const id of commentIdsToDelete) {
-        chain.removeCommentId(id, {
-          disposeAnchor: previousComments.get(id)?.anchor === "disposable",
-        });
-      }
-      chain.run();
+      currentEditor
+        .chain()
+        .focus()
+        .removeCommentIds(commentIdsToDelete, {
+          disposableCommentIds: disposableAnchorCommentIds(
+            commentIdsToDelete,
+            previousComments,
+          ),
+        })
+        .run();
       setSelectedCommentId((current) =>
         current && deletedIds.has(current) ? null : current,
       );
@@ -1898,13 +1905,15 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     commentsRef.current = nextComments;
     setComments(nextComments);
 
-    const chain = currentEditor.chain();
-    for (const id of approvedIds) {
-      chain.removeCommentId(id, {
-        disposeAnchor: previousComments.get(id)?.anchor === "disposable",
-      });
-    }
-    chain.run();
+    currentEditor
+      .chain()
+      .removeCommentIds(approvedIds, {
+        disposableCommentIds: disposableAnchorCommentIds(
+          approvedIds,
+          previousComments,
+        ),
+      })
+      .run();
 
     setSelectedCommentId((current) =>
       current && approvedIdSet.has(current) ? null : current,

@@ -1707,6 +1707,20 @@ export function editorStateToCriticMarkdown(
 }
 
 /**
+ * The ids among these whose comment flags its anchor as disposable filler.
+ * Both clear paths derive their disposal set through this, so the editor and
+ * the code view apply one rule to the whole set of comments being removed.
+ */
+export function disposableAnchorCommentIds(
+  commentIds: Iterable<string>,
+  comments: ReadonlyMap<string, CriticComment>,
+): string[] {
+  return [...commentIds].filter(
+    (commentId) => comments.get(commentId)?.anchor === "disposable",
+  );
+}
+
+/**
  * Removes the given comment ids from every commentRef mark. A node whose
  * anchor loses its last comment id is dropped when one of the removed ids
  * carried the disposable-anchor flag, so filler text written only to carry
@@ -1754,7 +1768,7 @@ function removeCommentIdsFromDoc(
 
 /**
  * Drops the given comments from a Markdown document without a mounted editor,
- * the same way removeCommentId plus a comments-map delete does inside one.
+ * the same way removeCommentIds plus a comments-map delete does inside one.
  * Returns the input untouched when none of the ids are present, so a no-op
  * never rewrites the file.
  */
@@ -1772,9 +1786,7 @@ export function removeCommentsFromCriticMarkdown(
   if (removedIds.size === 0) return markdown;
 
   const disposableAnchorIds = new Set(
-    [...removedIds].filter(
-      (commentId) => comments.get(commentId)?.anchor === "disposable",
-    ),
+    disposableAnchorCommentIds(removedIds, comments),
   );
   const nextComments = new Map(comments);
   for (const commentId of removedIds) {
