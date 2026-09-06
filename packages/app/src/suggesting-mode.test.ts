@@ -2,8 +2,15 @@ import { Editor } from "@tiptap/core";
 import type { Mark as ProseMirrorMark } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import { describe, expect, it } from "vitest";
-import { createCriticChange } from "./critic-markup";
-import { createEditorExtensions } from "./editor-extensions";
+import {
+  createCriticChange,
+  criticMarkdownToEditorState,
+  editorStateToCriticMarkdown,
+} from "./critic-markup";
+import {
+  createEditorExtensions,
+  isInlineAtomOrText,
+} from "./editor-extensions";
 
 /**
  * Helper: build a tiptap Editor in JSDOM with the standard Roughdraft
@@ -88,7 +95,7 @@ function suggestingBackspace(editor: Editor) {
   type Segment = { from: number; to: number; isAddition: boolean };
   const segments: Segment[] = [];
   state.doc.nodesBetween(from, to, (node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
     const segFrom = Math.max(pos, from);
     const segTo = Math.min(pos + node.nodeSize, to);
     if (segFrom >= segTo) return;
@@ -159,7 +166,7 @@ function suggestingCtrlBackspace(editor: Editor) {
   type Segment = { from: number; to: number; isAddition: boolean };
   const segments: Segment[] = [];
   state.doc.nodesBetween(from, to, (node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
     const segFrom = Math.max(pos, from);
     const segTo = Math.min(pos + node.nodeSize, to);
     if (segFrom >= segTo) return;
@@ -225,7 +232,7 @@ function suggestingCtrlDelete(editor: Editor) {
   type Segment = { from: number; to: number; isAddition: boolean };
   const segments: Segment[] = [];
   state.doc.nodesBetween(from, to, (node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
     const segFrom = Math.max(pos, from);
     const segTo = Math.min(pos + node.nodeSize, to);
     if (segFrom >= segTo) return;
@@ -287,7 +294,7 @@ function suggestingCut(editor: Editor) {
   type Segment = { from: number; to: number; isAddition: boolean };
   const segments: Segment[] = [];
   state.doc.nodesBetween(from, to, (node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
     const segFrom = Math.max(pos, from);
     const segTo = Math.min(pos + node.nodeSize, to);
     if (segFrom >= segTo) return;
@@ -343,7 +350,7 @@ function suggestingTypeWithSelection(editor: Editor, text: string) {
   type Segment = { from: number; to: number; isAddition: boolean };
   const segments: Segment[] = [];
   state.doc.nodesBetween(from, to, (node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
     const segFrom = Math.max(pos, from);
     const segTo = Math.min(pos + node.nodeSize, to);
     if (segFrom >= segTo) return;
@@ -749,6 +756,155 @@ describe("Type-with-selection should delete addition text, not mark as substitut
 
     // The new text should be an addition (or substitution-new if mixed)
     expect(editor.state.doc.textContent).toContain("replaced");
+
+    editor.destroy();
+  });
+});
+
+/**
+ * Helper: build an editor from markdown through the same parse path the app
+ * uses, so a wrapped paragraph carries a `markdownSoftBreak` atom at the
+ * newline. Returns the comments map the save path needs.
+ */
+function createWrappedEditor() {
+  const { doc, comments } = criticMarkdownToEditorState(
+    "This paragraph wraps across\ntwo source lines here.\n",
+  );
+  const element = document.createElement("div");
+  document.body.appendChild(element);
+  const editor = new Editor({
+    element,
+    extensions: createEditorExtensions(""),
+    content: doc,
+  });
+  return { editor, comments };
+}
+
+function saveMarkdown(editor: Editor, comments: Map<string, never>) {
+  return editorStateToCriticMarkdown(editor.getJSON(), comments);
+}
+
+function selectText(editor: Editor, text: string, endAfter?: string) {
+  const { doc } = editor.state;
+  const flat = doc.textBetween(1, doc.content.size, "", " ");
+  const start = flat.indexOf(text);
+  if (start < 0) throw new Error(`text not found: ${text}`);
+  const end = endAfter
+    ? flat.indexOf(endAfter, start) + endAfter.length
+    : start + text.length;
+  editor.view.dispatch(
+    editor.state.tr.setSelection(TextSelection.create(doc, start + 1, end + 1)),
+  );
+}
+
+function softBreakChangeIds(editor: Editor): string[] {
+  const ids: string[] = [];
+  editor.state.doc.descendants((node) => {
+    if (node.type.name !== "markdownSoftBreak") return;
+    for (const mark of node.marks) {
+      if (mark.type.name === "criticChange") {
+        ids.push(mark.attrs.changeId as string);
+      }
+    }
+  });
+  return ids;
+}
+
+function softBreakCount(editor: Editor): number {
+  let count = 0;
+  editor.state.doc.descendants((node) => {
+    if (node.type.name === "markdownSoftBreak") count += 1;
+  });
+  return count;
+}
+
+function changeIds(editor: Editor): Set<string> {
+  const ids = new Set<string>();
+  editor.state.doc.descendants((node) => {
+    for (const mark of node.marks) {
+      if (mark.type.name === "criticChange") {
+        ids.add(mark.attrs.changeId as string);
+      }
+    }
+  });
+  return ids;
+}
+
+describe("suggesting mode across a soft break", () => {
+  it("marks a deletion across a wrap point as one suggestion containing the newline", () => {
+    const { editor, comments } = createWrappedEditor();
+
+    selectText(editor, "across", "two");
+    suggestingBackspace(editor);
+
+    const markdown = saveMarkdown(editor, comments);
+    expect(markdown).toMatch(
+      /wraps \{--across\ntwo--\}\{id="s1"[^}]*\} source/,
+    );
+    expect(markdown.match(/\{--/g)).toHaveLength(1);
+    expect(changeIds(editor).size).toBe(1);
+    expect(softBreakChangeIds(editor)).toEqual([...changeIds(editor)]);
+
+    editor.destroy();
+  });
+
+  it("accepting a deletion across a wrap point removes the soft break", () => {
+    const { editor, comments } = createWrappedEditor();
+
+    selectText(editor, "across", "two");
+    suggestingBackspace(editor);
+    const [changeId] = changeIds(editor);
+    expect(editor.commands.acceptCriticChange(changeId)).toBe(true);
+
+    expect(changeIds(editor).size).toBe(0);
+    expect(softBreakCount(editor)).toBe(0);
+    expect(saveMarkdown(editor, comments)).toBe(
+      "This paragraph wraps source lines here.\n",
+    );
+
+    editor.destroy();
+  });
+
+  it("typing over a selection across a wrap point yields one substitution", () => {
+    const { editor, comments } = createWrappedEditor();
+
+    selectText(editor, "across", "two");
+    suggestingTypeWithSelection(editor, "REPL");
+
+    const markdown = saveMarkdown(editor, comments);
+    expect(markdown).toMatch(
+      /wraps \{~~across\ntwo~>REPL~~\}\{id="s1"[^}]*\} source/,
+    );
+    expect(changeIds(editor).size).toBe(1);
+
+    editor.destroy();
+  });
+
+  it("a single Backspace just after the wrap point marks the soft break instead of stepping over it", () => {
+    const { editor, comments } = createWrappedEditor();
+
+    selectText(editor, "two");
+    const caret = editor.state.selection.from;
+    editor.view.dispatch(
+      editor.state.tr.setSelection(
+        TextSelection.create(editor.state.doc, caret),
+      ),
+    );
+    suggestingBackspace(editor);
+
+    expect(softBreakChangeIds(editor)).toHaveLength(1);
+    expect(editor.state.doc.textContent).toBe(
+      "This paragraph wraps across two source lines here.",
+    );
+    expect(saveMarkdown(editor, comments)).toMatch(
+      /across\{--\n--\}\{id="s1"[^}]*\}two/,
+    );
+
+    const [changeId] = changeIds(editor);
+    editor.commands.acceptCriticChange(changeId);
+    expect(saveMarkdown(editor, comments)).toBe(
+      "This paragraph wraps acrosstwo source lines here.\n",
+    );
 
     editor.destroy();
   });

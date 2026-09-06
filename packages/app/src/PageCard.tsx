@@ -26,6 +26,7 @@ import {
   commentHighlightPluginKey,
   createEditorExtensions,
   criticChangeHighlightPluginKey,
+  isInlineAtomOrText,
   SUGGESTED_PARAGRAPH_SENTINEL,
 } from "./editor-extensions";
 import { cn } from "./lib/utils";
@@ -798,7 +799,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             };
             const segments: Segment[] = [];
             view.state.doc.nodesBetween(from, to, (node, pos) => {
-              if (!node.isText) return;
+              if (!isInlineAtomOrText(node)) return;
               const segFrom = Math.max(pos, from);
               const segTo = Math.min(pos + node.nodeSize, to);
               if (segFrom >= segTo) return;
@@ -910,7 +911,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             };
             const segments: Segment[] = [];
             view.state.doc.nodesBetween(from, to, (node, pos) => {
-              if (!node.isText) return;
+              if (!isInlineAtomOrText(node)) return;
               const segFrom = Math.max(pos, from);
               const segTo = Math.min(pos + node.nodeSize, to);
               if (segFrom >= segTo) return;
@@ -1067,7 +1068,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             };
             const segments: Segment[] = [];
             view.state.doc.nodesBetween(from, to, (node, pos) => {
-              if (!node.isText) return;
+              if (!isInlineAtomOrText(node)) return;
               const segFrom = Math.max(pos, from);
               const segTo = Math.min(pos + node.nodeSize, to);
               if (segFrom >= segTo) return;
@@ -1173,7 +1174,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
           };
           const segments: Segment[] = [];
           view.state.doc.nodesBetween(from, to, (node, pos) => {
-            if (!node.isText) return;
+            if (!isInlineAtomOrText(node)) return;
             const segFrom = Math.max(pos, from);
             const segTo = Math.min(pos + node.nodeSize, to);
             if (segFrom >= segTo) return;

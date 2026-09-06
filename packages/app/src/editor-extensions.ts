@@ -184,6 +184,12 @@ function readCriticChangeAttrs(element: HTMLElement): CriticChangeAttrs | null {
   };
 }
 
+// Text and inline atoms such as the soft break can carry a change mark, so a
+// suggestion covers a wrap point instead of skipping it. Block nodes never can.
+export function isInlineAtomOrText(node: ProseMirrorNode): boolean {
+  return node.isInline && node.isAtom;
+}
+
 function collectCriticChangeRanges(doc: ProseMirrorNode, changeId: string) {
   const markType = doc.type.schema.marks.criticChange;
   const ranges: Array<{
@@ -196,7 +202,7 @@ function collectCriticChangeRanges(doc: ProseMirrorNode, changeId: string) {
   if (!markType) return ranges;
 
   doc.descendants((node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const mark = node.marks.find(
       (candidate) =>
@@ -464,7 +470,7 @@ function createCommentHighlightDecorations(
   }
 
   doc.descendants((node: ProseMirrorNode, pos: number) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const commentIds = [
       ...new Set(
@@ -580,7 +586,7 @@ function createCriticChangeHighlightDecorations(
   }
 
   doc.descendants((node: ProseMirrorNode, pos: number) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const changeIds = [
       ...new Set(

@@ -17,7 +17,7 @@ import {
 import {
   createMarkedRenderer,
   createTurndownService,
-  emptySoftBreakSpans,
+  placeholderSoftBreakSpans,
   normalizeBlockSpacing,
   appendYamlEndmatter,
   prependYamlFrontmatter,
@@ -1515,7 +1515,7 @@ export function editorStateToCriticMarkdown(
   return appendYamlEndmatter(
     prependYamlFrontmatter(
       normalizeBlockSpacing(
-        `${service.turndown(emptySoftBreakSpans(html)).trimEnd()}\n`,
+        `${service.turndown(placeholderSoftBreakSpans(html)).trimEnd()}\n`,
       ),
       frontmatter,
     ),

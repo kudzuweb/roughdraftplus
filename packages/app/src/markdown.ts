@@ -677,15 +677,17 @@ export function normalizeBlockSpacing(md: string): string {
 /**
  * Turndown lifts whitespace inside an inline element out as flanking text,
  * so the space in a soft break span would land in the output next to the
- * newline. Empty the span before Turndown sees it.
+ * newline. Swap it for a zero-width placeholder before Turndown sees it: an
+ * emptied span would count as blank, and a change mark wrapping only a soft
+ * break would then be dropped instead of written as `{--\n--}`.
  */
-export function emptySoftBreakSpans(html: string): string {
-  return html.replace(markdownSoftBreakWithSpace, "$1$2");
+export function placeholderSoftBreakSpans(html: string): string {
+  return html.replace(markdownSoftBreakWithSpace, "$1\u200b$2");
 }
 
 export function toMarkdown(html: string): string {
   return normalizeBlockSpacing(
-    `${turndown.turndown(emptySoftBreakSpans(html)).trimEnd()}\n`,
+    `${turndown.turndown(placeholderSoftBreakSpans(html)).trimEnd()}\n`,
   );
 }
 
