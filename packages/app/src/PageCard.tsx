@@ -26,8 +26,8 @@ import {
   criticMarkdownToEditorState,
   disposableAnchorCommentIds,
   editorStateToCriticMarkdown,
+  applyPendingApprovalsToCriticMarkdown,
   getCommentDescendantIds,
-  removeCommentsFromCriticMarkdown,
   type ReviewIdCounters,
 } from "./critic-markup";
 import {
@@ -2417,9 +2417,11 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     if (pendingApprovalCommentIds.length === 0) return;
 
     const currentMarkdown = pendingMarkdownRef.current;
-    const nextMarkdown = removeCommentsFromCriticMarkdown(
+    const nextMarkdown = applyPendingApprovalsToCriticMarkdown(
       currentMarkdown,
-      pendingApprovalCommentIds,
+      {
+        commentIds: pendingApprovalCommentIds,
+      },
     );
     setPendingApprovalCommentIds([]);
     if (nextMarkdown === currentMarkdown) return;

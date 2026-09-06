@@ -13,8 +13,8 @@ import {
   criticMarkdownToRenderedHtml,
   disposableAnchorCommentIds,
   editorStateToCriticMarkdown,
+  applyPendingApprovalsToCriticMarkdown,
   getCommentDescendantIds,
-  removeCommentsFromCriticMarkdown,
 } from "../src/critic-markup";
 import { createEditorExtensions } from "../src/editor-extensions";
 
@@ -740,10 +740,123 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     const input =
       'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>I can add one from the intro.<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n';
 
-    expect(removeCommentsFromCriticMarkdown(input, ["c2"])).toBe(
+    expect(
+      applyPendingApprovalsToCriticMarkdown(input, { commentIds: ["c2"] }),
+    ).toBe(
       'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n',
     );
-    expect(removeCommentsFromCriticMarkdown(input, ["missing"])).toBe(input);
+    expect(
+      applyPendingApprovalsToCriticMarkdown(input, { commentIds: ["missing"] }),
+    ).toBe(input);
+  });
+
+  // Each removed id is reserved in the counters endmatter so it is never
+  // reused (#10); that is why every collapsed document below carries one.
+  describe("pending mark decisions applied to a Markdown string", () => {
+    const insertion =
+      'Keep {++clear wording++}{id="s1" by="AI" at="2024-01-15T10:30:00.000Z"} here.\n';
+    const substitution =
+      'Use {~~old phrase~>new phrase~~}{id="s1" by="AI" at="2024-01-15T10:30:00.000Z"} here.\n';
+
+    it("accepts an insertion into plain prose", () => {
+      expect(
+        applyPendingApprovalsToCriticMarkdown(insertion, {
+          changeDecisions: [{ changeId: "s1", action: "accept" }],
+        }),
+      ).toBe("Keep clear wording here.\n\n---\ncounters:\n  suggestions: 1\n");
+    });
+
+    it("rejects an insertion, dropping its text", () => {
+      expect(
+        applyPendingApprovalsToCriticMarkdown(insertion, {
+          changeDecisions: [{ changeId: "s1", action: "reject" }],
+        }),
+      ).toBe("Keep here.\n\n---\ncounters:\n  suggestions: 1\n");
+    });
+
+    it("edits an insertion into the reviewer's text as plain prose", () => {
+      expect(
+        applyPendingApprovalsToCriticMarkdown(insertion, {
+          changeDecisions: [
+            { changeId: "s1", action: "edit", text: "crisp wording" },
+          ],
+        }),
+      ).toBe("Keep crisp wording here.\n\n---\ncounters:\n  suggestions: 1\n");
+    });
+
+    it("accepts a substitution, leaving the new text as plain prose", () => {
+      expect(
+        applyPendingApprovalsToCriticMarkdown(substitution, {
+          changeDecisions: [{ changeId: "s1", action: "accept" }],
+        }),
+      ).toBe("Use new phrase here.\n\n---\ncounters:\n  suggestions: 1\n");
+    });
+
+    it("rejects a substitution, restoring the old text", () => {
+      expect(
+        applyPendingApprovalsToCriticMarkdown(substitution, {
+          changeDecisions: [{ changeId: "s1", action: "reject" }],
+        }),
+      ).toBe("Use old phrase here.\n\n---\ncounters:\n  suggestions: 1\n");
+    });
+
+    it("edits a substitution into the reviewer's text as plain prose", () => {
+      expect(
+        applyPendingApprovalsToCriticMarkdown(substitution, {
+          changeDecisions: [
+            { changeId: "s1", action: "edit", text: "newer phrase" },
+          ],
+        }),
+      ).toBe("Use newer phrase here.\n\n---\ncounters:\n  suggestions: 1\n");
+    });
+
+    it("keeps the mark's edge whitespace around edited text, since the rail editor trims what the reviewer types", () => {
+      expect(
+        applyPendingApprovalsToCriticMarkdown(
+          'Keep{++ clear wording ++}{id="s1" by="AI" at="2024-01-15T10:30:00.000Z"}here.\n',
+          {
+            changeDecisions: [
+              { changeId: "s1", action: "edit", text: "crisp" },
+            ],
+          },
+        ),
+      ).toBe("Keep crisp here.\n\n---\ncounters:\n  suggestions: 1\n");
+    });
+
+    it("drops the suggestion's reply thread along with the mark", () => {
+      const withReply =
+        'Keep {++clear wording++}{id="s1" by="AI" at="2024-01-15T10:30:00.000Z"}{>>Looks right?<<}{id="c1" by="user" at="2024-01-15T10:31:00.000Z" re="s1"}{>>Yes.<<}{id="c2" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"} here.\n';
+
+      expect(
+        applyPendingApprovalsToCriticMarkdown(withReply, {
+          changeDecisions: [{ changeId: "s1", action: "accept" }],
+        }),
+      ).toBe(
+        "Keep clear wording here.\n\n---\ncounters:\n  comments: 2\n  suggestions: 1\n",
+      );
+    });
+
+    it("applies comment approvals and mark decisions in one pass and ignores ids that are not present", () => {
+      const input =
+        'Keep {++clear wording++}{id="s1" by="AI" at="2024-01-15T10:30:00.000Z"} and {==this==}{>>Why?<<}{id="c1" by="user" at="2024-01-15T10:31:00.000Z"}{>>Because.<<}{id="c2" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"} here.\n';
+
+      expect(
+        applyPendingApprovalsToCriticMarkdown(input, {
+          commentIds: ["c2", "missing"],
+          changeDecisions: [
+            { changeId: "s1", action: "accept" },
+            { changeId: "s9", action: "reject" },
+          ],
+        }),
+      ).toBe(
+        'Keep clear wording and {==this==}{>>Why?<<}{id="c1" by="user" at="2024-01-15T10:31:00.000Z"} here.\n\n---\ncounters:\n  comments: 2\n  suggestions: 1\n',
+      );
+      expect(
+        applyPendingApprovalsToCriticMarkdown(input, {
+          changeDecisions: [{ changeId: "s9", action: "accept" }],
+        }),
+      ).toBe(input);
+    });
   });
 
   it("round-trips a disposable anchor flag on a comment", () => {
@@ -800,10 +913,18 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     const plainInput =
       'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z"}\n\nClosing paragraph.\n';
 
-    expect(removeCommentsFromCriticMarkdown(disposableInput, ["c1"])).toBe(
+    expect(
+      applyPendingApprovalsToCriticMarkdown(disposableInput, {
+        commentIds: ["c1"],
+      }),
+    ).toBe(
       "Intro paragraph.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
     );
-    expect(removeCommentsFromCriticMarkdown(plainInput, ["c1"])).toBe(
+    expect(
+      applyPendingApprovalsToCriticMarkdown(plainInput, {
+        commentIds: ["c1"],
+      }),
+    ).toBe(
       "Intro paragraph.\n\nPlaceholder for the pricing decision.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
     );
   });
@@ -812,7 +933,11 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     const input =
       'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}{>>Free tier first.<<}{id="c2" by="user" at="2024-01-15T10:31:00.000Z" re="c1"}\n\nClosing paragraph.\n';
 
-    expect(removeCommentsFromCriticMarkdown(input, ["c2"])).toBe(
+    expect(
+      applyPendingApprovalsToCriticMarkdown(input, {
+        commentIds: ["c2"],
+      }),
+    ).toBe(
       'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 2\n',
     );
   });
@@ -848,7 +973,11 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
       editor.destroy();
     }
 
-    expect(removeCommentsFromCriticMarkdown(input, removedIds)).toBe(cleared);
+    expect(
+      applyPendingApprovalsToCriticMarkdown(input, {
+        commentIds: removedIds,
+      }),
+    ).toBe(cleared);
   });
 
   it("removes a disposable anchor that spans a soft line break", () => {
@@ -878,7 +1007,11 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
       editor.destroy();
     }
 
-    expect(removeCommentsFromCriticMarkdown(input, ["c1"])).toBe(
+    expect(
+      applyPendingApprovalsToCriticMarkdown(input, {
+        commentIds: ["c1"],
+      }),
+    ).toBe(
       "Intro paragraph.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
     );
   });

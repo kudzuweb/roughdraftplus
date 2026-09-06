@@ -1,4 +1,10 @@
-import { generateHTML, generateJSON, type JSONContent } from "@tiptap/core";
+import {
+  generateHTML,
+  generateJSON,
+  getSchema,
+  type JSONContent,
+} from "@tiptap/core";
+import { Transform } from "@tiptap/pm/transform";
 import {
   Marked,
   type RendererThis,
@@ -10,8 +16,10 @@ import {
 import type TurndownService from "turndown";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import {
+  applyCriticChangeDecision,
   createEditorExtensions,
   type CriticChangeAttrs,
+  type CriticChangeDecision,
   type CriticChangeKind,
 } from "../editor-extensions";
 import {
@@ -47,7 +55,7 @@ export interface ReviewIdCounters {
   suggestions: number;
 }
 
-export type { CriticChangeAttrs, CriticChangeKind };
+export type { CriticChangeAttrs, CriticChangeDecision, CriticChangeKind };
 
 interface CriticCommentToken {
   type: "criticCommentAnchor";
@@ -1767,23 +1775,69 @@ function removeCommentIdsFromDoc(
 }
 
 /**
- * Drops the given comments from a Markdown document without a mounted editor,
- * the same way removeCommentIds plus a comments-map delete does inside one.
- * Returns the input untouched when none of the ids are present, so a no-op
- * never rewrites the file.
+ * Every comment in a suggestion's own thread: replies to the mark and their
+ * descendants. These go with the mark when it is accepted, rejected or
+ * edited, so no thread outlives its suggestion.
  */
-export function removeCommentsFromCriticMarkdown(
+export function getSuggestionThreadCommentIds(
+  changeId: string,
+  comments: ReadonlyMap<string, CriticComment>,
+): string[] {
+  const replyIds = [...comments.values()]
+    .filter((comment) => comment.parentCommentId === changeId)
+    .map((comment) => comment.id);
+
+  return [
+    ...replyIds,
+    ...replyIds.flatMap((commentId) =>
+      getCommentDescendantIds(commentId, comments),
+    ),
+  ];
+}
+
+export interface PendingApprovals {
+  commentIds?: Iterable<string>;
+  changeDecisions?: readonly CriticChangeDecision[];
+}
+
+/**
+ * Applies the approvals a reviewer left pending until Done Reviewing to a
+ * Markdown document without a mounted editor: approved comments are dropped
+ * the way removeCommentIds plus a comments-map delete does inside one, and
+ * each mark decision runs the same transform the editor commands use, taking
+ * the mark's reply thread with it. An anchor emptied by the whole set being
+ * removed is disposed on the same rule removeCommentIds applies. Returns the
+ * input untouched when nothing applies, so a no-op never rewrites the file.
+ */
+export function applyPendingApprovalsToCriticMarkdown(
   markdown: string,
-  commentIds: Iterable<string>,
+  approvals: PendingApprovals,
   options?: MarkdownOptions,
 ): string {
   const { doc, comments, frontmatter, endmatter, idCounters } =
     criticMarkdownToEditorState(markdown, options);
+  const schema = getSchema(createEditorExtensions(""));
+  const transform = new Transform(schema.nodeFromJSON(doc));
   const removedIds = new Set(
-    [...commentIds].filter((commentId) => comments.has(commentId)),
+    [...(approvals.commentIds ?? [])].filter((commentId) =>
+      comments.has(commentId),
+    ),
   );
+  let appliedDecisions = 0;
 
-  if (removedIds.size === 0) return markdown;
+  for (const decision of approvals.changeDecisions ?? []) {
+    if (!applyCriticChangeDecision(transform, decision)) continue;
+
+    appliedDecisions += 1;
+    for (const commentId of getSuggestionThreadCommentIds(
+      decision.changeId,
+      comments,
+    )) {
+      removedIds.add(commentId);
+    }
+  }
+
+  if (appliedDecisions === 0 && removedIds.size === 0) return markdown;
 
   const disposableAnchorIds = new Set(
     disposableAnchorCommentIds(removedIds, comments),
@@ -1793,8 +1847,11 @@ export function removeCommentsFromCriticMarkdown(
     nextComments.delete(commentId);
   }
 
+  const decidedDoc = transform.doc.toJSON() as JSONContent;
+
   return editorStateToCriticMarkdown(
-    removeCommentIdsFromDoc(doc, removedIds, disposableAnchorIds) ?? doc,
+    removeCommentIdsFromDoc(decidedDoc, removedIds, disposableAnchorIds) ??
+      decidedDoc,
     nextComments,
     { frontmatter, endmatter, idCounters },
   );
