@@ -1,4 +1,11 @@
+import fs from "node:fs";
+import { createServer as createHttpServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
+import { createApp } from "../../server/src/index";
 import {
   codeEditor,
   createMarkdownProject,
@@ -6,6 +13,58 @@ import {
   removeMarkdownProject,
   writeProjectFile,
 } from "./helpers";
+
+const builtAppDir = path.resolve(
+  fileURLToPath(new URL("../dist", import.meta.url)),
+);
+
+function builtAppIsCurrent() {
+  const indexPath = path.join(builtAppDir, "index.html");
+  if (!fs.existsSync(indexPath)) return false;
+  const assetsDir = path.join(builtAppDir, "assets");
+  const newestBuild = Math.max(
+    fs.statSync(indexPath).mtimeMs,
+    ...(fs.existsSync(assetsDir)
+      ? fs
+          .readdirSync(assetsDir)
+          .map((name) => fs.statSync(path.join(assetsDir, name)).mtimeMs)
+      : []),
+  );
+  const sourceDir = fileURLToPath(new URL("../src", import.meta.url));
+  const newestSource = Math.max(
+    ...fs
+      .readdirSync(sourceDir)
+      .filter((name) => /\.tsx?$/.test(name))
+      .map((name) => fs.statSync(path.join(sourceDir, name)).mtimeMs),
+  );
+  return newestBuild >= newestSource;
+}
+
+// Serves the built app from a real server and records every request URL it
+// receives, so a test can read what a tab registers with on reconnect: the
+// open-request registry has no read route yet, and its only input is the
+// tab's subscription query string.
+async function listenBuiltApp(homeDir: string, port: number) {
+  const { app } = createApp({ homeDir, staticDirPath: builtAppDir });
+  const receivedUrls: string[] = [];
+  const server: Server = await new Promise((resolve, reject) => {
+    const listening = createHttpServer((req, res) => {
+      receivedUrls.push(req.url ?? "");
+      app(req, res);
+    });
+    listening.on("error", reject);
+    listening.listen(port, "127.0.0.1", () => resolve(listening));
+  });
+  return {
+    port: (server.address() as AddressInfo).port,
+    receivedUrls,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
 
 test.describe("open document path and session in the header", () => {
   let projectDir: string;
@@ -90,6 +149,82 @@ test.describe("open document path and session in the header", () => {
       ),
     ).toBe("alive");
     await expect(codeEditor(page)).toContainText("Plan body.");
+  });
+
+  test("re-registers with the label last delivered when the server restarts", async ({
+    browser,
+  }) => {
+    test.skip(
+      !builtAppIsCurrent(),
+      "needs a current build of the app in packages/app/dist (pnpm build)",
+    );
+
+    const filePath = writeProjectFile(
+      projectDir,
+      "plan.md",
+      "# Plan\n\nPlan body.\n",
+    );
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-home-"));
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const first = await listenBuiltApp(homeDir, 0);
+    const port = first.port;
+    let second: Awaited<ReturnType<typeof listenBuiltApp>> | null = null;
+
+    try {
+      await page.goto(
+        `http://127.0.0.1:${port}/?${new URLSearchParams({ path: filePath })}`,
+      );
+      await expect(page.getByTestId("document-session-label")).toHaveText(
+        "No session label",
+      );
+      await page.evaluate(() => {
+        (window as unknown as { __tabMarker?: string }).__tabMarker = "alive";
+      });
+
+      const relabel = await page.request.post(
+        `http://127.0.0.1:${port}/api/open-request`,
+        {
+          data: {
+            path: filePath,
+            url: `http://127.0.0.1:${port}/?${new URLSearchParams({ path: filePath, label: "relabeled" })}`,
+            label: "relabeled",
+          },
+        },
+      );
+      await expect(relabel.json()).resolves.toEqual({ delivered: true });
+      await expect(page.getByTestId("document-session-label")).toHaveText(
+        "Opened by relabeled",
+      );
+
+      await first.close();
+      second = await listenBuiltApp(homeDir, port);
+
+      // The tab's stream reconnects to whatever listens on the port next;
+      // the registration it sends must carry the delivered label, not the
+      // one the tab loaded with (none).
+      await expect
+        .poll(
+          () =>
+            second?.receivedUrls
+              .filter((url) => url.startsWith("/api/open-requests"))
+              .map(
+                (url) =>
+                  new URL(url, "http://127.0.0.1").searchParams.get("label"),
+              ),
+          { timeout: 15_000 },
+        )
+        .toContain("relabeled");
+      expect(
+        await page.evaluate(
+          () => (window as unknown as { __tabMarker?: string }).__tabMarker,
+        ),
+      ).toBe("alive");
+    } finally {
+      await context.close();
+      await second?.close();
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
   });
 
   test("warns instead of switching when a different document is opened", async ({

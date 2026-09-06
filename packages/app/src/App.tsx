@@ -1577,9 +1577,12 @@ export function App() {
     if (requestedPathState.rawPath) {
       sourceUrl.searchParams.set("path", requestedPathState.rawPath);
     }
-    const subscribedSessionLabel = getSessionLabelFromLocation();
-    if (subscribedSessionLabel) {
-      sourceUrl.searchParams.set("label", subscribedSessionLabel);
+    // The browser reconnects an EventSource with the URL it was created
+    // with, so the subscription is rebuilt on every relabel; otherwise a
+    // server restart would re-register this tab under the label it loaded
+    // with rather than the one last delivered.
+    if (documentSessionLabel) {
+      sourceUrl.searchParams.set("label", documentSessionLabel);
     }
 
     const source = new EventSource(`${sourceUrl.pathname}${sourceUrl.search}`);
@@ -1636,7 +1639,7 @@ export function App() {
       source.removeEventListener("open-request", handleOpenRequest);
       source.close();
     };
-  }, [requestedPathState.rawPath]);
+  }, [documentSessionLabel, requestedPathState.rawPath]);
 
   useEffect(() => {
     let cancelled = false;
