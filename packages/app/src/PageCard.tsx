@@ -1218,9 +1218,19 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
           return true;
         },
       },
-      onUpdate: ({ editor: currentEditor }) => {
+      onUpdate: ({ editor: currentEditor, transaction }) => {
         if (suppressNextMarkdownUpdateRef.current) {
           suppressNextMarkdownUpdateRef.current = false;
+          return;
+        }
+
+        // When the dispatched transaction left the document alone, any change
+        // came from an extension's appended transaction (StarterKit's trailing
+        // node adds a paragraph after a closing table or list). That is editor
+        // normalisation, not a reviewer edit, and emitting it would save a
+        // reflowed copy of a file nobody touched.
+        if (!transaction.docChanged) {
+          refreshCriticChanges();
           return;
         }
 

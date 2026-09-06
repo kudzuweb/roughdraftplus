@@ -81,10 +81,14 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
      hunk that changes only how a construct is spelled belongs here.
   4. Task lists are corrupted: `- [x] Done` splits across lines (#22).
   A diff hunk outside those groups is a reviewer edit.
-- Close the tab (or stop the server) before restoring or editing a reviewed file outside the loop.
-  An open tab's watcher can save its reflowed copy over external changes — including a `git
-  checkout`, which is not final while Roughdraft still holds the file. Re-run the checkout after
-  closing if in doubt.
+- A tab writes to the file only when the reviewer edits or comments, so restoring or editing a
+  reviewed file outside the loop is safe while the tab has no unsaved edits: a `git checkout` is
+  final, and the tab reloads the new content without writing. A tab with unsaved edits shows
+  "File changed on disk" and stops saving until the reviewer picks reload or overwrite. After
+  Done Reviewing the tab does not write until a new review starts. If the server is restarted, the
+  tab adopts the replacement and checks the file version first: unsaved edits are kept and saved
+  only when the file did not change while the server was away; otherwise the tab shows "File
+  changed on disk" and stops saving until the reviewer decides.
 
 ## Status
 
@@ -96,3 +100,4 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 | Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |
 | Inline replies canonical | Agent discipline; prompt/spec still say endmatter | Prompt/spec rewrite + legacy rendering (item 4) |
 | Collapsed threads, newest reply visible | Not built | Review rail change (item 5) |
+| Tab writes only on reviewer edits; stops after Done or until a replaced server is adopted | Product behavior | Shipped (item 2) |

@@ -11,6 +11,15 @@ export interface MarkdownFileChangeEvent {
   version: string | null;
 }
 
+export class ServerInstanceGoneError extends Error {
+  constructor() {
+    super(
+      "The Roughdraft server this tab was opened from is no longer running",
+    );
+    this.name = "ServerInstanceGoneError";
+  }
+}
+
 export class MarkdownFileConflictError extends Error {
   current: Page;
 
@@ -45,6 +54,7 @@ export interface BackendInfo {
   label: string;
   detail: string;
   projectPath?: string;
+  serverInstanceId?: string;
   sessionId?: string;
   originPath?: string;
 }
@@ -67,6 +77,7 @@ export interface StorageBackend {
     options?: CompleteReviewOptions,
   ): Promise<CompleteReviewResult>;
   getReviewWatchStatus?(relativePath: string): Promise<ReviewWatchStatus>;
+  refreshServerInstance?(): Promise<string | undefined>;
   saveAsset(file: File): Promise<StoredAsset>;
   resolveFileUrl(path: string): string | null;
   openProject(path: string): Promise<void>;

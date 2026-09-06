@@ -49,7 +49,12 @@ import { RobotsHighFiveToy } from "./RobotsHighFiveToy";
 import type { CompleteReviewOptions, Page, StorageBackend } from "./storage";
 import { useReviewLayoutShiftAnimation } from "./useReviewLayoutShiftAnimation";
 
-type DiskChangeState = "clean" | "changed" | "conflict" | "paused";
+type DiskChangeState =
+  | "clean"
+  | "changed"
+  | "conflict"
+  | "paused"
+  | "server-gone";
 type ReviewHandoffState =
   | "idle"
   | "notifying"
@@ -139,6 +144,10 @@ const conflictNoticeCopy: Record<
   paused: {
     title: "Autosave paused",
     body: "Keep editing locally, then reload from disk to discard your draft or overwrite the disk file when you are ready.",
+  },
+  "server-gone": {
+    title: "Roughdraft server stopped",
+    body: "The Roughdraft server this tab was opened from has stopped, so nothing is written to the file. Your edits are kept in this tab. Once the server is back, run roughdraft open on this file to reconnect the tab, or copy any unsaved text and reload.",
   },
 };
 
@@ -258,6 +267,15 @@ function getSaveStatusViewModel(
     };
   }
 
+  if (diskChangeState === "server-gone") {
+    return {
+      label: "Server stopped",
+      ariaLabel: "Server stopped",
+      tone: "warning" as const,
+      Icon: AlertTriangle,
+    };
+  }
+
   if (saveState === "saving") {
     return {
       label: "Saving",
@@ -349,6 +367,20 @@ export function isReviewHandoffDisabled({
   );
 }
 
+export function isDocumentSaveBlocked({
+  documentDiskChangeState,
+  reviewHandoffState,
+}: {
+  documentDiskChangeState: DiskChangeState;
+  reviewHandoffState: ReviewHandoffState;
+}) {
+  // A delivered handoff ends the review. The tab stops writing until an agent
+  // watches again, which returns the handoff state to idle for a new review.
+  return (
+    documentDiskChangeState !== "clean" || reviewHandoffState === "notified"
+  );
+}
+
 export function getReviewHandoffButtonLabel({
   reviewHandoffState,
   documentChangedSinceOpen,
@@ -393,6 +425,8 @@ interface DocumentWorkspaceProps {
   onReloadDocumentFromDisk: () => void | Promise<void>;
   onKeepEditingWithoutAutosave: () => void;
   onOverwriteDocumentOnDisk: () => void | Promise<void>;
+  documentServerRestartNotice?: boolean;
+  onDismissServerRestartNotice?: () => void;
   onCompleteReview: (
     options?: CompleteReviewOptions,
   ) => Promise<{ delivered: boolean }>;
@@ -415,6 +449,8 @@ export function DocumentWorkspace({
   onReloadDocumentFromDisk,
   onKeepEditingWithoutAutosave,
   onOverwriteDocumentOnDisk,
+  documentServerRestartNotice = false,
+  onDismissServerRestartNotice,
   onCompleteReview,
   backend,
 }: DocumentWorkspaceProps) {
@@ -567,6 +603,13 @@ export function DocumentWorkspace({
     };
   }, [documentDiskChangeState, documentPage]);
 
+  useEffect(() => {
+    // Adoption kept the reviewer's unsaved edits; send them to the restarted
+    // server now rather than waiting for the next keystroke.
+    if (!documentServerRestartNotice) return;
+    void saveControllerRef.current?.flushSave();
+  }, [documentServerRestartNotice]);
+
   const handleCompleteReview = useCallback(
     async (options?: CompleteReviewOptions) => {
       if (!activeDocumentPath || reviewHandoffState === "notifying") return;
@@ -673,6 +716,9 @@ export function DocumentWorkspace({
     documentDiskChangeState === "clean"
       ? null
       : conflictNoticeCopy[documentDiskChangeState];
+  const showServerRestartNotice =
+    documentServerRestartNotice && !conflictNotice;
+  const hasTopNotice = !!conflictNotice || showServerRestartNotice;
   const showReviewHandoffButton =
     !!activeDocumentPath &&
     (reviewWatcherCount > 0 || reviewHandoffState !== "idle");
@@ -714,7 +760,7 @@ export function DocumentWorkspace({
     <div
       className={cn(
         "min-h-0 flex-1 overflow-y-auto px-8 pb-8 sm:px-12",
-        conflictNotice ? "pt-40 sm:pt-28" : "pt-10",
+        hasTopNotice ? "pt-40 sm:pt-28" : "pt-10",
       )}
     >
       <RemoteSessionBanner backend={backend} />
@@ -732,7 +778,7 @@ export function DocumentWorkspace({
       <div
         className={cn(
           "fixed right-3 z-[60] flex max-w-[min(16rem,calc(100vw-1rem))] flex-col items-end gap-1.5",
-          conflictNotice ? "top-[19rem] sm:top-[7rem]" : "top-3",
+          hasTopNotice ? "top-[19rem] sm:top-[7rem]" : "top-3",
         )}
         data-testid="document-status-stack"
         data-document-status-stack="true"
@@ -916,6 +962,42 @@ export function DocumentWorkspace({
           ) : null}
         </div>
       </div>
+      {showServerRestartNotice ? (
+        <div
+          data-testid="server-restart-notice"
+          role="status"
+          aria-label="Server restarted"
+          className="fixed top-3 left-1/2 z-50 flex w-[min(calc(100vw-1rem),52rem)] -translate-x-1/2 flex-col gap-3 rounded-[8px] border border-emerald-300 dark:border-emerald-700 bg-emerald-50 dark:bg-emerald-950 px-3 py-3 text-emerald-950 dark:text-emerald-100 shadow-[0_14px_40px_rgba(6,78,59,0.18)] dark:shadow-[0_14px_40px_rgba(0,0,0,0.4)] sm:flex-row sm:items-center sm:justify-between sm:px-4"
+        >
+          <div className="flex min-w-0 items-start gap-2.5">
+            <RefreshCcw
+              className="mt-0.5 size-4 shrink-0 text-emerald-700 dark:text-emerald-400"
+              aria-hidden="true"
+            />
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-5">
+                Roughdraft server restarted
+              </div>
+              <div className="mt-0.5 text-xs leading-5 text-emerald-900 dark:text-emerald-200">
+                Your unsaved edits are kept in this tab and will save with your
+                next edit once a review is open.
+              </div>
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center sm:justify-end">
+            <Button
+              type="button"
+              data-testid="server-restart-notice-dismiss"
+              variant="ghost"
+              size="sm"
+              className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-emerald-950 dark:text-emerald-100 hover:bg-white dark:hover:bg-white/20"
+              onClick={onDismissServerRestartNotice}
+            >
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      ) : null}
       {conflictNotice ? (
         <div
           data-testid="file-conflict-notice"
@@ -937,43 +1019,45 @@ export function DocumentWorkspace({
               </div>
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
-            <Button
-              type="button"
-              data-testid="file-conflict-action-reload"
-              variant="ghost"
-              size="sm"
-              className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-amber-950 dark:text-amber-100 hover:bg-white dark:hover:bg-white/20"
-              onClick={() => void onReloadDocumentFromDisk()}
-            >
-              <RefreshCcw className="size-3.5" />
-              Reload from disk
-            </Button>
-            {documentDiskChangeState !== "paused" ? (
+          {documentDiskChangeState !== "server-gone" ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5 sm:justify-end">
               <Button
                 type="button"
-                data-testid="file-conflict-action-keep-editing"
+                data-testid="file-conflict-action-reload"
                 variant="ghost"
                 size="sm"
                 className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-amber-950 dark:text-amber-100 hover:bg-white dark:hover:bg-white/20"
-                onClick={onKeepEditingWithoutAutosave}
+                onClick={() => void onReloadDocumentFromDisk()}
               >
-                <PencilLine className="size-3.5" />
-                Keep editing with autosave paused
+                <RefreshCcw className="size-3.5" />
+                Reload from disk
               </Button>
-            ) : null}
-            <Button
-              type="button"
-              data-testid="file-conflict-action-overwrite"
-              variant="ghost"
-              size="sm"
-              className="h-8 rounded-[7px] bg-amber-900 dark:bg-amber-600 px-2 text-xs text-white hover:bg-amber-800 dark:hover:bg-amber-500"
-              onClick={() => void onOverwriteDocumentOnDisk()}
-            >
-              <Upload className="size-3.5" />
-              Overwrite disk file
-            </Button>
-          </div>
+              {documentDiskChangeState !== "paused" ? (
+                <Button
+                  type="button"
+                  data-testid="file-conflict-action-keep-editing"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 rounded-[7px] bg-white/55 dark:bg-white/10 px-2 text-xs text-amber-950 dark:text-amber-100 hover:bg-white dark:hover:bg-white/20"
+                  onClick={onKeepEditingWithoutAutosave}
+                >
+                  <PencilLine className="size-3.5" />
+                  Keep editing with autosave paused
+                </Button>
+              ) : null}
+              <Button
+                type="button"
+                data-testid="file-conflict-action-overwrite"
+                variant="ghost"
+                size="sm"
+                className="h-8 rounded-[7px] bg-amber-900 dark:bg-amber-600 px-2 text-xs text-white hover:bg-amber-800 dark:hover:bg-amber-500"
+                onClick={() => void onOverwriteDocumentOnDisk()}
+              >
+                <Upload className="size-3.5" />
+                Overwrite disk file
+              </Button>
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className="mx-auto min-h-full max-w-[1080px]">
@@ -1145,7 +1229,10 @@ export function DocumentWorkspace({
               onSaveControllerChange={(controller) => {
                 saveControllerRef.current = controller;
               }}
-              saveBlocked={documentDiskChangeState !== "clean"}
+              saveBlocked={isDocumentSaveBlocked({
+                documentDiskChangeState,
+                reviewHandoffState,
+              })}
               forceResetKey={documentForceResetKey}
             />
           ) : null

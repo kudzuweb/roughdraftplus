@@ -6,6 +6,7 @@ import {
   MarkdownFileConflictError,
   type Page,
   type ReviewWatchStatus,
+  ServerInstanceGoneError,
   type StorageBackend,
   type StoredAsset,
 } from "./storage";
@@ -69,9 +70,13 @@ export class ApiBackend implements StorageBackend {
           content,
           expectedVersion,
           projectPath: this.info.projectPath,
+          serverInstanceId: this.info.serverInstanceId,
         }),
       },
     );
+    if (res.status === 410) {
+      throw new ServerInstanceGoneError();
+    }
     if (res.status === 409) {
       const payload = (await res.json()) as { current?: Page };
       if (payload.current) {
@@ -124,11 +129,15 @@ export class ApiBackend implements StorageBackend {
         body: JSON.stringify({
           projectPath: this.info.projectPath,
           path: relativePath,
+          serverInstanceId: this.info.serverInstanceId,
           ...(overallComment ? { overallComment } : {}),
         }),
       },
     );
 
+    if (res.status === 410) {
+      throw new ServerInstanceGoneError();
+    }
     if (!res.ok) {
       throw new Error(
         `Failed to complete review ${relativePath}: ${res.status}`,
@@ -159,6 +168,19 @@ export class ApiBackend implements StorageBackend {
       watcherCount:
         typeof payload.watcherCount === "number" ? payload.watcherCount : 0,
     };
+  }
+
+  async refreshServerInstance(): Promise<string | undefined> {
+    const res = await fetch("/api/status");
+    if (!res.ok) {
+      throw new Error(`Failed to read server status: ${res.status}`);
+    }
+
+    const payload = (await res.json()) as { instanceId?: unknown };
+    const serverInstanceId =
+      typeof payload.instanceId === "string" ? payload.instanceId : undefined;
+    this.info = { ...this.info, serverInstanceId };
+    return serverInstanceId;
   }
 
   async saveAsset(file: File): Promise<StoredAsset> {

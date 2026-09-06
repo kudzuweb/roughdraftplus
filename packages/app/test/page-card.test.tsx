@@ -508,6 +508,46 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSaveStateChange.mock.calls.at(-1)?.[0]).toBe("saved");
   });
 
+  it("does not save a reflowed copy of an untouched rich-text document", async () => {
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-untouched-1",
+        title: "Untouched",
+        content: "# Untouched\n\n| A | B |\n|---|---|\n| 1 | 2 |\n",
+      },
+      selected: true,
+    });
+
+    vi.useFakeTimers();
+
+    // A transaction that leaves the document alone still lets extensions
+    // append their own normalisation (a trailing paragraph after the table).
+    // That reflow is not a reviewer edit and must not reach the file.
+    await act(async () => {
+      const editor = rendered.getEditor();
+      editor.view.dispatch(editor.state.tr);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+
+    expect(rendered.onSave).not.toHaveBeenCalled();
+    expect(rendered.onSaveStateChange).not.toHaveBeenCalledWith("saving");
+
+    await insertTextAtEnd(rendered.getEditor(), " edited");
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+
+    expect(rendered.onSave).toHaveBeenCalledTimes(1);
+    expect(rendered.onSave).toHaveBeenCalledWith(
+      "doc-untouched-1",
+      expect.stringContaining("edited"),
+    );
+  });
+
   it("manual save flushes pending rich-text autosave immediately", async () => {
     const rendered = await renderPageCard({
       page: {
