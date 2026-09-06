@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Homepage,
   HomepageSubtitle,
@@ -345,7 +345,7 @@ describe("Homepage", () => {
       "Keep the format section as proof that the review data is portable Markdown.",
     );
     expect(container.textContent).toContain(
-      'Replace: "Review an agent\'s plan" with "Review a homepage plan"',
+      "Review an agent's plan Review a homepage plan",
     );
 
     await click(cta);

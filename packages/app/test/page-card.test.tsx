@@ -1794,7 +1794,12 @@ describe("PageCard editor integration", () => {
     const suggestionText = suggestionThread?.textContent ?? "";
 
     expect(suggestionText).toContain("AI");
-    expect(suggestionText).toContain('Delete: "conversation"');
+    expect(
+      suggestionThread?.querySelector<HTMLElement>(
+        '[data-testid="suggestion-thread-s1-deleted-text"]',
+      )?.textContent,
+    ).toBe("conversation");
+    expect(suggestionText).not.toContain("Delete:");
     expect(suggestionText).not.toContain("Deletion");
   });
 
@@ -1815,9 +1820,11 @@ describe("PageCard editor integration", () => {
       '[data-suggestion-thread-container="true"]',
     );
 
-    expect(suggestionThread?.textContent).toContain(
-      'Insert: "clearer wording"',
-    );
+    expect(
+      suggestionThread?.querySelector<HTMLElement>(
+        '[data-testid="suggestion-thread-s1-inserted-text"]',
+      )?.textContent,
+    ).toBe("clearer wording");
     expect(suggestionThread?.textContent).toContain("Looks good.");
     expect(
       suggestionThread?.querySelector('[data-testid="comment-tree-line"]'),
@@ -1845,8 +1852,8 @@ describe("PageCard editor integration", () => {
     );
     const suggestionText = suggestionThread?.textContent ?? "";
 
-    expect(suggestionText).toContain(`Insert: "${expectedPreview}"`);
-    expect(suggestionText).not.toContain(`Insert: "${longInsertedText}"`);
+    expect(suggestionText).toContain(expectedPreview);
+    expect(suggestionText).not.toContain(longInsertedText);
   });
 
   it("saving a reply to a YAML endmatter-backed suggestion preserves split endmatter", async () => {
