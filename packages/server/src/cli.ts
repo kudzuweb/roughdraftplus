@@ -52,12 +52,34 @@ export interface RoughdraftServerState {
   url: string;
 }
 
+// One tab's open document as `/api/status` reports it.
+interface StatusDocument {
+  path: string;
+  sessionLabel: string | null;
+  openedAt: string;
+  lastSavedAt: string | null;
+}
+
 interface StatusPayload {
   backend?: string;
   pid?: number;
   projectDir?: string;
   serverRoot?: string;
   port?: number;
+  documents?: StatusDocument[];
+}
+
+interface ReviewIndexPayload {
+  items?: Array<{ id: string; kind: string; status: string | null }>;
+}
+
+interface OpenDocumentStatus {
+  path: string;
+  open: true;
+  sessionLabel: string | null;
+  openedAt: string;
+  lastSavedAt: string | null;
+  openThreads: { count: number; ids: string[] };
 }
 
 interface DevFrontendState {
@@ -104,13 +126,7 @@ type OpenMode =
   | "none";
 
 interface EnsureRunningResult {
-  server: {
-    port: number;
-    url: string;
-    tracked: boolean;
-    pid: number | null;
-    startedAt: string | null;
-  };
+  server: ReusableServer;
   reused: boolean;
   portChanged: boolean;
 }
@@ -126,6 +142,7 @@ interface ReusableServer {
   tracked: boolean;
   pid: number | null;
   startedAt: string | null;
+  documents: StatusDocument[];
 }
 
 type KnownCommand = (typeof KNOWN_COMMANDS)[number];
@@ -869,7 +886,7 @@ function printHelp(log: (message: string) => void) {
   log("Commands:");
   log("  open <path>        Open a Markdown file and wait for Done Reviewing");
   log("  start              Start or reuse the background server");
-  log("  status             Show server status");
+  log("  status [<path>]    Show server status, or a document's open threads");
   log("  stop               Stop the managed background server");
   log("  watch <path>       Wait for a Done Reviewing event");
   log("  mcp                Start the experimental stdio MCP server");
@@ -893,6 +910,7 @@ function printHelp(log: (message: string) => void) {
   log("  roughdraft open ./draft.md --loop --json");
   log("  roughdraft watch ./draft.md --json");
   log("  roughdraft status --json");
+  log("  roughdraft status ./draft.md");
   log("");
   log(`Agent setup: ${AGENT_SETUP_URL}`);
   log("Use `roughdraft help agent` for a copyable setup prompt.");
@@ -990,9 +1008,18 @@ function printCommandHelp(
 
   if (command === "status") {
     log("Usage:");
-    log("  roughdraft status [--json]");
+    log("  roughdraft status [<path>] [--json]");
     log("");
-    log("Shows whether Roughdraft is running.");
+    log("Shows whether Roughdraft is running, and which documents are open in");
+    log("it with the session label each was opened with.");
+    log("");
+    log("With a path, reports that document's open threads and last save: an");
+    log("open thread is a comment or suggestion not marked resolved (replies");
+    log("belong to their thread), and the last save is the last time this");
+    log(
+      "server wrote the document while a tab had it open. A path that no tab",
+    );
+    log("has open is reported as not open.");
     log("");
     log("Flags:");
     log("  --json               Print machine-readable output");
@@ -1796,6 +1823,7 @@ async function findReusableServer(
         tracked: true,
         pid: normalizedState.pid,
         startedAt: normalizedState.startedAt,
+        documents: statusPayload.documents ?? [],
       };
     }
 
@@ -1808,6 +1836,7 @@ async function findReusableServer(
         tracked: false,
         pid: null,
         startedAt: null,
+        documents: statusPayload.documents ?? [],
       };
     }
   }
@@ -1823,6 +1852,7 @@ async function findReusableServer(
     tracked: false,
     pid: null,
     startedAt: null,
+    documents: preferredStatus.documents ?? [],
   };
 }
 
@@ -1889,6 +1919,7 @@ export async function ensureServerRunning(
       tracked: true,
       pid: state.pid,
       startedAt: state.startedAt,
+      documents: [],
     },
     reused: false,
     portChanged: port !== preferredPort,
@@ -1915,6 +1946,54 @@ function buildServerStatusJson(
     stateFile: stateFilePath,
     managed: server.tracked,
   };
+}
+
+// Describes one open document for `status <path>`: null when no tab has it
+// open. Several tabs can hold the same path; the newest one names the session
+// and the latest save across them counts.
+async function describeOpenDocument(
+  server: ReusableServer,
+  documentPath: string,
+  deps: CliDependencies,
+): Promise<OpenDocumentStatus | null> {
+  const entries = server.documents.filter(
+    (entry) => path.resolve(entry.path) === documentPath,
+  );
+  const newest = entries[entries.length - 1];
+  if (!newest) return null;
+
+  const lastSavedAt = entries
+    .map((entry) => entry.lastSavedAt)
+    .filter((value): value is string => value !== null)
+    .sort((a, b) => Date.parse(a) - Date.parse(b))
+    .pop();
+
+  const reviewIndexUrl = new URL("/api/review-index", server.url);
+  reviewIndexUrl.searchParams.set("projectPath", path.dirname(documentPath));
+  reviewIndexUrl.searchParams.set("path", path.basename(documentPath));
+  const response = await deps.fetchImpl(reviewIndexUrl, {
+    signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`Failed to read review index: ${response.status}`);
+  }
+  const reviewIndex = (await response.json()) as ReviewIndexPayload;
+  const openThreadIds = (reviewIndex.items ?? [])
+    .filter((item) => item.kind !== "reply" && item.status !== "resolved")
+    .map((item) => item.id);
+
+  return {
+    path: documentPath,
+    open: true,
+    sessionLabel: newest.sessionLabel,
+    openedAt: newest.openedAt,
+    lastSavedAt: lastSavedAt ?? null,
+    openThreads: { count: openThreadIds.length, ids: openThreadIds },
+  };
+}
+
+function formatSessionLine(sessionLabel: string | null): string {
+  return `Session: ${sessionLabel ?? "no label given"}`;
 }
 
 async function stopTrackedServer(deps: CliDependencies): Promise<{
@@ -2511,21 +2590,28 @@ export async function runCli(
         return 0;
       }
 
-      if (options.positionals.length > 0) {
-        deps.error("Usage: roughdraft status [--json]");
+      if (options.positionals.length > 1) {
+        deps.error("Usage: roughdraft status [<path>] [--json]");
         return USAGE_ERROR;
       }
 
+      const documentPath =
+        options.positionals[0] !== undefined
+          ? path.resolve(options.positionals[0])
+          : null;
       deps = applyCliEnvOverrides(deps, options);
       const json = parsed.global.json || options.json;
       shouldPrintUpdateNotice = !json;
+      const stateFilePath = getServerStateFilePath(deps.env);
       const server = await findReusableServer(deps);
       if (!server) {
         if (json) {
-          emitJson(
-            deps.log,
-            buildServerStatusJson(null, getServerStateFilePath(deps.env)),
-          );
+          emitJson(deps.log, {
+            ...buildServerStatusJson(null, stateFilePath),
+            ...(documentPath
+              ? { document: { path: documentPath, open: false } }
+              : {}),
+          });
           return 0;
         }
 
@@ -2535,11 +2621,39 @@ export async function runCli(
         return 1;
       }
 
-      if (json) {
-        emitJson(
-          deps.log,
-          buildServerStatusJson(server, getServerStateFilePath(deps.env)),
+      if (documentPath) {
+        const document = await describeOpenDocument(server, documentPath, deps);
+        if (json) {
+          emitJson(deps.log, {
+            ...buildServerStatusJson(server, stateFilePath),
+            document: document ?? { path: documentPath, open: false },
+          });
+          return 0;
+        }
+
+        deps.log(`Roughdraft is running at ${server.url}`);
+        if (!document) {
+          deps.log(`${documentPath} is not open in Roughdraft.`);
+          return 1;
+        }
+
+        deps.log(`Document: ${document.path}`);
+        deps.log(formatSessionLine(document.sessionLabel));
+        deps.log(`Opened: ${document.openedAt}`);
+        deps.log(`Last save: ${document.lastSavedAt ?? "none since opened"}`);
+        deps.log(
+          document.openThreads.count === 0
+            ? "Open threads: 0"
+            : `Open threads: ${document.openThreads.count} (${document.openThreads.ids.join(", ")})`,
         );
+        return 0;
+      }
+
+      if (json) {
+        emitJson(deps.log, {
+          ...buildServerStatusJson(server, stateFilePath),
+          documents: server.documents,
+        });
         return 0;
       }
 
@@ -2547,11 +2661,16 @@ export async function runCli(
       if (server.tracked && server.pid !== null && server.startedAt !== null) {
         deps.log(`PID: ${server.pid}`);
         deps.log(`Started: ${server.startedAt}`);
-        deps.log(`State file: ${getServerStateFilePath(deps.env)}`);
+        deps.log(`State file: ${stateFilePath}`);
       } else {
-        deps.log(
-          `This server is not managed by ${getServerStateFilePath(deps.env)}.`,
-        );
+        deps.log(`This server is not managed by ${stateFilePath}.`);
+      }
+      if (server.documents.length === 0) {
+        deps.log("Document: none open");
+      }
+      for (const document of server.documents) {
+        deps.log(`Document: ${document.path}`);
+        deps.log(formatSessionLine(document.sessionLabel));
       }
       return 0;
     }

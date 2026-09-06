@@ -1066,6 +1066,319 @@ describe("cli", () => {
       startedAt: result.server.startedAt,
       stateFile: getServerStateFilePath(test.deps.env),
       managed: true,
+      documents: [],
+    });
+  });
+
+  describe("status naming the document", () => {
+    const reviewedMarkdown = [
+      "# Draft",
+      "",
+      'Intro {>>Needs a source<<}{id="c1" by="user" at="2026-09-06T00:00:00Z"}',
+      '{>>Added one<<}{id="r1" by="AI" at="2026-09-06T00:01:00Z" re="c1"}',
+      'Old {>>Fixed<<}{id="c2" by="user" at="2026-09-06T00:00:00Z" status="resolved"}',
+      '{++new text++}{id="s1" by="user" at="2026-09-06T00:00:00Z"}',
+      "",
+    ].join("\n");
+
+    // Stands in for a browser tab: the app subscribes to /api/open-requests
+    // with the path it has open and the label it was opened with.
+    async function subscribeTab(
+      port: number,
+      documentPath: string,
+      sessionLabel?: string,
+    ) {
+      const url = new URL(`http://127.0.0.1:${port}/api/open-requests`);
+      url.searchParams.set("path", documentPath);
+      if (sessionLabel) url.searchParams.set("label", sessionLabel);
+      const stream = await fetch(url);
+      const reader = stream.body?.getReader();
+      if (!reader) throw new Error("open-requests stream has no body");
+      await reader.read();
+      return { cancel: () => reader.cancel() };
+    }
+
+    async function saveThroughTab(
+      port: number,
+      documentPath: string,
+      content: string,
+    ) {
+      const query = new URLSearchParams({
+        projectPath: path.dirname(documentPath),
+        path: path.basename(documentPath),
+      });
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/markdown-file?${query}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        },
+      );
+      expect(response.status).toBe(200);
+    }
+
+    it("names each open document and its session, or says no label was given", async () => {
+      const test = createTestDependencies();
+      const labeledPath = path.join(projectDir, "labeled.md");
+      const unlabeledPath = path.join(projectDir, "unlabeled.md");
+      fs.writeFileSync(labeledPath, "# Labeled\n");
+      fs.writeFileSync(unlabeledPath, "# Unlabeled\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const labeledTab = await subscribeTab(
+        result.server.port,
+        labeledPath,
+        "build-16",
+      );
+      const unlabeledTab = await subscribeTab(
+        result.server.port,
+        unlabeledPath,
+      );
+
+      try {
+        const exitCode = await runCli(["status"], test.deps);
+
+        expect(exitCode).toBe(0);
+        expect(test.logs).toEqual([
+          `Roughdraft is running at ${result.server.url}`,
+          `PID: ${result.server.pid}`,
+          `Started: ${result.server.startedAt}`,
+          `State file: ${getServerStateFilePath(test.deps.env)}`,
+          `Document: ${labeledPath}`,
+          "Session: build-16",
+          `Document: ${unlabeledPath}`,
+          "Session: no label given",
+        ]);
+      } finally {
+        await labeledTab.cancel();
+        await unlabeledTab.cancel();
+      }
+    });
+
+    it("says no document is open when no tab has one", async () => {
+      const test = createTestDependencies();
+      await ensureServerRunning(test.deps, { projectDir });
+
+      const exitCode = await runCli(["status"], test.deps);
+
+      expect(exitCode).toBe(0);
+      expect(test.logs).toContain("Document: none open");
+      expect(test.logs.some((line) => line.startsWith("Session:"))).toBe(false);
+    });
+
+    it("carries the open documents in status --json", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        const exitCode = await runCli(["status", "--json"], test.deps);
+        const payload = parseOnlyJsonLog<{
+          running: boolean;
+          documents: unknown[];
+        }>(test.logs);
+
+        expect(exitCode).toBe(0);
+        expect(payload.running).toBe(true);
+        expect(payload.documents).toEqual([
+          {
+            path: documentPath,
+            sessionLabel: "build-16",
+            openedAt: expect.any(String),
+            lastSavedAt: null,
+          },
+        ]);
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("reports open threads and the last save for an open document", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        const before = Date.now();
+        await saveThroughTab(
+          result.server.port,
+          documentPath,
+          reviewedMarkdown,
+        );
+
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(0);
+        const lastSaveLine = test.logs.find((line) =>
+          line.startsWith("Last save: "),
+        );
+        expect(lastSaveLine).toBeDefined();
+        expect(
+          Date.parse(lastSaveLine?.slice("Last save: ".length) ?? ""),
+        ).toBeGreaterThanOrEqual(before - 1000);
+        expect(test.logs).toEqual([
+          `Roughdraft is running at ${result.server.url}`,
+          `Document: ${documentPath}`,
+          "Session: build-16",
+          expect.stringMatching(/^Opened: \d{4}-/),
+          lastSaveLine,
+          "Open threads: 2 (c1, s1)",
+        ]);
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("reports no save since the document was opened and zero open threads", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(result.server.port, documentPath);
+
+      try {
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(0);
+        expect(test.logs).toContain("Session: no label given");
+        expect(test.logs).toContain("Last save: none since opened");
+        expect(test.logs).toContain("Open threads: 0");
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("carries the document's threads and last save in status <path> --json", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        await saveThroughTab(
+          result.server.port,
+          documentPath,
+          reviewedMarkdown,
+        );
+
+        const exitCode = await runCli(
+          ["status", documentPath, "--json"],
+          test.deps,
+        );
+        const payload = parseOnlyJsonLog<{
+          running: boolean;
+          url: string;
+          document: Record<string, unknown>;
+        }>(test.logs);
+
+        expect(exitCode).toBe(0);
+        expect(payload).toMatchObject({
+          running: true,
+          url: result.server.url,
+          document: {
+            path: documentPath,
+            open: true,
+            sessionLabel: "build-16",
+            openedAt: expect.any(String),
+            lastSavedAt: expect.any(String),
+            openThreads: { count: 2, ids: ["c1", "s1"] },
+          },
+        });
+        expect(payload).not.toHaveProperty("documents");
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("says clearly when the path is not open", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      const otherPath = path.join(projectDir, "other.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      fs.writeFileSync(otherPath, "# Other\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(result.server.port, otherPath);
+
+      try {
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(1);
+        expect(test.logs).toContain(
+          `${documentPath} is not open in Roughdraft.`,
+        );
+        expect(test.logs.some((line) => line.startsWith("Open threads"))).toBe(
+          false,
+        );
+
+        test.logs.length = 0;
+        const jsonExitCode = await runCli(
+          ["status", documentPath, "--json"],
+          test.deps,
+        );
+        const payload = parseOnlyJsonLog<{
+          running: boolean;
+          document: Record<string, unknown>;
+        }>(test.logs);
+
+        expect(jsonExitCode).toBe(0);
+        expect(payload.running).toBe(true);
+        expect(payload.document).toEqual({ path: documentPath, open: false });
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("reports the path as not open when Roughdraft is not running", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+
+      const exitCode = await runCli(["status", documentPath], test.deps);
+      expect(exitCode).toBe(1);
+      expect(test.logs).toContain(
+        "Roughdraft is not running. Start it with `roughdraft start`.",
+      );
+
+      test.logs.length = 0;
+      const jsonExitCode = await runCli(
+        ["status", documentPath, "--json"],
+        test.deps,
+      );
+      const payload = parseOnlyJsonLog<Record<string, unknown>>(test.logs);
+
+      expect(jsonExitCode).toBe(0);
+      expect(payload).toEqual({
+        running: false,
+        stateFile: getServerStateFilePath(test.deps.env),
+        document: { path: documentPath, open: false },
+      });
+    });
+
+    it("rejects more than one path", async () => {
+      const test = createTestDependencies();
+
+      const exitCode = await runCli(["status", "a.md", "b.md"], test.deps);
+
+      expect(exitCode).toBe(2);
+      expect(test.errors).toEqual([
+        "Usage: roughdraft status [<path>] [--json]",
+      ]);
     });
   });
 
