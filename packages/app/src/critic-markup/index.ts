@@ -25,7 +25,10 @@ import {
 import {
   createMarkedRenderer,
   createTurndownService,
+  markdownSoftBreakAttribute,
   placeholderSoftBreakSpans,
+  softBreakMarkdown,
+  turndownWhitespacePlaceholder,
   normalizeBlockSpacing,
   appendYamlEndmatter,
   prependYamlFrontmatter,
@@ -1630,6 +1633,49 @@ function getChangeCommentBlocks(
   );
 }
 
+const elementNodeType = 1;
+const textNodeType = 3;
+
+/**
+ * The whitespace a marker covers, when it covers nothing else, and null when
+ * it covers anything more. Markdown cannot wrap whitespace alone in emphasis
+ * or a link, so a marker over whitespace is written as the bare whitespace and
+ * the runs on either side keep their own formatting. Turndown's reading of the
+ * same element is no use here: the emphasis rule reads a lone soft break as
+ * empty and drops it, and around a space it writes `** **`, which reads back
+ * as two asterisks rather than as bold.
+ */
+function whitespaceOnlyChangeText(element: HTMLElement): string | null {
+  let text = "";
+
+  const visit = (node: ChildNode): boolean => {
+    if (node.nodeType === textNodeType) {
+      const value = (node.nodeValue ?? "").replaceAll(
+        turndownWhitespacePlaceholder,
+        "",
+      );
+      if (/\S/.test(value)) return false;
+
+      text += value;
+      return true;
+    }
+
+    if (node.nodeType !== elementNodeType) return true;
+
+    const child = node as HTMLElement;
+    if (child.hasAttribute(markdownSoftBreakAttribute)) {
+      text += softBreakMarkdown(child);
+      return true;
+    }
+
+    return [...child.childNodes].every(visit);
+  };
+
+  if (![...element.childNodes].every(visit)) return null;
+
+  return text.length > 0 ? text : null;
+}
+
 /**
  * `readPairedText` reads the other half of a substitution. It defaults to the
  * turndown pass a substitution in prose needs, and a fence passes the code
@@ -1651,7 +1697,9 @@ function serializeCriticChangeElement(
 
   if (!change) return content;
 
-  const markerText = escapeCriticMarkupText(content);
+  const markerText = escapeCriticMarkupText(
+    whitespaceOnlyChangeText(element) ?? content,
+  );
   const commentBlocks = getChangeCommentBlocks(
     element,
     comments,
@@ -1697,7 +1745,9 @@ function serializeCriticChangeElement(
       change.changeId,
     )
   ) {
-    const replacement = escapeCriticMarkupText(readPairedText(nextElement));
+    const replacement = escapeCriticMarkupText(
+      whitespaceOnlyChangeText(nextElement) ?? readPairedText(nextElement),
+    );
     return `{~~${markerText}~>${replacement}~~}${metadata}${commentBlocks}`;
   }
 
@@ -1984,6 +2034,34 @@ function collectCriticChangesFromDoc(
   return changes;
 }
 
+/**
+ * Turndown reads an inline element whose text is only whitespace as blank
+ * before any rule sees it: it drops the element and writes the whitespace back
+ * as ordinary text beside it, which lost every marker covering only a space. A
+ * zero-width placeholder on each side of that whitespace makes the element
+ * ordinary text to turndown, and `whitespaceOnlyChangeText` writes the
+ * whitespace the element holds without the placeholders, which is the one
+ * place a placeholder can leave the save path.
+ */
+function placeholderWhitespaceChanges(node: JSONContent): JSONContent {
+  if (
+    node.type === "text" &&
+    typeof node.text === "string" &&
+    node.text.length > 0 &&
+    node.text.trim() === "" &&
+    (node.marks ?? []).some((mark) => mark.type === "criticChange")
+  ) {
+    return {
+      ...node,
+      text: `${turndownWhitespacePlaceholder}${node.text}${turndownWhitespacePlaceholder}`,
+    };
+  }
+
+  if (!node.content) return node;
+
+  return { ...node, content: node.content.map(placeholderWhitespaceChanges) };
+}
+
 export function editorStateToCriticMarkdown(
   doc: JSONContent,
   comments: Map<string, CriticComment>,
@@ -1993,7 +2071,7 @@ export function editorStateToCriticMarkdown(
     idCounters?: ReviewIdCounters;
   },
 ): string {
-  const html = generateHTML(doc, extensions);
+  const html = generateHTML(placeholderWhitespaceChanges(doc), extensions);
   const service = createTurndownService();
   const frontmatter =
     options?.frontmatter ??

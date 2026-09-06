@@ -8,6 +8,10 @@ export const rawMarkdownBlockAttribute = "data-markdown-raw-block";
 // a real space so the editor, find-in-page, and copied text read it as one;
 // it is written back as the newline the author typed.
 export const markdownSoftBreakAttribute = "data-markdown-softbreak";
+// Stands in for whitespace Turndown would otherwise treat as nothing. It is
+// zero-width, so it changes no width in the DOM Turndown walks, and it is not
+// whitespace to Turndown's own tests, which is the whole point of it.
+export const turndownWhitespacePlaceholder = "\u200b";
 const markdownSoftBreakHtml = `<span ${markdownSoftBreakAttribute}=""> </span>`;
 const markdownSoftBreakWithSpace = new RegExp(
   `(<span ${markdownSoftBreakAttribute}="">) (</span>)`,
@@ -207,7 +211,11 @@ function typedMarkdownTableSeparator(
     : null;
 }
 
-function softBreakMarkdown(node: HTMLElement): string {
+/**
+ * The markdown one soft-break span stands for: the newline the author typed,
+ * or a space where the block it sits in cannot span lines.
+ */
+export function softBreakMarkdown(node: HTMLElement): string {
   return node.closest(singleLineBlockSelector) ? " " : "\n";
 }
 
@@ -737,7 +745,10 @@ export function normalizeBlockSpacing(md: string): string {
  * break would then be dropped instead of written as `{--\n--}`.
  */
 export function placeholderSoftBreakSpans(html: string): string {
-  return html.replace(markdownSoftBreakWithSpace, "$1\u200b$2");
+  return html.replace(
+    markdownSoftBreakWithSpace,
+    `$1${turndownWhitespacePlaceholder}$2`,
+  );
 }
 
 export function toMarkdown(html: string): string {

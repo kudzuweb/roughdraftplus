@@ -379,6 +379,60 @@ describe("reserialize fidelity", () => {
     expect(saved).not.toContain("\u200b");
   });
 
+  it("keeps a deletion that covers only a space between two words", () => {
+    const markdown =
+      'Two{-- --}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}words here.\n';
+    const saved = saveCriticMarkdown(markdown);
+
+    expect(saved).toBe(markdown);
+    expect(saved).not.toContain("\u200b");
+  });
+
+  // Markdown cannot wrap whitespace alone in emphasis or a link, so a marker
+  // covering only whitespace is written between the formatted runs rather than
+  // inside them. Each input below is the inside-the-formatting shape a person
+  // types, so none of them starts at its fixed point and the rounds after the
+  // first are what show the move is a settling rather than a drift.
+  it("settles a deleted space inside bold between the bold runs", () => {
+    const markdown =
+      'A **bold{-- --}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}here** ends.\n';
+    const settled =
+      'A **bold**{-- --}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}**here** ends.\n';
+
+    expect(settled).not.toBe(markdown);
+    expectSavesToSettleOn(markdown, settled);
+  });
+
+  it("settles a deleted wrap inside bold between the bold runs", () => {
+    const markdown =
+      'A **bold phrase{--\n--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}wrapped tight** ends.\n';
+    const settled =
+      'A **bold phrase**{--\n--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}**wrapped tight** ends.\n';
+
+    expect(settled).not.toBe(markdown);
+    expectSavesToSettleOn(markdown, settled);
+  });
+
+  it("settles a deleted wrap inside italics between the italic runs", () => {
+    const markdown =
+      'A _slanted phrase{--\n--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}wrapped tight_ ends.\n';
+    const settled =
+      'A _slanted phrase_{--\n--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}_wrapped tight_ ends.\n';
+
+    expect(settled).not.toBe(markdown);
+    expectSavesToSettleOn(markdown, settled);
+  });
+
+  it("settles a deleted wrap inside a link between two links", () => {
+    const markdown =
+      'A [linked phrase{--\n--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}wrapped tight](https://example.com) ends.\n';
+    const settled =
+      'A [linked phrase](https://example.com){--\n--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}[wrapped tight](https://example.com) ends.\n';
+
+    expect(settled).not.toBe(markdown);
+    expectSavesToSettleOn(markdown, settled);
+  });
+
   it("writes a blank blockquote line as a bare marker", () => {
     const markdown =
       "> First quoted paragraph.\n>\n> Second quoted paragraph.\n";
