@@ -224,7 +224,10 @@ const DONE_SIGNAL_TRAILING_WORDS = /\s+(?:thanks|thank you|ty)$/;
 // A done-signal is the whole overall comment, not a phrase inside it: a false
 // positive ends the loop and strands the reviewer's request, while a false
 // negative costs one extra round that the threads-cleared rule then ends.
+// A question ("Done?") is asking, not signaling, so it is checked before the
+// punctuation is stripped.
 export function isDoneSignalComment(text: string): boolean {
+  if (/[?\uff1f]\s*$/.test(text.trim())) return false;
   let normalized = text
     .toLowerCase()
     .replace(/['\u2019]/g, "")

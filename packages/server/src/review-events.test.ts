@@ -227,6 +227,10 @@ describe("isDoneSignalComment", () => {
     "Please prioritize the CLI contract.",
     "almost done",
     "is this done?",
+    "Done?",
+    "done ?",
+    "Finished?",
+    "lgtm?",
     "looks good but tighten the intro",
     "undone",
   ])("reads %j as feedback that continues the loop", (text) => {
