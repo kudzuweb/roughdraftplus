@@ -1,4 +1,14 @@
-import { Bot, Check, Pencil, Reply, Trash2, User, X } from "lucide-react";
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  Pencil,
+  Reply,
+  Trash2,
+  User,
+  X,
+} from "lucide-react";
 import {
   type KeyboardEvent,
   type MouseEvent,
@@ -21,6 +31,10 @@ import {
   type CriticComment,
   type CriticCommentThread,
 } from "./critic-markup";
+import {
+  collapseCommentThread,
+  getCommentThreadReplies,
+} from "./document-comments";
 import { cn } from "./lib/utils";
 
 interface CommentEditorListProps {
@@ -70,6 +84,17 @@ export interface CommentActionsRenderContext {
   defaultActions: CommentActionDefinition[];
 }
 
+interface CommentReplyCollapseState {
+  isExpanded: boolean;
+  hiddenReplyCount: number;
+  onToggle: () => void;
+}
+
+interface CommentThreadView {
+  thread: CriticCommentThread;
+  replyCollapse: CommentReplyCollapseState | null;
+}
+
 function isEditableShortcutTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
   if (target.isContentEditable) return true;
@@ -113,7 +138,47 @@ export function CommentEditorList({
   const textareaRefs = useRef(new Map<string, HTMLTextAreaElement>());
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editingCommentIds, setEditingCommentIds] = useState<string[]>([]);
+  const [expandedThreadIds, setExpandedThreadIds] = useState<string[]>([]);
   const threads = useMemo(() => buildCommentThreads(comments), [comments]);
+  const threadViews = useMemo<CommentThreadView[]>(
+    () =>
+      threads.map((thread) => {
+        const rootCommentId = thread.comment.id;
+        const collapsed = collapseCommentThread(thread);
+
+        if (collapsed.hiddenReplyCount === 0) {
+          return { thread, replyCollapse: null };
+        }
+
+        const visibleReplyIds = new Set(
+          getCommentThreadReplies(collapsed.thread).map((reply) => reply.id),
+        );
+        const isExpanded =
+          expandedThreadIds.includes(rootCommentId) ||
+          (!!pendingFocusCommentId &&
+            !visibleReplyIds.has(pendingFocusCommentId) &&
+            getCommentThreadReplies(thread).some(
+              (reply) => reply.id === pendingFocusCommentId,
+            ));
+        const onToggle = () => {
+          setExpandedThreadIds((current) =>
+            isExpanded
+              ? current.filter((threadId) => threadId !== rootCommentId)
+              : [...current, rootCommentId],
+          );
+        };
+
+        return {
+          thread: isExpanded ? thread : collapsed.thread,
+          replyCollapse: {
+            isExpanded,
+            hiddenReplyCount: collapsed.hiddenReplyCount,
+            onToggle,
+          },
+        };
+      }),
+    [expandedThreadIds, pendingFocusCommentId, threads],
+  );
   const commentMap = useMemo(
     () => new Map(comments.map((comment) => [comment.id, comment])),
     [comments],
@@ -151,6 +216,9 @@ export function CommentEditorList({
       ),
     );
     setEditingCommentIds((current) =>
+      current.filter((commentId) => validCommentIds.has(commentId)),
+    );
+    setExpandedThreadIds((current) =>
       current.filter((commentId) => validCommentIds.has(commentId)),
     );
   }, [comments]);
@@ -273,14 +341,15 @@ export function CommentEditorList({
       )}
       onKeyDownCapture={handleKeyDownCapture}
     >
-      {threads.map((thread, index) => (
+      {threadViews.map(({ thread, replyCollapse }, index) => (
         <CommentThreadNode
           key={thread.comment.id}
           thread={thread}
           depth={0}
           index={index}
-          isLast={index === threads.length - 1}
+          isLast={index === threadViews.length - 1}
           parentLines={[]}
+          replyCollapse={replyCollapse}
           variant={variant}
           interactive={interactive}
           drafts={drafts}
@@ -319,6 +388,7 @@ interface CommentThreadNodeProps {
   index: number;
   isLast: boolean;
   parentLines: boolean[];
+  replyCollapse?: CommentReplyCollapseState | null;
   variant: "banner" | "rail";
   interactive: boolean;
   drafts: Record<string, string>;
@@ -357,6 +427,7 @@ function CommentActionButton({
   presentation = "default",
   icon,
   compact = false,
+  ariaExpanded,
   className,
   onClick,
 }: {
@@ -366,6 +437,7 @@ function CommentActionButton({
   presentation?: "default" | "popover";
   icon: ReactNode;
   compact?: boolean;
+  ariaExpanded?: boolean;
   className?: string;
   onClick: (event: MouseEvent) => void;
 }) {
@@ -373,6 +445,7 @@ function CommentActionButton({
     <Button
       type="button"
       aria-label={compact ? label : undefined}
+      aria-expanded={ariaExpanded}
       data-testid={testId}
       variant="ghost"
       size={compact ? "icon-xs" : "sm"}
@@ -413,6 +486,7 @@ function CommentThreadNode({
   index,
   isLast,
   parentLines,
+  replyCollapse = null,
   variant,
   interactive,
   drafts,
@@ -437,6 +511,13 @@ function CommentThreadNode({
 }: CommentThreadNodeProps) {
   const { comment, replies } = thread;
   const hasReplies = replies.length > 0;
+  const replyCollapseLabel = replyCollapse
+    ? replyCollapse.isExpanded
+      ? "Hide earlier replies"
+      : `Show ${replyCollapse.hiddenReplyCount} earlier ${
+          replyCollapse.hiddenReplyCount === 1 ? "reply" : "replies"
+        }`
+    : null;
   const isRootThread = depth === 0;
   const isSelected = comment.id === selectedCommentId;
   const isHovered = comment.id === hoveredCommentId;
@@ -773,6 +854,44 @@ function CommentThreadNode({
       </div>
       {hasReplies ? (
         <div className="mt-2.5 space-y-2.5">
+          {replyCollapse && replyCollapseLabel ? (
+            <div
+              className="relative flex"
+              style={{ paddingLeft: COMMENT_TREE_INDENT }}
+            >
+              <div
+                aria-hidden="true"
+                data-testid="comment-tree-line"
+                className={cn(
+                  "pointer-events-none absolute w-px",
+                  treeLineTone,
+                )}
+                style={{
+                  left: COMMENT_AVATAR_CENTER,
+                  top: -COMMENT_TREE_ROW_GAP,
+                  bottom: -COMMENT_TREE_ROW_GAP,
+                }}
+              />
+              <CommentActionButton
+                label={replyCollapseLabel}
+                testId={`comment-${variant}-${comment.id}-action-${
+                  replyCollapse.isExpanded ? "collapse" : "expand"
+                }-replies`}
+                icon={
+                  replyCollapse.isExpanded ? (
+                    <ChevronUp className="size-3.5" />
+                  ) : (
+                    <ChevronDown className="size-3.5" />
+                  )
+                }
+                ariaExpanded={replyCollapse.isExpanded}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  replyCollapse.onToggle();
+                }}
+              />
+            </div>
+          ) : null}
           {replies.map((reply, replyIndex) => (
             <CommentThreadNode
               key={reply.comment.id}
