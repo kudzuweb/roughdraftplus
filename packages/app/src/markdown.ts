@@ -258,6 +258,19 @@ function hasDocumentLevelComment(value: unknown): boolean {
   );
 }
 
+function hasEndmatterReply(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  return Object.values(value as Record<string, unknown>).some(
+    (entry) =>
+      Boolean(entry) &&
+      typeof entry === "object" &&
+      !Array.isArray(entry) &&
+      typeof (entry as Record<string, unknown>).body === "string" &&
+      typeof (entry as Record<string, unknown>).re === "string",
+  );
+}
+
 function isRoughdraftReviewEndmatter(endmatter: string): boolean {
   const yamlText = endmatter.replace(/^---[ \t]*(?:\r\n|\n)/, "");
   let parsed: unknown;
@@ -352,6 +365,7 @@ export function splitYamlDocumentMetadata(
     const parsed = parseYaml(yamlText) as Record<string, unknown> | null;
     if (
       !hasDocumentLevelComment(parsed?.comments) &&
+      !hasEndmatterReply(parsed?.comments) &&
       !isReviewIdCountersMap(parsed?.counters)
     ) {
       return { frontmatter, body, endmatter: null };

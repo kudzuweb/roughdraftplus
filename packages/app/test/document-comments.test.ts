@@ -212,6 +212,172 @@ describe("document comment layout helpers", () => {
     ]);
   });
 
+  it("shows a reply that lives only in YAML endmatter under its anchored root", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Needs a source",
+        createdAt: "2026-04-24T00:00:00.000Z",
+      },
+      {
+        id: "c2",
+        content: "Endmatter reply",
+        createdAt: "2026-04-24T00:00:01.000Z",
+        parentCommentId: "c1",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        {
+          key: "c1",
+          commentIds: ["c1"],
+          anchorTop: 200,
+          anchorBottom: 214,
+        },
+      ],
+      comments,
+    );
+
+    expect(items).toEqual([
+      {
+        key: "c1",
+        anchorGroupKey: "c1",
+        rootCommentId: "c1",
+        commentIds: ["c1", "c2"],
+        anchorTop: 200,
+        anchorBottom: 214,
+      },
+    ]);
+  });
+
+  it("shows an endmatter reply nested under another endmatter reply", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Needs a source",
+        createdAt: "2026-04-24T00:00:00.000Z",
+      },
+      {
+        id: "c2",
+        content: "Endmatter reply",
+        createdAt: "2026-04-24T00:00:01.000Z",
+        parentCommentId: "c1",
+      },
+      {
+        id: "c3",
+        content: "Endmatter reply to the reply",
+        createdAt: "2026-04-24T00:00:02.000Z",
+        parentCommentId: "c2",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        {
+          key: "c1",
+          commentIds: ["c1"],
+          anchorTop: 200,
+          anchorBottom: 214,
+        },
+      ],
+      comments,
+    );
+
+    expect(items[0]?.commentIds).toEqual(["c1", "c2", "c3"]);
+  });
+
+  it("builds the rail without hanging when two comments answer each other", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Needs a source",
+        createdAt: "2026-04-24T00:00:00.000Z",
+        parentCommentId: "c2",
+      },
+      {
+        id: "c2",
+        content: "Answers c1 while c1 answers it",
+        createdAt: "2026-04-24T00:00:01.000Z",
+        parentCommentId: "c1",
+      },
+    ]);
+
+    expect(() =>
+      buildCommentThreadRailItems(
+        [
+          {
+            key: "c1",
+            commentIds: ["c1"],
+            anchorTop: 200,
+            anchorBottom: 214,
+          },
+        ],
+        comments,
+      ),
+    ).not.toThrow();
+  });
+
+  it("lists an inline reply once when the anchor already carries it", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Needs a source",
+        createdAt: "2026-04-24T00:00:00.000Z",
+      },
+      {
+        id: "r1",
+        content: "Inline reply",
+        createdAt: "2026-04-24T00:00:01.000Z",
+        parentCommentId: "c1",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        {
+          key: "c1::r1",
+          commentIds: ["c1", "r1"],
+          anchorTop: 200,
+          anchorBottom: 214,
+        },
+      ],
+      comments,
+    );
+
+    expect(items.map((item) => item.commentIds)).toEqual([["c1", "r1"]]);
+  });
+
+  it("leaves a document-level endmatter comment out of every anchored thread", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Needs a source",
+        createdAt: "2026-04-24T00:00:00.000Z",
+      },
+      {
+        id: "c9",
+        content: "Overall: tighten the intro.",
+        createdAt: "2026-04-24T00:00:05.000Z",
+        scope: "document",
+      },
+    ]);
+
+    const items = buildCommentThreadRailItems(
+      [
+        {
+          key: "c1",
+          commentIds: ["c1"],
+          anchorTop: 200,
+          anchorBottom: 214,
+        },
+      ],
+      comments,
+    );
+
+    expect(items.map((item) => item.commentIds)).toEqual([["c1"]]);
+  });
+
   it("aligns the selected secondary root thread to the shared anchor", () => {
     const layouts = resolveCommentThreadRailLayouts(
       [

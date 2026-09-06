@@ -60,8 +60,10 @@ attribute form the UI writes,
 
 `{>>reply text<<}{id="rN" by="AI" at="<ISO timestamp>" re="cN"}`
 
-YAML-endmatter replies are a legacy upstream format the UI never rendered; do not write them.
-Existing documents may still carry them until render-or-migrate support lands.
+YAML-endmatter replies are a legacy upstream format; do not write them. The rail and the selection
+banner render the ones existing documents still carry, attached to the comment each answers, and a
+save keeps them where they are. Replying to one anchors the new reply on the nearest ancestor that
+has an inline marker, so the thread stays reachable from the document.
 
 Every meaningful change between rounds is marked with CriticMarkup so the reviewer can jump to it
 and rule on it: new text as an insertion (`{++new text++}`), reworded text as a substitution
@@ -147,6 +149,6 @@ save still rewrites applies to that file even if it was only ever edited in code
 | Approving a mark accepts it into prose | Agent strips markup on approval | Approve action accepts the suggestion (items 6, 10) |
 | Approval resolves its comment (per-comment only) | Product behavior: approve button, applied on Done Reviewing | Shipped (item 6) |
 | Filler anchor text leaves with its thread | Product behavior: a comment flagged `anchor="disposable"` takes its anchor text when the last comment on it is cleared | Shipped (item 12) |
-| Inline replies canonical | Agent discipline; the prompt, spec, setup, CLI help and README prescribe inline and mark endmatter replies legacy | Legacy rendering (item 4) |
+| Inline replies canonical | Agent discipline; the prompt, spec, setup, CLI help and README prescribe inline and mark endmatter replies legacy | Shipped (item 4): legacy endmatter replies render and survive a save |
 | Collapsed threads, newest reply visible | Product behavior | Shipped (item 5) |
 | Tab writes only on reviewer edits; stops after Done or until a replaced server is adopted | Product behavior | Shipped (item 2) |

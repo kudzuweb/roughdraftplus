@@ -240,7 +240,7 @@ ROUGHDRAFT_DEV_WRAPPER_REPO_ROOT
 ## Roughdraft-flavored CriticMarkup
 Roughdraft uses [CriticMarkup](https://criticmarkup.com) as the readable review layer inside normal Markdown files. It supports the standard markers for comments, highlights, insertions, deletions, and substitutions:
 
-The canonical Roughdraft Flavored Markdown spec is [docs/spec/roughdraft-flavored-markdown.md](docs/spec/roughdraft-flavored-markdown.md) in this repository, and the review-index JSON Schema is [docs/spec/roughdraft-flavored-markdown.schema.json](docs/spec/roughdraft-flavored-markdown.schema.json). The copies hosted at roughdraft.md are upstream's and still prescribe endmatter replies, which Roughdraft does not display.
+The canonical Roughdraft Flavored Markdown spec is [docs/spec/roughdraft-flavored-markdown.md](docs/spec/roughdraft-flavored-markdown.md) in this repository, and the review-index JSON Schema is [docs/spec/roughdraft-flavored-markdown.schema.json](docs/spec/roughdraft-flavored-markdown.schema.json). The copies hosted at roughdraft.md are upstream's and still prescribe endmatter replies, which this fork reads and displays but never writes.
 
 ```markdown
 This is {--deleted--} text.
@@ -290,7 +290,7 @@ counters:
   suggestions: 2
 ```
 
-Older documents may carry the upstream format instead: compact references such as `{#c1}` with `comments:` and `suggestions:` maps in final YAML endmatter, and replies stored there as entries with `body` and `re`. Roughdraft reads that format and preserves it on items it is not rewriting, but never writes new review items in it, because endmatter replies are not displayed. Legacy `{@id:c1; by:user; at:...@}` blocks are also still accepted.
+Older documents may carry the upstream format instead: compact references such as `{#c1}` with `comments:` and `suggestions:` maps in final YAML endmatter, and replies stored there as entries with `body` and `re`. Roughdraft reads that format, displays the replies it carries alongside the comments they answer, and preserves it on items it is not rewriting, but never writes new review items in it. Legacy `{@id:c1; by:user; at:...@}` blocks are also still accepted.
 
 CriticMarkup inside inline code and fenced code blocks is treated as literal example text, not live review feedback:
 

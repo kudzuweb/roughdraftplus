@@ -1198,7 +1198,7 @@ function printCriticMarkupHelp(log: (message: string) => void) {
     "  Legacy documents keep metadata in YAML endmatter behind {#c1} references, with replies as `comments.<id>` entries.",
   );
   log(
-    "  Read that form but never write it: Roughdraft does not display endmatter replies.",
+    "  Read that form but never write it. Roughdraft displays the endmatter replies a document already carries.",
   );
   log(
     "  Comment ids are document-local and usually look like `c1`, `c2`, `c3`.",

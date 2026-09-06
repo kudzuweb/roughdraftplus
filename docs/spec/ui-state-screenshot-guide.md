@@ -85,6 +85,21 @@ suggestions:
     by: AI
     at: "2026-04-28T12:05:00.000Z"
 ```
+### Legacy Endmatter Reply Document
+```markdown
+Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.
+
+---
+comments:
+  c1:
+    by: user
+    at: "2026-04-28T12:00:00.000Z"
+  c2:
+    body: I can add one from the intro.
+    by: AI
+    at: "2026-04-28T12:05:00.000Z"
+    re: c1
+```
 ### Fenced CriticMarkup Document
 ```markdown
 # Fenced examples This page should not show a review rail just because examples appear inside code fences. ```text {==example==}{>>comment<<}{#c1} {++inserted++} {--deleted--} {~~old~>new~~} ```
@@ -158,6 +173,7 @@ A table whose cell holds a pipe inside a code span cannot be rendered in rich te
 | Review rail | Approve confirm | Click `comment-rail-child-action-approve` | `comment-rail-child-approve-confirm`, `comment-rail-child-action-approve-confirm`, `comment-rail-child-action-approve-cancel` | The checkmark swaps in place for an inline `Approve` label with confirm and cancel; cancel restores the checkmark and records nothing. |
 | Review rail | Approval pending | Click `comment-rail-child-action-approve-confirm` | `comment-rail-child-approval-pending`, `comment-rail-child-action-unapprove` | The reply shows an `Approved` marker next to its author and the lit checkmark undoes the approval. Nothing is written until the handoff button applies every pending approval in one save, which removes only that reply's markup and leaves the anchor text and the rest of the thread. |
 | Review rail | Suggestions | Open review fixture in rich mode | `suggestion-thread-s1`, `suggestion-thread-s2`, `suggestion-thread-s3` | Thread containers use `data-suggestion-thread-container="true"`. Each thread label is the changed text itself with no `Insert:`/`Delete:`/`Replace:` prefix: inserted text is underlined green (`suggestion-thread-s1-inserted-text`), deleted text is struck through red (`suggestion-thread-s3-deleted-text`), and a substitution shows the old text struck through followed by the new text underlined (`suggestion-thread-s2-deleted-text`, `suggestion-thread-s2-inserted-text`). |
+| Review rail | Legacy endmatter reply | Open the legacy endmatter reply fixture in rich mode | `comment-rail-c1`, `comment-rail-c2` | The `c2` reply has no marker in the body and comes only from the YAML endmatter, so it should sit under `c1` and look like any other reply, with the same approve and reply actions. Selecting the anchor text shows it in the `comment-banner-c2` fallback below 1100px. |
 | Review rail | Draft suggestion | Select text and choose a suggestion action | `draft-suggestion-thread`, `draft-suggestion-editor` | Capture dismiss/cancel/apply actions. |
 | Comment editor | New root comment draft | Select text and choose Add comment | `comment-rail-c1-editor`, `comment-rail-c1-action-save` | Save uses the popover-style button; footer Cancel is absent because the thread trash action dismisses the draft. |
 | Comment editor | Root comment editing | Use a comment card edit action | `comment-rail-root-editor` | Comment test IDs follow `comment-${variant}-${id}-...`. |

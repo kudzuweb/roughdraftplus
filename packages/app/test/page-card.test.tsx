@@ -2067,6 +2067,118 @@ describe("PageCard editor integration", () => {
     expect(savedMarkdown).not.toContain('id="s1"');
   });
 
+  it("shows a legacy YAML endmatter reply in the review rail and in the selection banner", async () => {
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-legacy-endmatter-reply-1",
+        title: "Doc Legacy Endmatter Reply 1",
+        content: [
+          "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+          "",
+          "---",
+          "comments:",
+          "  c1:",
+          "    by: user",
+          '    at: "2026-04-28T12:00:00.000Z"',
+          "  c2:",
+          "    body: I can add one from the intro.",
+          "    by: AI",
+          '    at: "2026-04-28T12:05:00.000Z"',
+          "    re: c1",
+          "",
+        ].join("\n"),
+      },
+      selected: true,
+    });
+
+    await flushAnimationFrame();
+
+    expect(queryByTestId(rendered.container, "comment-rail-c2")).not.toBeNull();
+
+    await selectText(rendered.getEditor(), "this claim");
+
+    expect(
+      queryByTestId(rendered.container, "comment-banner-c2"),
+    ).not.toBeNull();
+  });
+
+  it("anchors a reply to a legacy YAML endmatter reply on its nearest anchored ancestor", async () => {
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-legacy-endmatter-reply-2",
+        title: "Doc Legacy Endmatter Reply 2",
+        content: [
+          "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+          "",
+          "---",
+          "comments:",
+          "  c1:",
+          "    by: user",
+          '    at: "2026-04-28T12:00:00.000Z"',
+          "  c2:",
+          "    body: I can add one from the intro.",
+          "    by: AI",
+          '    at: "2026-04-28T12:05:00.000Z"',
+          "    re: c1",
+          "",
+        ].join("\n"),
+      },
+      selected: true,
+    });
+
+    await flushAnimationFrame();
+
+    const replyButton = queryByTestId<HTMLButtonElement>(
+      rendered.container,
+      "comment-rail-c2-action-reply",
+    );
+    expect(replyButton).not.toBeNull();
+
+    await act(async () => {
+      replyButton?.click();
+      await Promise.resolve();
+    });
+    await flushReact();
+    await flushAnimationFrame();
+
+    const replyEditor = queryByTestId<HTMLTextAreaElement>(
+      rendered.container,
+      "comment-rail-c3-editor",
+    );
+    expect(replyEditor).not.toBeNull();
+
+    await act(async () => {
+      const valueSetter = Object.getOwnPropertyDescriptor(
+        HTMLTextAreaElement.prototype,
+        "value",
+      )?.set;
+      valueSetter?.call(replyEditor, "Pulling it from the intro now.");
+      replyEditor?.dispatchEvent(new Event("input", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    const saveButton = queryByTestId<HTMLButtonElement>(
+      rendered.container,
+      "comment-rail-c3-action-save",
+    );
+    expect(saveButton).not.toBeNull();
+
+    vi.useFakeTimers();
+    await act(async () => {
+      saveButton?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(500);
+      await Promise.resolve();
+    });
+
+    const savedMarkdown = rendered.onSave.mock.calls[0]?.[1];
+    expect(savedMarkdown).toContain("body: Pulling it from the intro now.");
+    expect(savedMarkdown).toContain("re: c2");
+    expect(savedMarkdown).toContain("body: I can add one from the intro.");
+  });
+
   it("preserves suggestion color when comments are attached to suggestion text", async () => {
     const rendered = await renderPageCard({
       page: {

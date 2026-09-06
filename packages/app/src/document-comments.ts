@@ -3,6 +3,7 @@ import {
   type CriticComment,
   type CriticCommentThread,
   flattenCommentThreads,
+  getCommentDescendantIds,
 } from "./critic-markup";
 
 export interface CollapsedCommentThread {
@@ -234,6 +235,36 @@ export function groupCommentAnchorMeasurements(
   );
 }
 
+export function collectAnchoredThreadComments(
+  anchoredCommentIds: readonly string[],
+  comments: ReadonlyMap<string, CriticComment>,
+): CriticComment[] {
+  const collected = new Set<string>();
+  const threadComments: CriticComment[] = [];
+
+  const add = (commentId: string) => {
+    if (collected.has(commentId)) return;
+
+    const comment = comments.get(commentId);
+    if (!comment) return;
+
+    collected.add(commentId);
+    threadComments.push(comment);
+  };
+
+  for (const commentId of anchoredCommentIds) {
+    add(commentId);
+  }
+
+  for (const commentId of [...collected]) {
+    for (const descendantId of getCommentDescendantIds(commentId, comments)) {
+      add(descendantId);
+    }
+  }
+
+  return threadComments;
+}
+
 export function buildCommentThreadRailItems(
   groups: CommentGroupAnchor[],
   comments: ReadonlyMap<string, CriticComment>,
@@ -241,9 +272,10 @@ export function buildCommentThreadRailItems(
   const items: CommentThreadRailItem[] = [];
 
   for (const group of groups) {
-    const visibleComments = group.commentIds
-      .map((commentId) => comments.get(commentId))
-      .filter((comment): comment is CriticComment => Boolean(comment));
+    const visibleComments = collectAnchoredThreadComments(
+      group.commentIds,
+      comments,
+    );
 
     if (visibleComments.length === 0) continue;
 

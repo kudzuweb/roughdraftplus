@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { Editor } from "@tiptap/core";
+import type { CriticComment } from "../src/critic-markup";
 import {
   advanceReviewIdCounters,
   createCriticChange,
@@ -26,6 +27,35 @@ function readMarkdownFixture(name: string): string {
     )
     .trimEnd()}\n`;
 }
+
+interface SpecFixture {
+  source: { markdown: string };
+  comments: Array<{ id: string; body: string; by: string; re?: string }>;
+}
+
+function readSpecFixture(name: string): SpecFixture {
+  return JSON.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), "..", "..", "docs", "spec", "fixtures", name),
+      "utf8",
+    ),
+  ) as SpecFixture;
+}
+
+// The shape the fork's own UI writes: inline attribute comments, with an
+// endmatter reply an agent appended by following the upstream prompt.
+const inlineAttributeEndmatterReplyMarkdown = [
+  'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.',
+  "",
+  "---",
+  "comments:",
+  "  c2:",
+  "    body: I can add one from the intro.",
+  "    by: AI",
+  '    at: "2026-04-28T12:05:00.000Z"',
+  "    re: c1",
+  "",
+].join("\n");
 
 describe("CriticMarkup comments", () => {
   it("preserves YAML frontmatter delimiters and raw table-like YAML text", () => {
@@ -134,6 +164,52 @@ describe("CriticMarkup comments", () => {
     const output = editorStateToCriticMarkdown(doc, comments);
     expect(output).toContain("{==highlighted==}{>>comment text<<}{#c1}");
     expect(output).toContain("body: Reply text");
+    expect(output).toContain("re: c1");
+  });
+
+  it("reads the legacy endmatter reply spec fixture and keeps the reply across a save", () => {
+    const fixture = readSpecFixture("legacy-endmatter-reply.json");
+    const { doc, comments } = criticMarkdownToEditorState(
+      fixture.source.markdown,
+    );
+
+    for (const expected of fixture.comments) {
+      expect(comments.get(expected.id)).toMatchObject({
+        id: expected.id,
+        content: expected.body,
+        parentCommentId: expected.re ?? null,
+      });
+    }
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain("{==this claim==}{>>Needs a source.<<}{#c1}");
+    expect(output).toContain("body: I can add one from the intro.");
+    expect(output).toContain("re: c1");
+  });
+
+  it("reads an endmatter reply on a document whose comments carry inline attributes", () => {
+    const { comments, endmatter } = criticMarkdownToEditorState(
+      inlineAttributeEndmatterReplyMarkdown,
+    );
+
+    expect(endmatter).toContain("comments:");
+    expect(comments.get("c2")).toMatchObject({
+      id: "c2",
+      content: "I can add one from the intro.",
+      parentCommentId: "c1",
+    });
+  });
+
+  it("keeps the endmatter block when saving a document whose comments carry inline attributes", () => {
+    const { doc, comments } = criticMarkdownToEditorState(
+      inlineAttributeEndmatterReplyMarkdown,
+    );
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).not.toContain("* * *");
+    expect(output).toContain("body: I can add one from the intro.");
     expect(output).toContain("re: c1");
   });
 
@@ -849,6 +925,31 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     }
 
     expect(removeCommentsFromCriticMarkdown(input, removedIds)).toBe(cleared);
+  });
+
+  it("stops walking descendants when two comments answer each other", () => {
+    const comments = new Map<string, CriticComment>([
+      [
+        "c1",
+        {
+          id: "c1",
+          content: "Needs a source",
+          createdAt: "2026-04-24T00:00:00.000Z",
+          parentCommentId: "c2",
+        },
+      ],
+      [
+        "c2",
+        {
+          id: "c2",
+          content: "Answers c1 while c1 answers it",
+          createdAt: "2026-04-24T00:00:01.000Z",
+          parentCommentId: "c1",
+        },
+      ],
+    ]);
+
+    expect(getCommentDescendantIds("c1", comments)).toEqual(["c2"]);
   });
 
   it("removes a disposable anchor that spans a soft line break", () => {
