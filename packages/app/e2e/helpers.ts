@@ -127,14 +127,12 @@ export async function listenApp(
 export async function startReplacementServer(projectDir: string) {
   // A fresh instance on another port stands in for a stopped CLI and a later
   // `roughdraft start`: same files, different instance id.
-  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-home-"));
-  const { app } = createApp({ homeDir, staticDirPath: projectDir });
+  const { app } = createApp({ staticDirPath: projectDir });
   const listening = await listenApp(app, 0);
   return {
     port: listening.port,
     close: async () => {
       await listening.close();
-      fs.rmSync(homeDir, { recursive: true, force: true });
     },
   };
 }

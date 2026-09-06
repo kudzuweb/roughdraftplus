@@ -10,10 +10,12 @@ import {
   validateRoughdraftMarkdown,
 } from "@roughdraft/rfm";
 import {
+  configuredToken,
   ROUGHDRAFT_BIND_HOST,
   ROUGHDRAFT_DEFAULT_PORT,
   ROUGHDRAFT_LOOPBACK_HOSTS,
   ROUGHDRAFT_PUBLIC_HOST,
+  tokenAuthHeaders,
 } from "./network.js";
 import { findAvailablePort } from "./ports.js";
 import type { ReviewDoneReason } from "./review-events.js";
@@ -996,8 +998,10 @@ function printCommandHelp(
       "  ROUGHDRAFT_TOKEN      Bearer token sent on remote-document requests.",
     );
     log("                        Required when the hosted server binds to a");
-    log("                        non-loopback host. Must match the value the");
-    log("                        hosted server was started with.");
+    log("                        non-loopback host, where it also gates every");
+    log("                        route that reads or writes a file on that");
+    log("                        host. Must match the value the hosted server");
+    log("                        was started with.");
     log("  ROUGHDRAFT_NO_OPEN    Set to 1 to suppress browser launch.");
     log("  ROUGHDRAFT_WATCH_RECONNECT_SECONDS");
     log("                        Seconds to wait for a stopped server to come");
@@ -1331,12 +1335,8 @@ async function runRemoteOpen(
   options: RemoteOpenOptions,
 ): Promise<number> {
   const baseUrl = options.host.replace(/\/$/, "");
-  const remoteToken =
-    typeof deps.env.ROUGHDRAFT_TOKEN === "string"
-      ? deps.env.ROUGHDRAFT_TOKEN.trim()
-      : "";
-  const authHeaders: Record<string, string> =
-    remoteToken.length > 0 ? { Authorization: `Bearer ${remoteToken}` } : {};
+  const remoteToken = configuredToken(deps.env);
+  const authHeaders = tokenAuthHeaders(deps.env);
 
   let content: string;
   try {
@@ -2018,6 +2018,7 @@ async function describeOpenDocument(
     reviewIndexUrl.searchParams.set("projectPath", path.dirname(documentPath));
     reviewIndexUrl.searchParams.set("path", path.basename(documentPath));
     const response = await deps.fetchImpl(reviewIndexUrl, {
+      headers: tokenAuthHeaders(deps.env),
       signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
     });
     if (!response.ok) {

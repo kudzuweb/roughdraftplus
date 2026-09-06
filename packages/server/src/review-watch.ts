@@ -6,6 +6,8 @@
 // segments that end well under both limits and carry the sequence cursor across
 // the gap so no event slips through it.
 
+import { tokenAuthHeaders } from "./network.js";
+
 const DEFAULT_SEGMENT_CAP_SECONDS = 240;
 const ABORT_MARGIN_SECONDS = 15;
 
@@ -87,7 +89,10 @@ export async function watchReviewEventsInSegments<TEvent = unknown>(
       new URL("/api/review-events/watch", options.serverUrl),
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...tokenAuthHeaders(options.env),
+        },
         body: JSON.stringify({
           projectPath: options.projectPath,
           path: options.relativePath,
@@ -100,6 +105,11 @@ export async function watchReviewEventsInSegments<TEvent = unknown>(
         ),
       },
     );
+    if (response.status === 401) {
+      throw new Error(
+        "The Roughdraft server rejected the review watch (HTTP 401). It is bound to a non-loopback address, so set ROUGHDRAFT_TOKEN to the token the server was started with before retrying.",
+      );
+    }
     if (!response.ok) {
       throw new Error(`Failed to watch review events: ${response.status}`);
     }

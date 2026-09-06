@@ -32,9 +32,23 @@ The hosted Roughdraft is a write-capable peer for every connected CLI: a PUT to 
 
 The mitigation is a shared bearer token, `ROUGHDRAFT_TOKEN`:
 
-- The server reads `ROUGHDRAFT_TOKEN` at startup. When set, all `/api/remote-document/*` endpoints require it (Authorization: Bearer header, or `?token=` query for the SSE endpoint specifically since `EventSource` can't set headers).
+- The server reads `ROUGHDRAFT_TOKEN` at startup. When set, all `/api/remote-document/*` endpoints require it on every bind (Authorization: Bearer header, or `?token=` query for the SSE endpoint specifically since `EventSource` can't set headers). On a non-loopback bind the token also gates every route that reads or writes a file on the host — see the 2026-09-06 clarification below.
 - `createServer()` refuses to bind to any non-loopback host without a token, returning a clear actionable error before listening.
 - The CLI sends the same token via `Authorization: Bearer` on its register POST and SSE GET, and surfaces a 401 explicitly (suggesting the user set `ROUGHDRAFT_TOKEN`).
 - The viewerUrl printed by the CLI includes `?token=...` so the browser tab can authenticate. The frontend forwards the token as a header on fetches and as `?token=` on the EventSource.
 
 Loopback-only deployments stay back-compatible: no token required, no behavior change. The token is the contract that lets non-loopback deployments be safe; the secure-by-default startup guard is the contract that lets us ship the feature without expecting users to read documentation before exposing the endpoints.
+
+### Clarification (2026-09-06): the token gates every file-touching route on a non-loopback bind
+
+Gating only `/api/remote-document/*` left the exposure the trust model above set out to close. The local-document routes take a caller-supplied `projectPath` bounded only by `ensureProjectPath`, so with a token configured and no `Authorization` header, `GET /api/files?projectPath=/private/etc&path=hosts` returned the file and `GET`/`PUT /api/markdown-file` read and rewrote any markdown file on the host. The audit in `.context/multi-document-audit.md` records the probe.
+
+The token now gates every route that reads or writes a file the caller names: the `/api/pages` family, `/api/markdown-file` and its event stream, `/api/review-index`, the `/api/review-events` family, `/api/files` and `/api/assets`, alongside `/api/remote-document/*`.
+
+Three decisions this fixes in place:
+
+- **The bind is what switches the guard on, not a request header.** `createApp` takes the hosts the server was told to listen on and treats any host outside loopback as exposed. A header describing the client is caller-controlled and cannot carry a security decision.
+- **An unguarded route on an exposed bind answers 401 rather than refusing the bind.** Refusing the bind would end remote-document mode, whose whole purpose is a non-loopback bind. `createServer()` still refuses to bind non-loopback with no token at all, so the two guards compose: no token means no bind, and a token means the token is required everywhere it matters.
+- **The loopback default is untouched.** No token, no configuration, no behavior change, which is what keeps every existing local workflow working.
+
+The consequence for the browser: it can send `?token=` but not a bearer header, and only the remote-document routes read the query token. Remote viewing therefore goes through remote-document mode, and a non-loopback server is not a way to browse the host's files from another machine's browser. `/api/status` stays open on every bind because the frontend must read it to discover the backend before it holds a token; it discloses the server's root, its process id and the absolute paths of open documents, which is worth revisiting separately.

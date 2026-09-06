@@ -1402,6 +1402,44 @@ describe("cli", () => {
       }
     });
 
+    it("sends the token on the review index when ROUGHDRAFT_TOKEN is set", async () => {
+      // A server bound to a non-loopback address answers 401 on the
+      // file-touching routes without the bearer token, so `status <path>`
+      // would report a thread error instead of the document's threads.
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(result.server.port, documentPath);
+      let authorization: string | null = null;
+      const deps = {
+        ...test.deps,
+        env: { ...test.deps.env, ROUGHDRAFT_TOKEN: "cli-token" },
+        fetchImpl: async (input: Parameters<typeof fetch>[0], init) => {
+          const url =
+            input instanceof URL
+              ? input
+              : new URL(
+                  typeof input === "string" ? input : input.url,
+                  "http://localhost",
+                );
+          if (url.pathname === "/api/review-index") {
+            authorization = new Headers(init?.headers).get("authorization");
+          }
+          return test.deps.fetchImpl(input, init);
+        },
+      };
+
+      try {
+        const exitCode = await runCli(["status", documentPath, "--json"], deps);
+
+        expect(exitCode).toBe(0);
+        expect(authorization).toBe("Bearer cli-token");
+      } finally {
+        await tab.cancel();
+      }
+    });
+
     it("says clearly when the path is not open", async () => {
       const test = createTestDependencies();
       const documentPath = path.join(projectDir, "draft.md");
@@ -1742,6 +1780,92 @@ describe("cli", () => {
       overallComment: "Please prioritize the CLI contract.",
       type: "review.completed",
     });
+  });
+
+  it("sends the token on the review-events watch when ROUGHDRAFT_TOKEN is set", async () => {
+    // The priming poll is the first thing `open` and `watch` do, so without
+    // the bearer token neither can start against a server bound to a
+    // non-loopback address.
+    const test = createTestDependencies();
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    let authorization: string | null = null;
+    const deps = {
+      ...test.deps,
+      env: { ...test.deps.env, ROUGHDRAFT_TOKEN: "cli-token" },
+      fetchImpl: async (input: Parameters<typeof fetch>[0], init) => {
+        const url =
+          input instanceof URL
+            ? input
+            : new URL(
+                typeof input === "string" ? input : input.url,
+                "http://localhost",
+              );
+        if (url.pathname === "/api/review-events/watch") {
+          authorization = new Headers(init?.headers).get("authorization");
+        }
+        return test.deps.fetchImpl(input, init);
+      },
+    };
+
+    await runCli(
+      [
+        "watch",
+        documentPath,
+        "--json",
+        "--timeout",
+        "1",
+        "--batch-window",
+        "0",
+      ],
+      deps,
+    );
+
+    expect(authorization).toBe("Bearer cli-token");
+  });
+
+  it("sends no Authorization header on the watch when no token is configured", async () => {
+    // The loopback default must gain nothing: no token, no header, no change.
+    const test = createTestDependencies();
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const { ROUGHDRAFT_TOKEN: _omitted, ...envWithoutToken } = test.deps.env;
+    let sawWatch = false;
+    let authorization: string | null = null;
+    const deps = {
+      ...test.deps,
+      env: envWithoutToken,
+      fetchImpl: async (input: Parameters<typeof fetch>[0], init) => {
+        const url =
+          input instanceof URL
+            ? input
+            : new URL(
+                typeof input === "string" ? input : input.url,
+                "http://localhost",
+              );
+        if (url.pathname === "/api/review-events/watch") {
+          sawWatch = true;
+          authorization = new Headers(init?.headers).get("authorization");
+        }
+        return test.deps.fetchImpl(input, init);
+      },
+    };
+
+    await runCli(
+      [
+        "watch",
+        documentPath,
+        "--json",
+        "--timeout",
+        "1",
+        "--batch-window",
+        "0",
+      ],
+      deps,
+    );
+
+    expect(sawWatch).toBe(true);
+    expect(authorization).toBeNull();
   });
 
   it("opens a document and waits for the next review event by default from open --json", async () => {
@@ -3219,7 +3343,6 @@ describe("runCli open in remote mode", () => {
     close: () => Promise<void>;
   }> {
     const { app } = createApp({
-      homeDir: tempDir,
       remoteDocumentToken,
       staticDirPath: tempDir,
     });

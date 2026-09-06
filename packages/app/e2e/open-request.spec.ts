@@ -1,7 +1,6 @@
 import fs from "node:fs";
 import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
@@ -44,8 +43,8 @@ function builtAppIsCurrent() {
 // receives, so a test can read what a tab registers with on reconnect: the
 // open-request registry has no read route yet, and its only input is the
 // tab's subscription query string.
-async function listenBuiltApp(homeDir: string, port: number) {
-  const { app } = createApp({ homeDir, staticDirPath: builtAppDir });
+async function listenBuiltApp(port: number) {
+  const { app } = createApp({ staticDirPath: builtAppDir });
   const receivedUrls: string[] = [];
   const server: Server = await new Promise((resolve, reject) => {
     const listening = createHttpServer((req, res) => {
@@ -211,10 +210,9 @@ test.describe("open document path and session in the header", () => {
       "plan.md",
       "# Plan\n\nPlan body.\n",
     );
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-home-"));
     const context = await browser.newContext();
     const page = await context.newPage();
-    const first = await listenBuiltApp(homeDir, 0);
+    const first = await listenBuiltApp(0);
     const port = first.port;
     let second: Awaited<ReturnType<typeof listenBuiltApp>> | null = null;
 
@@ -245,7 +243,7 @@ test.describe("open document path and session in the header", () => {
       );
 
       await first.close();
-      second = await listenBuiltApp(homeDir, port);
+      second = await listenBuiltApp(port);
 
       // The tab's stream reconnects to whatever listens on the port next;
       // the registration it sends must carry the delivered label, not the
@@ -269,7 +267,6 @@ test.describe("open document path and session in the header", () => {
     } finally {
       await context.close();
       await second?.close();
-      fs.rmSync(homeDir, { recursive: true, force: true });
     }
   });
 

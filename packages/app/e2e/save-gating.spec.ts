@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
@@ -85,8 +84,8 @@ function builtAppIsCurrent() {
   return newestBuild >= newestSource;
 }
 
-async function listenBuiltApp(homeDir: string, port: number) {
-  const { app } = createApp({ homeDir, staticDirPath: builtAppDir });
+async function listenBuiltApp(port: number) {
+  const { app } = createApp({ staticDirPath: builtAppDir });
   return listenApp(app, port);
 }
 
@@ -382,7 +381,6 @@ test.describe("save gating", () => {
       reflowingMarkdown,
     );
     const before = snapshotFile(filePath);
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-home-"));
     const context = await browser.newContext();
     const page = await context.newPage();
     const writes = trackFileWrites(page);
@@ -390,7 +388,7 @@ test.describe("save gating", () => {
     // Serve the built app straight from a real server so the tab's event
     // streams reconnect to whatever listens on the same port next, the way
     // they do after `roughdraft stop` and `roughdraft start`.
-    const first = await listenBuiltApp(homeDir, 0);
+    const first = await listenBuiltApp(0);
     const port = first.port;
     let second: ListeningApp | null = null;
     try {
@@ -405,7 +403,7 @@ test.describe("save gating", () => {
       ).json();
 
       await first.close();
-      second = await listenBuiltApp(homeDir, port);
+      second = await listenBuiltApp(port);
       const secondStatus = await (
         await page.request.get(`http://127.0.0.1:${port}/api/status`)
       ).json();
@@ -457,7 +455,6 @@ test.describe("save gating", () => {
     } finally {
       await context.close();
       await second?.close();
-      fs.rmSync(homeDir, { recursive: true, force: true });
     }
   });
 });

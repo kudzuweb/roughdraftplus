@@ -1,20 +1,28 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { createServer as createHttpServer } from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   appendRoughdraftDocumentComment,
   extractRoughdraftReviewIndex,
 } from "@roughdraft/rfm";
-import express, { type Express, type Request, type Response } from "express";
+import express, {
+  type Express,
+  type NextFunction,
+  type Request,
+  type Response,
+} from "express";
 import {
   hasNonLoopbackHost,
   ROUGHDRAFT_DEFAULT_PORT,
+  ROUGHDRAFT_LOOPBACK_HOSTS,
   ROUGHDRAFT_PUBLIC_HOST,
+  ROUGHDRAFT_TOKEN_ENV,
   resolveBindHosts,
 } from "./network.js";
+
+export { ROUGHDRAFT_TOKEN_ENV } from "./network.js";
 import { ReviewEventQueue } from "./review-events.js";
 import { resolveUpdateStatus } from "./update-status.js";
 
@@ -28,40 +36,15 @@ interface AssetPayload {
   dataBase64?: string;
 }
 
-interface DirectoryEntry {
-  name: string;
-  path: string;
-}
-
-interface DirectoryListing {
-  path: string;
-  parentPath: string | null;
-  directories: DirectoryEntry[];
-}
-
-interface FileSystemEntry {
-  name: string;
-  path: string;
-  kind: "directory" | "file";
-}
-
-interface FileSystemListing {
-  path: string;
-  displayPath: string;
-  parentPath: string | null;
-  directories: FileSystemEntry[];
-  files: FileSystemEntry[];
-}
-
-interface ProjectTreeListing {
-  paths: string[];
-}
-
 interface CreateAppOptions {
   port?: number;
   projectDir?: string;
   serverRoot?: string;
-  homeDir?: string;
+  // The hosts the server was told to listen on. Any host outside loopback makes
+  // every file-touching route reachable from another machine, so the token
+  // guard switches on from this and never from a request header, which the
+  // caller controls. Defaults to the loopback-only bind.
+  bindHosts?: readonly string[];
   staticDirPath?: string;
   packageJsonPath?: string;
   fetchImpl?: typeof fetch;
@@ -272,10 +255,6 @@ function nextAssetPath(projectDir: string, filename: string): string {
   }
 }
 
-function ensureDirectoryExists(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
 function isExistingDirectory(dir: string): boolean {
   try {
     return fs.statSync(dir).isDirectory();
@@ -284,135 +263,8 @@ function isExistingDirectory(dir: string): boolean {
   }
 }
 
-function listDirectories(dir: string): DirectoryListing {
-  const entries = fs
-    .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => ({
-      name: entry.name,
-      path: path.join(dir, entry.name),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-  const parentPath = path.dirname(dir);
-
-  return {
-    path: dir,
-    parentPath: parentPath === dir ? null : parentPath,
-    directories: entries,
-  };
-}
-
-function formatDisplayPath(targetPath: string, homeDir: string): string {
-  const normalizedHome = path.resolve(homeDir);
-  const normalizedTarget = path.resolve(targetPath);
-
-  if (normalizedTarget === normalizedHome) {
-    return "~";
-  }
-
-  const relativeToHome = path.relative(normalizedHome, normalizedTarget);
-  if (!relativeToHome.startsWith("..") && !path.isAbsolute(relativeToHome)) {
-    return `~/${relativeToHome.split(path.sep).join("/")}`;
-  }
-
-  return normalizedTarget;
-}
-
-function listFileSystem(dir: string, homeDir: string): FileSystemListing {
-  const normalizedDir = path.resolve(dir);
-  const normalizedHome = path.resolve(homeDir);
-
-  let rawEntries: fs.Dirent[];
-  try {
-    rawEntries = fs.readdirSync(normalizedDir, { withFileTypes: true });
-  } catch (error) {
-    const errorCode = (error as NodeJS.ErrnoException).code;
-    if (errorCode === "EACCES" || errorCode === "EPERM") {
-      throw new Error("Directory is not readable.");
-    }
-    throw error;
-  }
-
-  const directories = rawEntries
-    .filter((entry) => entry.isDirectory())
-    .map<FileSystemEntry>((entry) => ({
-      name: entry.name,
-      path: path.join(normalizedDir, entry.name),
-      kind: "directory",
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-  const files = rawEntries
-    .filter(
-      (entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"),
-    )
-    .map<FileSystemEntry>((entry) => ({
-      name: entry.name,
-      path: path.join(normalizedDir, entry.name),
-      kind: "file",
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-  return {
-    path: normalizedDir,
-    displayPath: formatDisplayPath(normalizedDir, normalizedHome),
-    parentPath:
-      normalizedDir === normalizedHome ? null : path.dirname(normalizedDir),
-    directories,
-    files,
-  };
-}
-
-function toCanonicalRelativePath(
-  projectDir: string,
-  absolutePath: string,
-  isDirectory: boolean,
-): string {
-  const relativePath = path.relative(projectDir, absolutePath);
-  const canonicalPath = relativePath.split(path.sep).join("/");
-  return isDirectory ? `${canonicalPath}/` : canonicalPath;
-}
-
-function listProjectTree(projectDir: string): ProjectTreeListing {
-  const paths: string[] = [];
-
-  const visitDirectory = (dir: string) => {
-    const entries = fs
-      .readdirSync(dir, { withFileTypes: true })
-      .slice()
-      .sort((left, right) => {
-        if (left.isDirectory() !== right.isDirectory()) {
-          return left.isDirectory() ? -1 : 1;
-        }
-        return left.name.localeCompare(right.name, undefined, {
-          numeric: true,
-        });
-      });
-
-    for (const entry of entries) {
-      const absolutePath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        paths.push(toCanonicalRelativePath(projectDir, absolutePath, true));
-        visitDirectory(absolutePath);
-        continue;
-      }
-
-      if (entry.isFile()) {
-        paths.push(toCanonicalRelativePath(projectDir, absolutePath, false));
-      }
-    }
-  };
-
-  visitDirectory(projectDir);
-
-  return { paths };
-}
-
 export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const port = options.port ?? ROUGHDRAFT_DEFAULT_PORT;
-  const homeDir = options.homeDir ?? os.homedir();
   const serverRoot = path.resolve(options.serverRoot ?? defaultServerRoot);
   const staticDirPath = options.staticDirPath ?? staticDir;
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -421,6 +273,9 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     options.remoteDocumentToken.length > 0
       ? options.remoteDocumentToken
       : null;
+  const bindIsNonLoopback = hasNonLoopbackHost(
+    options.bindHosts ?? ROUGHDRAFT_LOOPBACK_HOSTS,
+  );
   const app = express();
   const openRequestClients = new Set<OpenRequestClient>();
   const reviewEvents = new ReviewEventQueue();
@@ -445,17 +300,21 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     return true;
   }
 
-  function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
-    if (!remoteDocumentToken) return true;
+  function hasValidBearerToken(req: Request): boolean {
+    if (!remoteDocumentToken) return false;
 
     const header =
       typeof req.headers.authorization === "string"
         ? req.headers.authorization
         : "";
-    if (header.startsWith("Bearer ")) {
-      const supplied = header.slice("Bearer ".length).trim();
-      if (supplied === remoteDocumentToken) return true;
-    }
+    if (!header.startsWith("Bearer ")) return false;
+
+    return header.slice("Bearer ".length).trim() === remoteDocumentToken;
+  }
+
+  function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
+    if (!remoteDocumentToken) return true;
+    if (hasValidBearerToken(req)) return true;
 
     const acceptsQueryToken =
       req.method === "GET" &&
@@ -551,6 +410,47 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     }
 
     return { relativePath, absolutePath, projectDir };
+  }
+
+  // --- Non-loopback bind guard ---
+
+  // Every route below reads or writes a file the caller names through
+  // `projectPath`, so on a bind another machine can reach, each one is a remote
+  // file-read or file-write primitive. Mounted as prefixes, so subpaths such as
+  // `/api/pages/:id` and `/api/markdown-file/events` are covered with the
+  // parents. The remote-document routes carry their own token check and are not
+  // listed here.
+  const FILE_TOUCHING_ROUTE_PREFIXES = [
+    "/api/pages",
+    "/api/markdown-file",
+    "/api/review-index",
+    "/api/review-events",
+    "/api/files",
+    "/api/assets",
+  ];
+
+  // On the loopback default this is a pass-through, so no existing workflow
+  // gains a token or a setting. On a non-loopback bind the token is required;
+  // when none is configured nothing can satisfy it, and refusing every request
+  // is the safe end of that.
+  function requireTokenOnNonLoopbackBind(
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): void {
+    if (!bindIsNonLoopback || hasValidBearerToken(req)) {
+      next();
+      return;
+    }
+
+    res.status(401).json({
+      error:
+        "Roughdraft is bound to a non-loopback address, so routes that read or write files require a token. Send Authorization: Bearer <ROUGHDRAFT_TOKEN>, or unset ROUGHDRAFT_BIND_HOST to return to the loopback-only bind.",
+    });
+  }
+
+  for (const prefix of FILE_TOUCHING_ROUTE_PREFIXES) {
+    app.use(prefix, requireTokenOnNonLoopbackBind);
   }
 
   // --- API routes ---
@@ -889,7 +789,6 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       documents: openDocuments(),
       capabilities: {
         projectPathRequired: true,
-        fileSystemBrowsing: true,
         remoteDocuments: true,
         remoteDocumentTokenRequired: remoteDocumentToken !== null,
       },
@@ -1197,93 +1096,6 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     res.json(updateStatus);
   });
 
-  app.get("/api/directories", (req, res) => {
-    const requestedPath =
-      typeof req.query.path === "string" && req.query.path.trim().length > 0
-        ? path.resolve(req.query.path)
-        : homeDir;
-
-    if (!isExistingDirectory(requestedPath)) {
-      res.status(404).json({ error: "Directory not found" });
-      return;
-    }
-
-    res.json(listDirectories(requestedPath));
-  });
-
-  app.get("/api/fs/list", (req, res) => {
-    const requestedPath =
-      typeof req.query.path === "string" && req.query.path.trim().length > 0
-        ? path.resolve(req.query.path)
-        : homeDir;
-
-    if (!fs.existsSync(requestedPath)) {
-      res.status(404).json({ error: "Directory not found" });
-      return;
-    }
-
-    if (!isExistingDirectory(requestedPath)) {
-      res.status(400).json({ error: "Path is not a directory" });
-      return;
-    }
-
-    try {
-      res.json(listFileSystem(requestedPath, homeDir));
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to read directory listing";
-      res.status(500).json({ error: message });
-    }
-  });
-
-  app.get("/api/file-tree", (req, res) => {
-    const projectDir = projectDirFromRequest(req, res);
-    if (!projectDir) return;
-
-    res.json(listProjectTree(projectDir));
-  });
-
-  app.post("/api/project/open", (req, res) => {
-    const requestedPath =
-      typeof req.body?.path === "string" ? req.body.path.trim() : "";
-    if (!requestedPath) {
-      res.status(400).json({ error: "path is required" });
-      return;
-    }
-
-    const absolutePath = path.resolve(requestedPath);
-    if (!isExistingDirectory(absolutePath)) {
-      res.status(404).json({ error: "Directory not found" });
-      return;
-    }
-
-    res.json({
-      backend: "local-files",
-      projectDir: absolutePath,
-      port,
-    });
-  });
-
-  app.post("/api/project/create", (req, res) => {
-    const requestedPath =
-      typeof req.body?.path === "string" ? req.body.path.trim() : "";
-    if (!requestedPath) {
-      res.status(400).json({ error: "path is required" });
-      return;
-    }
-
-    const absolutePath = path.resolve(requestedPath);
-    ensureDirectoryExists(absolutePath);
-
-    res.status(201).json({
-      backend: "local-files",
-      projectDir: absolutePath,
-      port,
-    });
-  });
-
   app.get("/api/files", (req, res) => {
     const projectDir = projectDirFromRequest(req, res);
     if (!projectDir) return;
@@ -1339,8 +1151,6 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   return { app, port };
 }
 
-export const ROUGHDRAFT_TOKEN_ENV = "ROUGHDRAFT_TOKEN";
-
 export async function createServer(
   port = ROUGHDRAFT_DEFAULT_PORT,
   projectDir?: string,
@@ -1352,9 +1162,9 @@ export async function createServer(
     throw new Error(
       [
         `Roughdraft refuses to bind ${bindHosts.join(", ")} without a token.`,
-        "Non-loopback bindings expose the remote-document endpoints, which can",
-        "rewrite files on every connected CLI machine. Set ROUGHDRAFT_TOKEN to",
-        "a strong secret and pass the same value to your CLI before retrying,",
+        "Non-loopback bindings expose every route that reads or writes files on",
+        "this host, including the remote-document endpoints. Set ROUGHDRAFT_TOKEN",
+        "to a strong secret and pass the same value to your CLI before retrying,",
         "or remove ROUGHDRAFT_BIND_HOST to keep loopback-only.",
       ].join(" "),
     );
@@ -1363,6 +1173,7 @@ export async function createServer(
   const { app } = createApp({
     port,
     projectDir,
+    bindHosts,
     remoteDocumentToken:
       remoteDocumentToken.length > 0 ? remoteDocumentToken : undefined,
   });
