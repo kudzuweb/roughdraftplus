@@ -1810,19 +1810,24 @@ describe("cli", () => {
     expect(exitCode).toBe(0);
     expect(test.logs).toContain("When adding new review feedback:");
     expect(test.logs).toContain(
-      "  Prefer compact references like {>>Comment<<}{#c1} with metadata in final YAML endmatter.",
+      '  Write an inline attribute block right after the marker: {>>Comment<<}{id="c1" by="AI" at="2026-04-28T12:00:00.000Z"}.',
     );
     expect(test.logs).toContain(
-      "  Use `c1`, `c2`, etc. for comment ids and `s1`, `s2`, etc. for suggested-change ids.",
+      "  Use `c1`, `c2`, etc. for comment ids, `r1`, `r2`, etc. for reply ids, and `s1`, `s2`, etc. for suggested-change ids.",
     );
     expect(test.logs).toContain("Suggested changes with ids:");
-    expect(test.logs).toContain("  Add {++one concrete example++}{#s1}.");
     expect(test.logs).toContain(
-      "  Replace {~~vague phrasing~>specific wording~~}{#s2}.",
+      '  Add {++one concrete example++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}.',
+    );
+    expect(test.logs).toContain(
+      '  Replace {~~vague phrasing~>specific wording~~}{id="s2" by="AI" at="2026-04-28T12:11:00.000Z"}.',
     );
     expect(test.logs).toContain("Reply to an existing comment:");
     expect(test.logs).toContain(
-      "  Existing inline attribute metadata is still accepted for compatibility.",
+      '  {>>Needs a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}{>>Added one from the intro.<<}{id="r1" by="AI" at="2026-04-28T12:05:00.000Z" re="c1"}',
+    );
+    expect(test.logs).toContain(
+      "  Read that form but never write it: Roughdraft does not display endmatter replies.",
     );
     expect(test.logs).toContain(
       "  Comment ids are document-local and usually look like `c1`, `c2`, `c3`.",
@@ -1831,11 +1836,14 @@ describe("cli", () => {
       "  Treat CriticMarkup inside fenced code blocks as literal example text.",
     );
     expect(test.logs).toContain(
-      "  https://roughdraft.md/spec/roughdraft-flavored-markdown.md",
+      "  https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/docs/spec/roughdraft-flavored-markdown.md",
     );
+    expect(
+      test.logs.some((line) => /comments\.<id>\.body|{#s1}|{#c1}\./.test(line)),
+    ).toBe(false);
   });
 
-  it("prints copyable criticmarkup suggestion examples with required YAML metadata", async () => {
+  it("prints copyable criticmarkup suggestion examples with required inline metadata", async () => {
     const test = createTestDependencies();
 
     const exitCode = await runCli(["help", "criticmarkup"], test.deps);
@@ -1847,11 +1855,31 @@ describe("cli", () => {
     const validation = validateRoughdraftMarkdown(example);
 
     expect(exitCode).toBe(0);
-    expect(example).toContain("suggestions:");
-    expect(example).toContain("  s1:");
-    expect(example).toContain("  s2:");
+    expect(example).toContain('{id="s1" by="AI"');
+    expect(example).toContain('{id="s2" by="AI"');
+    expect(example).not.toContain("suggestions:");
     expect(validation.diagnostics).toEqual([]);
     expect(validation.summary.suggestions).toBe(2);
+  });
+
+  it("prints a copyable inline reply example that validates as a threaded comment", async () => {
+    const test = createTestDependencies();
+
+    const exitCode = await runCli(["help", "criticmarkup"], test.deps);
+    const example = extractHelpExample(
+      test.logs,
+      "Reply to an existing comment:",
+      "Reply guidance:",
+    )
+      .split("\n")
+      .filter((line) => line.startsWith("{>>"))
+      .join("\n");
+    const validation = validateRoughdraftMarkdown(`${example}\n`);
+
+    expect(exitCode).toBe(0);
+    expect(example).toContain('re="c1"');
+    expect(validation.diagnostics).toEqual([]);
+    expect(validation.summary.comments).toBe(2);
   });
 
   it("points general help to agent setup", async () => {
