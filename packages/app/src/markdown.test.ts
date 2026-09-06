@@ -6,6 +6,7 @@ import {
   editorStateToCriticMarkdown,
 } from "./critic-markup";
 import {
+  splitYamlDocumentMetadata,
   splitYamlFrontmatter,
   toHtml,
   toMarkdown,
@@ -60,6 +61,44 @@ describe("splitYamlFrontmatter", () => {
     expect(splitYamlFrontmatter(tableLike).frontmatter).toContain(
       "  | column | value |",
     );
+  });
+});
+
+describe("splitYamlDocumentMetadata", () => {
+  it("treats a final YAML block holding only id counters as review endmatter", () => {
+    const markdown = [
+      "# Draft",
+      "",
+      "Body text.",
+      "",
+      "---",
+      "counters:",
+      "  comments: 9",
+      "",
+    ].join("\n");
+
+    const split = splitYamlDocumentMetadata(markdown);
+
+    expect(split.body).toBe("# Draft\n\nBody text.\n");
+    expect(split.endmatter).toBe("---\ncounters:\n  comments: 9\n");
+  });
+
+  it("does not treat a final YAML block with non-numeric counters as review endmatter", () => {
+    const markdown = [
+      "# Draft",
+      "",
+      "Body text.",
+      "",
+      "---",
+      "counters:",
+      "  comments: many",
+      "",
+    ].join("\n");
+
+    const split = splitYamlDocumentMetadata(markdown);
+
+    expect(split.endmatter).toBeNull();
+    expect(split.body).toBe(markdown);
   });
 });
 

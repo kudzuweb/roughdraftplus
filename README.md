@@ -288,6 +288,15 @@ suggestions:
     at: "2026-04-28T12:14:00.000Z"
 ```
 
+Ids are never reused within a document. Once a comment or suggestion has been removed, the endmatter records the highest number allocated for that family in a `counters` map, whether the review markup itself is inline or endmatter-backed, and new ids are allocated above it:
+
+```markdown
+---
+counters:
+  comments: 9
+  suggestions: 2
+```
+
 Older inline metadata such as `{id="c1" by="user" at="..."}` and legacy `{@id:c1; by:user; at:...@}` blocks are still accepted for compatibility.
 
 CriticMarkup inside inline code and fenced code blocks is treated as literal example text, not live review feedback:

@@ -53,12 +53,18 @@ export interface RfmReviewIndexSummary {
   unresolved: number;
 }
 
+export interface RfmIdCounters {
+  comments: number;
+  suggestions: number;
+}
+
 export interface RfmReviewIndex {
   format: "roughdraft-flavored-markdown";
   version: "0.2";
   items: RfmReviewItem[];
   diagnostics: RfmDiagnostic[];
   summary: RfmReviewIndexSummary;
+  counters: RfmIdCounters;
 }
 
 export interface AppendRoughdraftReplyOptions {
@@ -139,6 +145,7 @@ interface YamlMetadataEntry {
 interface RoughdraftEndmatter {
   comments: Map<string, YamlMetadataEntry>;
   suggestions: Map<string, YamlMetadataEntry>;
+  counters: RfmIdCounters;
   data: Record<string, unknown> | null;
   raw: string | null;
   offset: number | null;
@@ -594,6 +601,11 @@ export function extractRoughdraftReviewIndex(markdown: string): RfmReviewIndex {
       suggestions: items.filter((item) => item.kind === "suggestion").length,
       unresolved: items.filter((item) => item.status !== "resolved").length,
     },
+    counters: advanceIdCounters(endmatter.counters, [
+      ...endmatter.comments.keys(),
+      ...endmatter.suggestions.keys(),
+      ...items.map((item) => item.id),
+    ]),
   };
 }
 
@@ -605,7 +617,7 @@ export function appendRoughdraftDocumentComment(
 
   const index = extractRoughdraftReviewIndex(markdown);
   const endmatter = parseRoughdraftEndmatter(markdown);
-  const commentId = options.id ?? nextCommentId(index.items);
+  const commentId = options.id ?? nextCommentId(index.items, endmatter);
   const comments = new Map(endmatter.comments);
   comments.set(commentId, {
     body: options.message,
@@ -616,6 +628,7 @@ export function appendRoughdraftDocumentComment(
   return writeRoughdraftEndmatter(markdown, {
     comments,
     suggestions: endmatter.suggestions,
+    presentIds: [...index.items.map((item) => item.id), commentId],
   });
 }
 
@@ -632,8 +645,9 @@ export function appendRoughdraftReply(
   }
 
   const endmatter = parseRoughdraftEndmatter(markdown);
+  const replyId = options.id ?? nextCommentId(index.items, endmatter);
+  const presentIds = [...index.items.map((item) => item.id), replyId];
   if (isEndmatterBackedItem(markdown, parent)) {
-    const replyId = options.id ?? nextCommentId(index.items);
     const comments = new Map(endmatter.comments);
     comments.set(replyId, {
       body: options.message,
@@ -644,17 +658,21 @@ export function appendRoughdraftReply(
     return writeRoughdraftEndmatter(markdown, {
       comments,
       suggestions: endmatter.suggestions,
+      presentIds,
     });
   }
 
   const reply = `{>>${options.message}<<}${serializeMetadataAttributes({
-    id: options.id ?? nextCommentId(index.items),
+    id: replyId,
     by: options.author ?? "AI",
     at: options.at ?? new Date().toISOString(),
     re: options.parentId,
   })}`;
 
-  return `${markdown.slice(0, parent.endOffset)}${reply}${markdown.slice(parent.endOffset)}`;
+  return raiseRoughdraftIdCounters(
+    `${markdown.slice(0, parent.endOffset)}${reply}${markdown.slice(parent.endOffset)}`,
+    presentIds,
+  );
 }
 
 function assertSafeCommentBodyText(message: string): void {
@@ -693,7 +711,11 @@ export function markRoughdraftResolved(
       status: "resolved",
       ...(options.summary ? { resolved: options.summary } : {}),
     });
-    return writeRoughdraftEndmatter(markdown, { comments, suggestions });
+    return writeRoughdraftEndmatter(markdown, {
+      comments,
+      suggestions,
+      presentIds: index.items.map((item) => item.id),
+    });
   }
 
   const metadataStart = findCanonicalMetadataStart(markdown, target.endOffset);
@@ -1102,6 +1124,7 @@ function parseRoughdraftEndmatter(markdown: string): RoughdraftEndmatter {
   const empty: RoughdraftEndmatter = {
     comments: new Map(),
     suggestions: new Map(),
+    counters: { comments: 0, suggestions: 0 },
     data: null,
     raw: null,
     offset: null,
@@ -1131,9 +1154,12 @@ function parseRoughdraftEndmatter(markdown: string): RoughdraftEndmatter {
   }
 
   if (!isPlainObject(parsed)) return empty;
-  const hasRoughdraftKeys = "comments" in parsed || "suggestions" in parsed;
+  const hasCounters = isIdCountersMap(parsed.counters);
+  const hasRoughdraftKeys =
+    "comments" in parsed || "suggestions" in parsed || hasCounters;
   if (!hasRoughdraftKeys) return empty;
   if (
+    !hasCounters &&
     !markdown.slice(0, match.offset).includes("{#") &&
     !hasDocumentLevelComment(parsed)
   ) {
@@ -1143,6 +1169,7 @@ function parseRoughdraftEndmatter(markdown: string): RoughdraftEndmatter {
   return {
     comments: readEndmatterEntries(parsed.comments),
     suggestions: readEndmatterEntries(parsed.suggestions),
+    counters: readIdCounters(parsed.counters),
     data: parsed,
     raw: match.raw,
     offset: match.offset,
@@ -1195,6 +1222,99 @@ function readEndmatterEntries(value: unknown): Map<string, YamlMetadataEntry> {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isIdCounter(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0;
+}
+
+function isIdCountersMap(value: unknown): boolean {
+  if (!isPlainObject(value)) return false;
+
+  const entries = Object.entries(value);
+  return (
+    entries.length > 0 &&
+    entries.every(
+      ([family, count]) =>
+        (family === "comments" || family === "suggestions") &&
+        isIdCounter(count),
+    )
+  );
+}
+
+function readIdCounters(value: unknown): RfmIdCounters {
+  if (!isPlainObject(value)) return { comments: 0, suggestions: 0 };
+
+  return {
+    comments: isIdCounter(value.comments) ? value.comments : 0,
+    suggestions: isIdCounter(value.suggestions) ? value.suggestions : 0,
+  };
+}
+
+function advanceIdCounters(
+  counters: RfmIdCounters,
+  ids: Iterable<string>,
+): RfmIdCounters {
+  const next = { ...counters };
+
+  for (const id of ids) {
+    const match = id.match(/^([cs])(\d+)$/);
+    if (!match) continue;
+
+    const parsed = Number.parseInt(match[2] ?? "0", 10);
+    if (match[1] === "c") {
+      next.comments = Math.max(next.comments, parsed);
+    } else {
+      next.suggestions = Math.max(next.suggestions, parsed);
+    }
+  }
+
+  return next;
+}
+
+function recordedIdCounter(
+  recorded: number,
+  effective: number,
+  present: number,
+): number {
+  return recorded > 0 || effective > present ? effective : 0;
+}
+
+function recordedIdCounters(
+  existing: RoughdraftEndmatter,
+  presentIds: Iterable<string>,
+): RfmIdCounters {
+  const present = advanceIdCounters(
+    { comments: 0, suggestions: 0 },
+    presentIds,
+  );
+  const effective = advanceIdCounters(existing.counters, [
+    ...existing.comments.keys(),
+    ...existing.suggestions.keys(),
+  ]);
+  const raised = advanceIdCounters(effective, presentIds);
+
+  return {
+    comments: recordedIdCounter(
+      existing.counters.comments,
+      raised.comments,
+      present.comments,
+    ),
+    suggestions: recordedIdCounter(
+      existing.counters.suggestions,
+      raised.suggestions,
+      present.suggestions,
+    ),
+  };
+}
+
+function serializeIdCounters(
+  counters: RfmIdCounters,
+): Record<string, number> | null {
+  const serialized: Record<string, number> = {};
+  if (counters.comments > 0) serialized.comments = counters.comments;
+  if (counters.suggestions > 0) serialized.suggestions = counters.suggestions;
+  return Object.keys(serialized).length > 0 ? serialized : null;
 }
 
 function hydrateMetadataAttrs(
@@ -1268,6 +1388,7 @@ function writeRoughdraftEndmatter(
   endmatter: {
     comments: Map<string, YamlMetadataEntry>;
     suggestions: Map<string, YamlMetadataEntry>;
+    presentIds: Iterable<string>;
   },
 ): string {
   const existing = parseRoughdraftEndmatter(markdown);
@@ -1278,16 +1399,55 @@ function writeRoughdraftEndmatter(
   const data: Record<string, unknown> = { ...(existing.data ?? {}) };
   if (endmatter.comments.size > 0) {
     data.comments = Object.fromEntries(endmatter.comments);
+  } else if (existing.data && "comments" in existing.data) {
+    data.comments = {};
   } else {
     delete data.comments;
   }
   if (endmatter.suggestions.size > 0) {
     data.suggestions = Object.fromEntries(endmatter.suggestions);
+  } else if (existing.data && "suggestions" in existing.data) {
+    data.suggestions = {};
   } else {
     delete data.suggestions;
   }
+  const counters = serializeIdCounters(
+    recordedIdCounters(existing, [
+      ...endmatter.comments.keys(),
+      ...endmatter.suggestions.keys(),
+      ...endmatter.presentIds,
+    ]),
+  );
+  if (counters) {
+    data.counters = counters;
+  } else {
+    delete data.counters;
+  }
 
   return `${body}\n---\n${stringifyYaml(data)}`;
+}
+
+function raiseRoughdraftIdCounters(
+  markdown: string,
+  presentIds: Iterable<string>,
+): string {
+  const existing = parseRoughdraftEndmatter(markdown);
+  if (existing.offset === null) return markdown;
+
+  const ids = [...presentIds];
+  const recorded = recordedIdCounters(existing, ids);
+  if (
+    recorded.comments === existing.counters.comments &&
+    recorded.suggestions === existing.counters.suggestions
+  ) {
+    return markdown;
+  }
+
+  return writeRoughdraftEndmatter(markdown, {
+    comments: existing.comments,
+    suggestions: existing.suggestions,
+    presentIds: ids,
+  });
 }
 
 function isEndmatterBackedItem(markdown: string, item: RfmReviewItem): boolean {
@@ -1320,18 +1480,16 @@ function escapeMetadataAttributeValue(value: string): string {
   return value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
 }
 
-function nextCommentId(items: RfmReviewItem[]): string {
-  let maxId = 0;
+function nextCommentId(
+  items: RfmReviewItem[],
+  endmatter: RoughdraftEndmatter,
+): string {
+  const counters = advanceIdCounters(endmatter.counters, [
+    ...endmatter.comments.keys(),
+    ...items.map((item) => item.id),
+  ]);
 
-  for (const item of items) {
-    const match = item.id.match(/^c(\d+)$/);
-    if (!match) continue;
-
-    const parsed = Number.parseInt(match[1] ?? "0", 10);
-    maxId = Math.max(maxId, parsed);
-  }
-
-  return `c${maxId + 1}`;
+  return `c${counters.comments + 1}`;
 }
 
 function findCanonicalMetadataStart(

@@ -3,7 +3,9 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { Editor } from "@tiptap/core";
 import {
+  advanceReviewIdCounters,
   createCriticChange,
+  createCriticComment,
   createNextChangeId,
   createNextCommentId,
   criticMarkdownHasReviewRail,
@@ -790,6 +792,356 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
         { changeId: "s7" },
       ]),
     ).toBe("s8");
+  });
+
+  it("never reuses a comment id after every thread has been cleared", () => {
+    const commentEntries = Array.from({ length: 9 }, (_, index) => [
+      `  c${index + 1}:`,
+      `    body: Thread ${index + 1}.`,
+      "    by: user",
+      `    at: "2026-05-24T10:0${index}:00.000Z"`,
+    ]).flat();
+    const input = [
+      "# Draft",
+      "",
+      "Body text.",
+      "",
+      "---",
+      "comments:",
+      ...commentEntries,
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    expect([...loaded.comments.keys()]).toEqual([
+      "c1",
+      "c2",
+      "c3",
+      "c4",
+      "c5",
+      "c6",
+      "c7",
+      "c8",
+      "c9",
+    ]);
+
+    const cleared = editorStateToCriticMarkdown(loaded.doc, new Map(), {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(cleared);
+    expect(reloaded.comments.size).toBe(0);
+
+    const comment = createCriticComment(undefined, {
+      existingComments: reloaded.comments.values(),
+      idCounters: reloaded.idCounters,
+    });
+
+    expect(comment.id).toBe("c10");
+  });
+
+  it("never reuses a suggestion id after every suggestion has been cleared", () => {
+    const input = [
+      "Add {++one++}{#s1}, {++two++}{#s2}, and {++three++}{#s3}.",
+      "",
+      "---",
+      "suggestions:",
+      "  s1:",
+      "    by: AI",
+      '    at: "2026-05-24T10:00:00.000Z"',
+      "  s2:",
+      "    by: AI",
+      '    at: "2026-05-24T10:01:00.000Z"',
+      "  s3:",
+      "    by: AI",
+      '    at: "2026-05-24T10:02:00.000Z"',
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    const plain = criticMarkdownToEditorState("Add.\n");
+    const cleared = editorStateToCriticMarkdown(plain.doc, new Map(), {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(cleared);
+
+    const change = createCriticChange("addition", undefined, {
+      existingChanges: [],
+      idCounters: reloaded.idCounters,
+    });
+
+    expect(change.changeId).toBe("s4");
+  });
+
+  it("never reuses a comment id in an inline-attribute document after every thread has been cleared", () => {
+    const input = [
+      "# Plan",
+      "",
+      'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-05-24T10:00:00.000Z"}{>>Added one.<<}{id="c2" by="AI" at="2026-05-24T10:05:00.000Z" re="c1"} and {==that one==}{>>Also this.<<}{id="c3" by="user" at="2026-05-24T10:06:00.000Z"}.',
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    expect([...loaded.comments.keys()]).toEqual(["c1", "c2", "c3"]);
+    expect(loaded.endmatter).toBeNull();
+
+    const plain = criticMarkdownToEditorState(
+      "# Plan\n\nPlease revisit this claim and that one.\n",
+    );
+    const cleared = editorStateToCriticMarkdown(plain.doc, new Map(), {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(cleared);
+
+    expect(cleared).toContain("counters:\n  comments: 3\n");
+    expect(reloaded.comments.size).toBe(0);
+    expect(
+      createCriticComment(undefined, {
+        existingComments: reloaded.comments.values(),
+        idCounters: reloaded.idCounters,
+      }).id,
+    ).toBe("c4");
+  });
+
+  it("never reuses a suggestion id in an inline-attribute document after every suggestion has been cleared", () => {
+    const input =
+      'Add {++one++}{id="s1" by="user" at="2026-05-24T10:00:00.000Z"} and {++two++}{id="s2" by="user" at="2026-05-24T10:01:00.000Z"}.\n';
+
+    const loaded = criticMarkdownToEditorState(input);
+    const plain = criticMarkdownToEditorState("Add.\n");
+    const cleared = editorStateToCriticMarkdown(plain.doc, new Map(), {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(cleared);
+
+    expect(cleared).toContain("counters:\n  suggestions: 2\n");
+    expect(
+      createCriticChange("addition", undefined, {
+        existingChanges: [],
+        idCounters: reloaded.idCounters,
+      }).changeId,
+    ).toBe("s3");
+  });
+
+  it("keeps inline replies inline across a save when only counters live in the endmatter", () => {
+    const input = [
+      'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-05-24T10:00:00.000Z"}{>>Added one.<<}{id="c2" by="AI" at="2026-05-24T10:05:00.000Z" re="c1"}.',
+      "",
+      "---",
+      "counters:",
+      "  comments: 3",
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    const output = editorStateToCriticMarkdown(loaded.doc, loaded.comments, {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+
+    expect(output).toBe(input);
+    expect(
+      createCriticComment(
+        { parentCommentId: "c1" },
+        {
+          existingComments: loaded.comments.values(),
+          idCounters: loaded.idCounters,
+        },
+      ).id,
+    ).toBe("c4");
+  });
+
+  it("reads id counters from YAML endmatter and raises them to the ids in use", () => {
+    const input = [
+      "Add {++one++}{#s5} to {==this==}{>>Needs work.<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-05-24T10:00:00.000Z"',
+      "suggestions:",
+      "  s5:",
+      "    by: AI",
+      '    at: "2026-05-24T10:01:00.000Z"',
+      "counters:",
+      "  comments: 12",
+      "  suggestions: 3",
+      "",
+    ].join("\n");
+
+    const { idCounters } = criticMarkdownToEditorState(input);
+
+    expect(idCounters).toEqual({ comments: 12, suggestions: 5 });
+  });
+
+  it("keeps a recorded id counter on save and never lowers it", () => {
+    const input = [
+      "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-05-24T10:00:00.000Z"',
+      "counters:",
+      "  comments: 12",
+      "",
+    ].join("\n");
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toBe(input);
+    expect(
+      createCriticComment(undefined, {
+        existingComments: comments.values(),
+        idCounters: criticMarkdownToEditorState(output).idCounters,
+      }).id,
+    ).toBe("c13");
+  });
+
+  it("does not add an id counter while every allocated id is still present", () => {
+    const input = [
+      "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-05-24T10:00:00.000Z"',
+      "",
+    ].join("\n");
+
+    const { doc, comments, endmatter, idCounters } =
+      criticMarkdownToEditorState(input);
+    const output = editorStateToCriticMarkdown(doc, comments, {
+      endmatter,
+      idCounters,
+    });
+
+    expect(output).toBe(input);
+  });
+
+  it("records an id counter when one thread is removed but its siblings remain", () => {
+    const input = [
+      "Body text.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    body: First.",
+      "    by: user",
+      '    at: "2026-05-24T10:00:00.000Z"',
+      "  c2:",
+      "    body: Second.",
+      "    by: user",
+      '    at: "2026-05-24T10:01:00.000Z"',
+      "  c3:",
+      "    body: Third.",
+      "    by: user",
+      '    at: "2026-05-24T10:02:00.000Z"',
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    const remaining = new Map(loaded.comments);
+    remaining.delete("c3");
+    const output = editorStateToCriticMarkdown(loaded.doc, remaining, {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(output);
+
+    expect(output).toContain("counters:\n  comments: 3\n");
+    expect([...reloaded.comments.keys()]).toEqual(["c1", "c2"]);
+    expect(
+      createCriticComment(undefined, {
+        existingComments: reloaded.comments.values(),
+        idCounters: reloaded.idCounters,
+      }).id,
+    ).toBe("c4");
+  });
+
+  it("keeps a counters-only YAML endmatter out of the rendered document", () => {
+    const input = [
+      "Body text.",
+      "",
+      "---",
+      "counters:",
+      "  comments: 9",
+      "  suggestions: 2",
+      "",
+    ].join("\n");
+
+    const { doc, comments, endmatter, idCounters } =
+      criticMarkdownToEditorState(input);
+    const rendered = criticMarkdownToRenderedHtml(input);
+
+    expect(comments.size).toBe(0);
+    expect(endmatter).toContain("counters:");
+    expect(idCounters).toEqual({ comments: 9, suggestions: 2 });
+    expect(JSON.stringify(doc.content)).not.toContain("counters");
+    expect(rendered.html).not.toContain("counters");
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("records ids allocated in a session even when the item was removed before saving", () => {
+    const input = [
+      "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    by: user",
+      '    at: "2026-05-24T10:00:00.000Z"',
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    const reply = createCriticComment(
+      { parentCommentId: "c1" },
+      {
+        existingComments: loaded.comments.values(),
+        idCounters: loaded.idCounters,
+      },
+    );
+    const sessionCounters = advanceReviewIdCounters(loaded.idCounters, [
+      reply.id,
+    ]);
+    const output = editorStateToCriticMarkdown(loaded.doc, loaded.comments, {
+      endmatter: loaded.endmatter,
+      idCounters: sessionCounters,
+    });
+
+    expect(reply.id).toBe("c2");
+    expect(output).toContain("counters:\n  comments: 2\n");
+    expect(
+      createCriticComment(undefined, {
+        existingComments: loaded.comments.values(),
+        idCounters: criticMarkdownToEditorState(output).idCounters,
+      }).id,
+    ).toBe("c3");
+  });
+
+  it("allocates ids above the recorded counters", () => {
+    expect(
+      createNextCommentId([{ id: "c2" }], { comments: 5, suggestions: 0 }),
+    ).toBe("c6");
+    expect(
+      createNextChangeId([{ changeId: "s9" }], { comments: 0, suggestions: 7 }),
+    ).toBe("s10");
+    expect(
+      advanceReviewIdCounters({ comments: 1, suggestions: 1 }, [
+        "c4",
+        "s2",
+        "note-1",
+        "c3",
+      ]),
+    ).toEqual({ comments: 4, suggestions: 2 });
   });
 
   it("round-trips an insertion suggestion with metadata", () => {

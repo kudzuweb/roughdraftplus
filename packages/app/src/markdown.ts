@@ -227,6 +227,22 @@ function isReviewEndmatterMap(value: unknown): boolean {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
+function isReviewIdCountersMap(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+
+  const entries = Object.entries(value as Record<string, unknown>);
+  return (
+    entries.length > 0 &&
+    entries.every(
+      ([family, count]) =>
+        (family === "comments" || family === "suggestions") &&
+        typeof count === "number" &&
+        Number.isInteger(count) &&
+        count >= 0,
+    )
+  );
+}
+
 function hasDocumentLevelComment(value: unknown): boolean {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
 
@@ -259,7 +275,8 @@ function isRoughdraftReviewEndmatter(endmatter: string): boolean {
   const record = parsed as Record<string, unknown>;
   return (
     isReviewEndmatterMap(record.comments) ||
-    isReviewEndmatterMap(record.suggestions)
+    isReviewEndmatterMap(record.suggestions) ||
+    isReviewIdCountersMap(record.counters)
   );
 }
 
@@ -333,7 +350,10 @@ export function splitYamlDocumentMetadata(
   if (!precedingBody.includes("{#")) {
     const yamlText = candidate.replace(/^---[ \t]*(?:\r\n|\n)/, "");
     const parsed = parseYaml(yamlText) as Record<string, unknown> | null;
-    if (!hasDocumentLevelComment(parsed?.comments)) {
+    if (
+      !hasDocumentLevelComment(parsed?.comments) &&
+      !isReviewIdCountersMap(parsed?.counters)
+    ) {
       return { frontmatter, body, endmatter: null };
     }
   }

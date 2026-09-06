@@ -41,6 +41,11 @@ export interface CriticCommentThread {
   replies: CriticCommentThread[];
 }
 
+export interface ReviewIdCounters {
+  comments: number;
+  suggestions: number;
+}
+
 export type { CriticChangeAttrs, CriticChangeKind };
 
 interface CriticCommentToken {
@@ -83,6 +88,7 @@ const unanchoredCommentSentinel = "\u2060";
 interface ParsedEndmatter {
   comments: Map<string, Record<string, unknown>>;
   suggestions: Map<string, Record<string, unknown>>;
+  counters: ReviewIdCounters;
   data: Record<string, unknown> | null;
 }
 
@@ -223,27 +229,35 @@ function serializeChangeMetadata(change: CriticChangeAttrs): string {
   });
 }
 
+function emptyParsedEndmatter(): ParsedEndmatter {
+  return {
+    comments: new Map(),
+    suggestions: new Map(),
+    counters: createReviewIdCounters(),
+    data: null,
+  };
+}
+
 function parseReviewEndmatter(endmatter?: string | null): ParsedEndmatter {
-  if (!endmatter) {
-    return { comments: new Map(), suggestions: new Map(), data: null };
-  }
+  if (!endmatter) return emptyParsedEndmatter();
 
   const yamlText = endmatter.replace(/^---[ \t]*(?:\r\n|\n)/, "");
   let parsed: unknown;
   try {
     parsed = parseYaml(yamlText);
   } catch {
-    return { comments: new Map(), suggestions: new Map(), data: null };
+    return emptyParsedEndmatter();
   }
 
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { comments: new Map(), suggestions: new Map(), data: null };
+    return emptyParsedEndmatter();
   }
 
   const record = parsed as Record<string, unknown>;
   return {
     comments: parseEndmatterMap(record.comments),
     suggestions: parseEndmatterMap(record.suggestions),
+    counters: parseReviewIdCounters(record.counters),
     data: record,
   };
 }
@@ -356,34 +370,64 @@ function endmatterEntryForChange(
   };
 }
 
+function reviewMetadataLivesInEndmatter(parsed: ParsedEndmatter): boolean {
+  return (
+    parsed.data !== null &&
+    ("comments" in parsed.data || "suggestions" in parsed.data)
+  );
+}
+
 function serializeReviewEndmatter(
   existingEndmatter: string | null,
   comments: Map<string, CriticComment>,
   changes: Map<string, CriticChangeAttrs>,
+  idCounters?: ReviewIdCounters,
 ): string | null {
-  if (!existingEndmatter) return null;
-
   const parsed = parseReviewEndmatter(existingEndmatter);
+  const useEndmatter = reviewMetadataLivesInEndmatter(parsed);
   const commentEntries = new Map<string, Record<string, unknown>>();
   const suggestionEntries = new Map<string, Record<string, unknown>>();
+  const counters = recordedReviewIdCounters(
+    parsed.counters,
+    mergeReviewIdCounters(
+      advanceReviewIdCounters(parsed.counters, [
+        ...parsed.comments.keys(),
+        ...parsed.suggestions.keys(),
+        ...comments.keys(),
+        ...changes.keys(),
+      ]),
+      idCounters ?? parsed.counters,
+    ),
+    advanceReviewIdCounters(createReviewIdCounters(), [
+      ...comments.keys(),
+      ...changes.keys(),
+    ]),
+  );
 
-  for (const comment of comments.values()) {
-    commentEntries.set(
-      comment.id,
-      endmatterEntryForComment(comment, parsed.comments.get(comment.id)),
-    );
-  }
+  if (useEndmatter) {
+    for (const comment of comments.values()) {
+      commentEntries.set(
+        comment.id,
+        endmatterEntryForComment(comment, parsed.comments.get(comment.id)),
+      );
+    }
 
-  for (const change of changes.values()) {
-    suggestionEntries.set(
-      change.changeId,
-      endmatterEntryForChange(change, parsed.suggestions.get(change.changeId)),
-    );
+    for (const change of changes.values()) {
+      suggestionEntries.set(
+        change.changeId,
+        endmatterEntryForChange(
+          change,
+          parsed.suggestions.get(change.changeId),
+        ),
+      );
+    }
   }
 
   if (
+    existingEndmatter &&
     areEndmatterMapsEqual(parsed.comments, commentEntries) &&
-    areEndmatterMapsEqual(parsed.suggestions, suggestionEntries)
+    areEndmatterMapsEqual(parsed.suggestions, suggestionEntries) &&
+    areReviewIdCountersEqual(parsed.counters, counters)
   ) {
     return existingEndmatter;
   }
@@ -391,13 +435,23 @@ function serializeReviewEndmatter(
   const data: Record<string, unknown> = { ...(parsed.data ?? {}) };
   if (commentEntries.size > 0) {
     data.comments = Object.fromEntries(commentEntries);
+  } else if (useEndmatter && "comments" in data) {
+    data.comments = {};
   } else {
     delete data.comments;
   }
   if (suggestionEntries.size > 0) {
     data.suggestions = Object.fromEntries(suggestionEntries);
+  } else if (useEndmatter && "suggestions" in data) {
+    data.suggestions = {};
   } else {
     delete data.suggestions;
+  }
+  const serializedCounters = serializeReviewIdCounters(counters);
+  if (serializedCounters) {
+    data.counters = serializedCounters;
+  } else {
+    delete data.counters;
   }
 
   if (Object.keys(data).length === 0) return null;
@@ -405,10 +459,111 @@ function serializeReviewEndmatter(
   return `---\n${stringifyYaml(data)}`;
 }
 
+const reviewIdPattern = /^([cs])(\d+)$/;
+
+export function createReviewIdCounters(): ReviewIdCounters {
+  return { comments: 0, suggestions: 0 };
+}
+
+function readReviewIdCounter(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : 0;
+}
+
+function parseReviewIdCounters(value: unknown): ReviewIdCounters {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return createReviewIdCounters();
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    comments: readReviewIdCounter(record.comments),
+    suggestions: readReviewIdCounter(record.suggestions),
+  };
+}
+
+export function advanceReviewIdCounters(
+  counters: ReviewIdCounters,
+  ids: Iterable<string>,
+): ReviewIdCounters {
+  const next = { ...counters };
+
+  for (const id of ids) {
+    const match = id.match(reviewIdPattern);
+    if (!match) continue;
+
+    const parsed = Number.parseInt(match[2] || "0", 10);
+    if (match[1] === "c") {
+      next.comments = Math.max(next.comments, parsed);
+    } else {
+      next.suggestions = Math.max(next.suggestions, parsed);
+    }
+  }
+
+  return next;
+}
+
+function mergeReviewIdCounters(
+  left: ReviewIdCounters,
+  right: ReviewIdCounters,
+): ReviewIdCounters {
+  return {
+    comments: Math.max(left.comments, right.comments),
+    suggestions: Math.max(left.suggestions, right.suggestions),
+  };
+}
+
+function areReviewIdCountersEqual(
+  left: ReviewIdCounters,
+  right: ReviewIdCounters,
+): boolean {
+  return (
+    left.comments === right.comments && left.suggestions === right.suggestions
+  );
+}
+
+function recordedReviewIdCounter(
+  recorded: number,
+  effective: number,
+  present: number,
+): number {
+  return recorded > 0 || effective > present ? effective : 0;
+}
+
+function recordedReviewIdCounters(
+  recorded: ReviewIdCounters,
+  effective: ReviewIdCounters,
+  present: ReviewIdCounters,
+): ReviewIdCounters {
+  return {
+    comments: recordedReviewIdCounter(
+      recorded.comments,
+      effective.comments,
+      present.comments,
+    ),
+    suggestions: recordedReviewIdCounter(
+      recorded.suggestions,
+      effective.suggestions,
+      present.suggestions,
+    ),
+  };
+}
+
+function serializeReviewIdCounters(
+  counters: ReviewIdCounters,
+): Record<string, number> | null {
+  const serialized: Record<string, number> = {};
+  if (counters.comments > 0) serialized.comments = counters.comments;
+  if (counters.suggestions > 0) serialized.suggestions = counters.suggestions;
+  return Object.keys(serialized).length > 0 ? serialized : null;
+}
+
 export function createNextCommentId(
   existingComments: Iterable<Pick<CriticComment, "id">>,
+  counters?: ReviewIdCounters,
 ): string {
-  let maxId = 0;
+  let maxId = counters?.comments ?? 0;
 
   for (const comment of existingComments) {
     const match = comment.id.match(/^c(\d+)$/);
@@ -425,8 +580,9 @@ export function createNextCommentId(
 
 export function createNextChangeId(
   existingChanges: Iterable<Pick<CriticChangeAttrs, "changeId">>,
+  counters?: ReviewIdCounters,
 ): string {
-  let maxId = 0;
+  let maxId = counters?.suggestions ?? 0;
 
   for (const change of existingChanges) {
     const match = change.changeId.match(/^s(\d+)$/);
@@ -444,11 +600,12 @@ export function createNextChangeId(
 function createCommentWithContext(
   partial?: Partial<CriticComment>,
   existingComments: Iterable<Pick<CriticComment, "id">> = [],
+  counters?: ReviewIdCounters,
 ): CriticComment {
   const authorType = partial?.authorType ?? "user";
 
   return {
-    id: partial?.id ?? createNextCommentId(existingComments),
+    id: partial?.id ?? createNextCommentId(existingComments, counters),
     content: partial?.content ?? "",
     createdAt: partial?.createdAt ?? new Date().toISOString(),
     authorType,
@@ -462,12 +619,14 @@ function createChangeWithContext(
   kind: CriticChangeKind,
   partial?: Partial<CriticChangeAttrs>,
   existingChanges: Iterable<Pick<CriticChangeAttrs, "changeId">> = [],
+  counters?: ReviewIdCounters,
 ): CriticChangeAttrs {
   const authorType = partial?.authorType ?? "user";
 
   return {
     kind,
-    changeId: partial?.changeId ?? createNextChangeId(existingChanges),
+    changeId:
+      partial?.changeId ?? createNextChangeId(existingChanges, counters),
     createdAt: partial?.createdAt ?? new Date().toISOString(),
     authorType,
     authorId: partial?.authorId ?? (authorType === "ai" ? null : "user"),
@@ -1433,10 +1592,14 @@ export function criticMarkdownToEditorState(
   comments: Map<string, CriticComment>;
   frontmatter: string | null;
   endmatter: string | null;
+  idCounters: ReviewIdCounters;
 } {
   const { frontmatter, body, endmatter } = splitYamlDocumentMetadata(markdown);
   const parsedEndmatter = parseReviewEndmatter(endmatter);
-  const { parser, comments } = createCriticMarked(options, parsedEndmatter);
+  const { parser, comments, changes } = createCriticMarked(
+    options,
+    parsedEndmatter,
+  );
   const html = parser.parse(protectRichTextRoundTripMarkdown(body)) as string;
   const doc = generateJSON(html, extensions) as JSONContent & {
     yamlFrontmatter?: string;
@@ -1449,8 +1612,14 @@ export function criticMarkdownToEditorState(
   if (endmatter) {
     doc.yamlEndmatter = endmatter;
   }
+  const idCounters = advanceReviewIdCounters(parsedEndmatter.counters, [
+    ...parsedEndmatter.comments.keys(),
+    ...parsedEndmatter.suggestions.keys(),
+    ...comments.keys(),
+    ...changes.keys(),
+  ]);
 
-  return { doc, comments, frontmatter, endmatter };
+  return { doc, comments, frontmatter, endmatter, idCounters };
 }
 
 function collectCriticChangesFromDoc(
@@ -1490,7 +1659,11 @@ function collectCriticChangesFromDoc(
 export function editorStateToCriticMarkdown(
   doc: JSONContent,
   comments: Map<string, CriticComment>,
-  options?: { frontmatter?: string | null; endmatter?: string | null },
+  options?: {
+    frontmatter?: string | null;
+    endmatter?: string | null;
+    idCounters?: ReviewIdCounters;
+  },
 ): string {
   const html = generateHTML(doc, extensions);
   const service = createTurndownService();
@@ -1503,7 +1676,9 @@ export function editorStateToCriticMarkdown(
     (doc as JSONContent & { yamlEndmatter?: string }).yamlEndmatter ??
     null;
   const changes = collectCriticChangesFromDoc(doc);
-  const useEndmatter = Boolean(sourceEndmatter);
+  const useEndmatter = reviewMetadataLivesInEndmatter(
+    parseReviewEndmatter(sourceEndmatter),
+  );
   addCriticCommentRule(service, comments, useEndmatter);
   addCriticChangeRule(service, comments, useEndmatter);
   addCriticCodeBlockRule(service);
@@ -1511,6 +1686,7 @@ export function editorStateToCriticMarkdown(
     sourceEndmatter,
     comments,
     changes,
+    options?.idCounters,
   );
   return appendYamlEndmatter(
     prependYamlFrontmatter(
@@ -1527,9 +1703,14 @@ export function createCriticComment(
   partial?: Partial<CriticComment>,
   options?: {
     existingComments?: Iterable<Pick<CriticComment, "id">>;
+    idCounters?: ReviewIdCounters;
   },
 ): CriticComment {
-  return createCommentWithContext(partial, options?.existingComments);
+  return createCommentWithContext(
+    partial,
+    options?.existingComments,
+    options?.idCounters,
+  );
 }
 
 export function createCriticChange(
@@ -1537,7 +1718,13 @@ export function createCriticChange(
   partial?: Partial<CriticChangeAttrs>,
   options?: {
     existingChanges?: Iterable<Pick<CriticChangeAttrs, "changeId">>;
+    idCounters?: ReviewIdCounters;
   },
 ): CriticChangeAttrs {
-  return createChangeWithContext(kind, partial, options?.existingChanges);
+  return createChangeWithContext(
+    kind,
+    partial,
+    options?.existingChanges,
+    options?.idCounters,
+  );
 }
