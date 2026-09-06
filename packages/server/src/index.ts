@@ -407,6 +407,25 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const openRequestClients = new Set<OpenRequestClient>();
   const reviewEvents = new ReviewEventQueue();
   const remoteSessions = new Map<string, RemoteSession>();
+  const instanceId = crypto.randomUUID();
+
+  // A tab records the instance id it loaded from. When the id it sends back
+  // belongs to an earlier server, that tab is stale and must not write.
+  function rejectStaleServerInstance(req: Request, res: Response): boolean {
+    const suppliedInstanceId = req.body?.serverInstanceId;
+    if (
+      typeof suppliedInstanceId !== "string" ||
+      suppliedInstanceId === instanceId
+    ) {
+      return false;
+    }
+
+    res.status(410).json({
+      error:
+        "This tab was opened by a Roughdraft server that is no longer running. Reopen the file to keep editing.",
+    });
+    return true;
+  }
 
   function isAuthorizedRemoteDocumentRequest(req: Request): boolean {
     if (!remoteDocumentToken) return true;
@@ -651,6 +670,8 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       return;
     }
 
+    if (rejectStaleServerInstance(req, res)) return;
+
     const markdown = fs.readFileSync(target.absolutePath, "utf-8");
     const persistedMarkdown = overallComment
       ? appendRoughdraftDocumentComment(markdown, {
@@ -751,6 +772,8 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       return;
     }
 
+    if (rejectStaleServerInstance(req, res)) return;
+
     const { content, expectedVersion } = req.body as {
       content: string;
       expectedVersion?: string;
@@ -765,7 +788,11 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       return;
     }
 
-    fs.writeFileSync(absolutePath, content);
+    // An unchanged body is not a write: rewriting it would only bump the
+    // mtime and turn every other open tab's version stale.
+    if (fs.readFileSync(absolutePath, "utf-8") !== content) {
+      fs.writeFileSync(absolutePath, content);
+    }
     res.json(markdownPageFromFile(relativePath, absolutePath));
   });
 
@@ -804,6 +831,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     res.json({
       backend: "local-files",
       pid: process.pid,
+      instanceId,
       port,
       projectDir: options.projectDir
         ? path.resolve(options.projectDir)

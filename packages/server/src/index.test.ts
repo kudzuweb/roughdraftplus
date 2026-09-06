@@ -539,6 +539,7 @@ describe("createApp", () => {
     expect(response.body).toEqual({
       backend: "local-files",
       pid: process.pid,
+      instanceId: expect.any(String),
       port: 4312,
       serverRoot,
       stateless: true,
