@@ -6,6 +6,7 @@ import {
   extractRoughdraftReviewIndex,
   markRoughdraftResolved,
 } from "@roughdraft/rfm";
+import { watchReviewEventsInSegments } from "./review-watch.js";
 
 interface JsonRpcRequest {
   jsonrpc?: "2.0";
@@ -271,37 +272,26 @@ export async function callTool(
       throw new Error("Roughdraft is not running. Start it before watching.");
     }
 
-    const body: {
-      projectPath: string;
-      path: string;
-      timeoutSeconds?: number;
-      batchWindowSeconds: number;
-      fromNow: boolean;
-    } = {
+    // Long-polls run through the shared segmented poll, so an MCP client
+    // waiting on a review outlives the five-minute ceiling a single request
+    // hits. Without an onPollError handler any non-timeout failure surfaces to
+    // the client, which is what an unattended tool call wants.
+    const { payload } = await watchReviewEventsInSegments({
+      fetchImpl,
+      env,
+      serverUrl: server.url,
       projectPath,
-      path: path.relative(projectPath, documentPath),
+      relativePath: path.relative(projectPath, documentPath),
       batchWindowSeconds:
         typeof args.batchWindowSeconds === "number"
           ? args.batchWindowSeconds
           : 0.25,
       fromNow: true,
-    };
-    if (typeof args.timeoutSeconds === "number") {
-      body.timeoutSeconds = args.timeoutSeconds;
-    }
-
-    const response = await fetchImpl(
-      new URL("/api/review-events/watch", server.url),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`Review watch failed: ${response.status}`);
-    }
-    return response.json();
+      ...(typeof args.timeoutSeconds === "number"
+        ? { deadlineMs: Date.now() + args.timeoutSeconds * 1000 }
+        : {}),
+    });
+    return payload;
   }
 
   if (name === "roughdraft_reply_to_comment") {

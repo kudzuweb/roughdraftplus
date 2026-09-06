@@ -17,6 +17,7 @@ import {
 } from "./network.js";
 import { findAvailablePort } from "./ports.js";
 import type { ReviewDoneReason } from "./review-events.js";
+import { watchErrorCode, watchReviewEventsInSegments } from "./review-watch.js";
 import { resolveUpdateStatus, type UpdateStatus } from "./update-status.js";
 
 const AGENT_SETUP_URL =
@@ -2329,83 +2330,16 @@ async function runWatch(
   }
   const relativePath = path.relative(target.projectDir, target.openPath);
 
-  // The server caps a single wait at 300s and undici's default headersTimeout
-  // is also 300s, so one unbounded long-poll dies in a dead heat with the
-  // server and loses the Done Reviewing signal. Poll in segments that end at
-  // 240s with our own abort at 255s, both under undici's limit, and carry the
-  // sequence cursor across segments so no event slips through the gap.
-  const configuredSegmentSeconds = Number(
-    deps.env.ROUGHDRAFT_WATCH_SEGMENT_SECONDS,
-  );
-  const segmentCapSeconds =
-    Number.isFinite(configuredSegmentSeconds) && configuredSegmentSeconds > 0
-      ? configuredSegmentSeconds
-      : 240;
-  const abortMarginSeconds = 15;
-
   interface WatchPayloadEvent {
     done?: boolean;
     doneReason?: ReviewDoneReason | null;
     summary?: { unresolved?: number };
   }
 
-  interface WatchPayload {
-    events?: WatchPayloadEvent[];
-    timedOut?: boolean;
-    nextSequence?: number;
-    instanceId?: string;
-  }
-
-  const postWatch = async (
-    extra: { fromNow: boolean; afterSequence?: number },
-    segmentSeconds: number,
-  ): Promise<WatchPayload> => {
-    const response = await deps.fetchImpl(
-      new URL("/api/review-events/watch", serverUrl),
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          projectPath: target.projectDir,
-          path: relativePath,
-          batchWindowSeconds: options.batchWindowSeconds,
-          timeoutSeconds: segmentSeconds,
-          ...extra,
-        }),
-        signal: AbortSignal.timeout(
-          (segmentSeconds + abortMarginSeconds) * 1000,
-        ),
-      },
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to watch review events: ${response.status}`);
-    }
-    return (await response.json()) as WatchPayload;
-  };
-
-  const errorCode = (error: unknown): string | undefined => {
-    const withCode = error as {
-      cause?: { code?: string };
-      code?: string;
-    } | null;
-    return withCode?.cause?.code ?? withCode?.code;
-  };
-
-  const isSegmentTimeout = (error: unknown): boolean => {
-    const code = errorCode(error);
-    const name = (error as { name?: string } | null)?.name;
-    return (
-      code === "UND_ERR_HEADERS_TIMEOUT" ||
-      code === "UND_ERR_BODY_TIMEOUT" ||
-      name === "TimeoutError" ||
-      name === "AbortError"
-    );
-  };
-
   // A stopped server closes the long-poll socket under the CLI, and a server
   // that has not come back yet refuses the next connection.
   const isConnectionLoss = (error: unknown): boolean => {
-    const code = errorCode(error);
+    const code = watchErrorCode(error);
     return (
       code === "UND_ERR_SOCKET" ||
       code === "ECONNRESET" ||
@@ -2499,61 +2433,44 @@ async function runWatch(
 
   let serverInstanceId = (await readServerInstanceId()) ?? undefined;
 
-  // The priming poll returns immediately and yields the sequence cursor, so a
-  // segment that dies before delivering one cannot lose an event. A server
-  // that cannot be reached here has nothing to restore, so the failure
-  // propagates as it always has.
-  let payload = await postWatch({ fromNow: !options.replay }, 0);
-  if (typeof payload.instanceId === "string") {
-    serverInstanceId = payload.instanceId;
-  }
-  let afterSequence =
-    typeof payload.nextSequence === "number" ? payload.nextSequence - 1 : 0;
-  let primeAgain = false;
-
-  while (payload.timedOut) {
-    let segmentSeconds = segmentCapSeconds;
-    if (deadline !== undefined) {
-      const remaining = Math.ceil((deadline - Date.now()) / 1000);
-      if (remaining <= 0) break;
-      segmentSeconds = Math.min(segmentSeconds, remaining);
-    }
-    try {
-      if (primeAgain) {
-        // The replacement's queue starts over, so the old cursor means
-        // nothing to it; prime again exactly as at the start.
-        payload = await postWatch({ fromNow: !options.replay }, 0);
-        if (typeof payload.instanceId === "string") {
-          serverInstanceId = payload.instanceId;
+  // A server that cannot be reached for the priming poll has nothing to
+  // restore, so that failure propagates as it always has; only a loss after
+  // the watch is established is worth waiting out.
+  const { payload, abandoned } =
+    await watchReviewEventsInSegments<WatchPayloadEvent>({
+      fetchImpl: deps.fetchImpl,
+      env: deps.env,
+      serverUrl,
+      projectPath: target.projectDir,
+      relativePath,
+      batchWindowSeconds: options.batchWindowSeconds,
+      fromNow: !options.replay,
+      ...(deadline !== undefined ? { deadlineMs: deadline } : {}),
+      onPrimed: (primed) => {
+        if (typeof primed.instanceId === "string") {
+          serverInstanceId = primed.instanceId;
         }
-        primeAgain = false;
-      } else {
-        payload = await postWatch(
-          { fromNow: false, afterSequence },
-          segmentSeconds,
-        );
-      }
-    } catch (error) {
-      if (isSegmentTimeout(error)) continue;
-      if (!isConnectionLoss(error)) throw error;
-      const reconnect = await waitForServer(serverInstanceId);
-      if (reconnect.outcome === "gone") return reportServerGone();
-      if (reconnect.outcome === "deadline") break;
-      if (reconnect.outcome === "restarted") {
-        serverInstanceId = reconnect.instanceId;
-        primeAgain = true;
-        deps.error(
-          "Reconnected to the restarted Roughdraft server; waiting for Done Reviewing again.",
-        );
-      } else {
+      },
+      onPollError: async (error) => {
+        if (!isConnectionLoss(error)) throw error;
+        const reconnect = await waitForServer(serverInstanceId);
+        if (reconnect.outcome === "gone") return "abandon";
+        if (reconnect.outcome === "deadline") return "stop";
+        if (reconnect.outcome === "restarted") {
+          serverInstanceId = reconnect.instanceId;
+          deps.error(
+            "Reconnected to the restarted Roughdraft server; waiting for Done Reviewing again.",
+          );
+          // The replacement's queue starts over, so the old cursor means
+          // nothing to it; prime again exactly as at the start.
+          return "reprime";
+        }
         deps.error("Reconnected to the Roughdraft server; resuming the watch.");
-      }
-      continue;
-    }
-    if (typeof payload.nextSequence === "number") {
-      afterSequence = payload.nextSequence - 1;
-    }
-  }
+        return "resume";
+      },
+    });
+
+  if (abandoned) return reportServerGone();
 
   // A batch window can deliver several events in one round; the newest one
   // reflects the document's latest state, so it decides the done-signal.
