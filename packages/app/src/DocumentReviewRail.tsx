@@ -10,10 +10,10 @@ import {
   useState,
 } from "react";
 import {
-  CommentEditorList,
   type CommentActionDefinition,
   type CommentActionsRenderContext,
   type CommentContentRenderContext,
+  CommentEditorList,
 } from "./CommentEditorList";
 import type {
   CriticChangeAttrs,
@@ -33,7 +33,7 @@ import { SUGGESTED_PARAGRAPH_SENTINEL } from "./editor-extensions";
 import { cn } from "./lib/utils";
 import type { DraftSuggestionState } from "./PageCard";
 
-const SUGGESTION_QUOTE_PREVIEW_LIMIT = 140;
+const SUGGESTION_TEXT_PREVIEW_LIMIT = 140;
 
 export interface CriticChangeRailItem {
   changeId: string;
@@ -116,27 +116,56 @@ function getSuggestionRootComment(
   };
 }
 
-function truncateSuggestionQuote(text: string) {
-  if (text.length <= SUGGESTION_QUOTE_PREVIEW_LIMIT) return text;
-  return `${text.slice(0, SUGGESTION_QUOTE_PREVIEW_LIMIT)}...`;
+function truncateSuggestionText(text: string) {
+  if (text.length <= SUGGESTION_TEXT_PREVIEW_LIMIT) return text;
+  return `${text.slice(0, SUGGESTION_TEXT_PREVIEW_LIMIT)}...`;
 }
 
-function renderQuotedSuggestionText(text: string, fallback: string) {
+function SuggestionChangedText({
+  changeId,
+  variant,
+  text,
+  fallback,
+}: {
+  changeId: string;
+  variant: "inserted" | "deleted";
+  text: string;
+  fallback: string;
+}) {
   const withoutParagraphSentinels = text.replaceAll(
     SUGGESTED_PARAGRAPH_SENTINEL,
     "",
   );
-  const fullDisplayText =
-    withoutParagraphSentinels.trim() ||
-    (text.includes(SUGGESTED_PARAGRAPH_SENTINEL)
-      ? "Inserted paragraph"
-      : fallback);
-  const displayText = truncateSuggestionQuote(fullDisplayText);
+  const changedText = withoutParagraphSentinels.trim();
+  const testId = `suggestion-thread-${changeId}-${variant}-text`;
+
+  if (!changedText) {
+    return (
+      <span
+        data-testid={testId}
+        className="italic text-slate-600 dark:text-slate-400"
+      >
+        {text.includes(SUGGESTED_PARAGRAPH_SENTINEL)
+          ? "Inserted paragraph"
+          : fallback}
+      </span>
+    );
+  }
+
+  const Element = variant === "inserted" ? "ins" : "del";
 
   return (
-    <span className="italic text-slate-600 dark:text-slate-400">
-      "{displayText}"
-    </span>
+    <Element
+      data-testid={testId}
+      className={cn(
+        "rounded-sm px-0.5",
+        variant === "inserted"
+          ? "bg-emerald-50 text-emerald-800 underline decoration-emerald-500/75 underline-offset-[0.16em] dark:bg-emerald-950/50 dark:text-emerald-300"
+          : "bg-rose-50 text-rose-900 line-through decoration-rose-600/75 dark:bg-rose-900/35 dark:text-rose-300",
+      )}
+    >
+      {truncateSuggestionText(changedText)}
+    </Element>
   );
 }
 
@@ -145,39 +174,42 @@ function SuggestionCommentContent({
 }: {
   suggestion: CriticChangeRailItem;
 }) {
-  const oldText = suggestion.oldText.trim();
-  const newText = suggestion.newText.trim();
-
   if (suggestion.kind === "addition") {
     return (
-      <>
-        <span className="font-semibold text-slate-800 dark:text-slate-200">
-          Insert:
-        </span>{" "}
-        {renderQuotedSuggestionText(newText, "Inserted text")}
-      </>
+      <SuggestionChangedText
+        changeId={suggestion.changeId}
+        variant="inserted"
+        text={suggestion.newText}
+        fallback="Inserted text"
+      />
     );
   }
 
   if (suggestion.kind === "deletion") {
     return (
-      <>
-        <span className="font-semibold text-slate-800 dark:text-slate-200">
-          Delete:
-        </span>{" "}
-        {renderQuotedSuggestionText(oldText, "Deleted text")}
-      </>
+      <SuggestionChangedText
+        changeId={suggestion.changeId}
+        variant="deleted"
+        text={suggestion.oldText}
+        fallback="Deleted text"
+      />
     );
   }
 
   return (
     <>
-      <span className="font-semibold text-slate-800 dark:text-slate-200">
-        Replace:
-      </span>{" "}
-      {renderQuotedSuggestionText(oldText, "Original text")}{" "}
-      <span className="text-slate-500 dark:text-slate-400">with</span>{" "}
-      {renderQuotedSuggestionText(newText, "Changed text")}
+      <SuggestionChangedText
+        changeId={suggestion.changeId}
+        variant="deleted"
+        text={suggestion.oldText}
+        fallback="Original text"
+      />{" "}
+      <SuggestionChangedText
+        changeId={suggestion.changeId}
+        variant="inserted"
+        text={suggestion.newText}
+        fallback="Changed text"
+      />
     </>
   );
 }
