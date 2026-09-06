@@ -726,7 +726,9 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       batchWindowMs: batchWindowSeconds * 1000,
     });
 
-    res.json(result);
+    // The CLI learns which instance it is watching from the priming poll, so
+    // a later reconnect can tell a restart from a dropped connection.
+    res.json({ ...result, instanceId });
   });
 
   app.get("/api/review-events/status", (req, res) => {

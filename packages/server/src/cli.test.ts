@@ -1489,6 +1489,7 @@ describe("cli", () => {
     events: unknown[];
     timedOut: boolean;
     nextSequence: number;
+    instanceId?: string;
   }
 
   function createWatchScriptTest(
@@ -1761,6 +1762,71 @@ describe("cli", () => {
     expect(test.requests[2]).toMatchObject({
       fromNow: false,
       afterSequence: 4,
+    });
+  });
+
+  it("resumes the cursor after a drop when the server's instance was never learned", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        { events: [], timedOut: true, nextSequence: 5 },
+        connectionLost("ECONNRESET"),
+        {
+          events: [{ documentPath, type: "review.completed" }],
+          timedOut: false,
+          nextSequence: 6,
+        },
+      ],
+      {},
+      // ensureServerRunning answers, the watch's own instance read fails, and
+      // the priming poll carries no id either, so the server stays unknown.
+      ["instance-a", connectionLost("ECONNREFUSED"), "instance-a"],
+    );
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    expect(test.requests[2]).toMatchObject({
+      fromNow: false,
+      afterSequence: 4,
+    });
+    expect(test.errors.join("\n")).toContain("resuming the watch");
+  });
+
+  it("learns the server's instance from the priming poll when the status read failed", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+    const test = createWatchScriptTest(
+      [
+        {
+          events: [],
+          timedOut: true,
+          nextSequence: 5,
+          instanceId: "instance-a",
+        },
+        connectionLost("UND_ERR_SOCKET"),
+        { events: [], timedOut: true, nextSequence: 1 },
+        {
+          events: [{ documentPath, type: "review.completed" }],
+          timedOut: false,
+          nextSequence: 2,
+        },
+      ],
+      {},
+      ["instance-a", connectionLost("ECONNREFUSED"), "instance-b"],
+    );
+
+    const exitCode = await runCli(["watch", documentPath], test.deps);
+
+    expect(exitCode).toBe(0);
+    expect(test.requests[2]).toMatchObject({
+      fromNow: true,
+      timeoutSeconds: 0,
+    });
+    expect(test.requests[3]).toMatchObject({
+      fromNow: false,
+      afterSequence: 0,
     });
   });
 

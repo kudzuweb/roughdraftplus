@@ -2222,6 +2222,7 @@ async function runWatch(
     events?: WatchPayloadEvent[];
     timedOut?: boolean;
     nextSequence?: number;
+    instanceId?: string;
   }
 
   const postWatch = async (
@@ -2340,7 +2341,10 @@ async function runWatch(
       }
       const instanceId = await readServerInstanceId();
       if (instanceId === null) continue;
-      if (knownInstanceId !== undefined && instanceId === knownInstanceId) {
+      // An unknown instance (an older server, or a status read that failed)
+      // is treated as the same server: a dropped connection is the common
+      // case, and resuming keeps the cursor and any event emitted meanwhile.
+      if (knownInstanceId === undefined || instanceId === knownInstanceId) {
         return { outcome: "resumed" };
       }
       return { outcome: "restarted", instanceId };
@@ -2369,6 +2373,9 @@ async function runWatch(
   // that cannot be reached here has nothing to restore, so the failure
   // propagates as it always has.
   let payload = await postWatch({ fromNow: !options.replay }, 0);
+  if (typeof payload.instanceId === "string") {
+    serverInstanceId = payload.instanceId;
+  }
   let afterSequence =
     typeof payload.nextSequence === "number" ? payload.nextSequence - 1 : 0;
   let primeAgain = false;
@@ -2385,6 +2392,9 @@ async function runWatch(
         // The replacement's queue starts over, so the old cursor means
         // nothing to it; prime again exactly as at the start.
         payload = await postWatch({ fromNow: !options.replay }, 0);
+        if (typeof payload.instanceId === "string") {
+          serverInstanceId = payload.instanceId;
+        }
         primeAgain = false;
       } else {
         payload = await postWatch(

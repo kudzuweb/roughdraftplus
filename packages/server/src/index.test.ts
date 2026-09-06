@@ -576,6 +576,14 @@ describe("createApp", () => {
     expect(watchStatus.status).toBe(200);
     expect(watchStatus.body.instanceId).toBe(statusResponse.body.instanceId);
     expect(watchStatus.body.instanceId).toEqual(expect.any(String));
+
+    const primed = await request(app).post("/api/review-events/watch").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      timeoutSeconds: 0,
+    });
+    expect(primed.status).toBe(200);
+    expect(primed.body.instanceId).toBe(statusResponse.body.instanceId);
   });
 
   it("reports active review watchers for a markdown file", async () => {
