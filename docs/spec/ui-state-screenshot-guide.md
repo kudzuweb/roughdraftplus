@@ -101,9 +101,21 @@ comments:
     re: c1
 ```
 ### Fenced CriticMarkup Document
-```markdown
-# Fenced examples This page should not show a review rail just because examples appear inside code fences. ```text {==example==}{>>comment<<}{#c1} {++inserted++} {--deleted--} {~~old~>new~~} ```
+````markdown
+# Fenced examples
+
+A standalone comment, an insertion, a deletion, and a substitution inside a
+fence are examples, so this page shows no review rail. An anchor followed by a
+comment is the one fenced construct that does open a thread, and this document
+deliberately carries none.
+
+```text
+{>>comment<<}
+{++inserted++}
+{--deleted--}
+{~~old~>new~~}
 ```
+````
 ### Unrendered Block Document
 ```markdown
 # Unrendered blocks
@@ -186,7 +198,7 @@ A table whose cell holds a pipe inside a code span cannot be rendered in rich te
 | Comment editor | Root comment editing | Use a comment card edit action | `comment-rail-root-editor` | Comment test IDs follow `comment-${variant}-${id}-...`. |
 | Comment editor | Reply editing | Expand the thread if it is collapsed, then use a reply action | `comment-rail-child-editor` | Useful for nested thread spacing. |
 | Code mode | Review rail present | Open review fixture with `?editor=code` | `page-card-code`, `markdown-code-editor` | Confirms code editor and rail can coexist. |
-| Code mode | Review rail absent | Open fenced fixture with `?editor=code` | `page-card-code`, `markdown-code-editor` | Confirms fenced CriticMarkup alone does not create review rail. |
+| Code mode | Review rail absent | Open fenced fixture with `?editor=code` | `page-card-code`, `markdown-code-editor` | Confirms fenced examples without an anchored comment do not create review rail. |
 | Error/home fallback | Non-Markdown path | Open URL with `?path=/tmp/file.txt` | homepage error message | Copy: `Roughdraft now opens one .md file at a time.` |
 | Error/home fallback | Missing/unloadable path | Open URL with invalid markdown path through local backend | homepage error message | Captures load-error homepage variant. |
 ## Playwright Capture Skeleton
