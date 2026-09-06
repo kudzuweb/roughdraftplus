@@ -70,7 +70,7 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
   Done Reviewing the tab does not write until a new review starts. If the server is restarted, the
   tab adopts the replacement and checks the file version first: unsaved edits are kept and saved
   only when the file did not change while the server was away; otherwise the tab shows "File
-  changed on disk" and stays read-only until the reviewer decides.
+  changed on disk" and stops saving until the reviewer decides.
 - Author documents destined for review defensively while the reflow bugs live: prefer prose and
   bullets over tables and fenced blocks, and keep blank lines between blocks.
 
