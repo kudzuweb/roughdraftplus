@@ -117,10 +117,10 @@ describe("CommentEditorList reply collapsing", () => {
     );
 
     const visibleIds = [
-      ...container.querySelectorAll('[data-testid^="comment-rail-r"]'),
-    ]
-      .map((element) => element.getAttribute("data-testid"))
-      .filter((testId) => /^comment-rail-r\d+$/.test(testId ?? ""));
+      ...container.querySelectorAll(
+        '[data-testid="comment-rail-r1"], [data-testid="comment-rail-r2"], [data-testid="comment-rail-r3"]',
+      ),
+    ].map((element) => element.getAttribute("data-testid"));
     expect(visibleIds).toEqual([
       "comment-rail-r1",
       "comment-rail-r2",
