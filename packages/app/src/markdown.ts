@@ -533,10 +533,15 @@ const atxHeadingLine = /^#{1,6} /;
 // A table row, fence marker, or blockquote line. A heading must not be glued
 // to one of these: the blank line before the heading is what ends that block.
 const structuralBlockLine = /^ {0,3}(?:\||`{3}|~{3}|>)/;
+const fenceOpeningLine = /^ {0,3}(`{3,}|~{3,})/;
 
 function isRemovableHeadingGap(previous: string, next: string): boolean {
   if (atxHeadingLine.test(previous)) return true;
   return atxHeadingLine.test(next) && !structuralBlockLine.test(previous);
+}
+
+function fenceClosingLine(marker: string): RegExp {
+  return new RegExp(`^ {0,3}${marker[0]}{${marker.length},}[ \\t]*$`);
 }
 
 /**
@@ -548,20 +553,38 @@ function isRemovableHeadingGap(previous: string, next: string): boolean {
  * always removed, since a heading is a single-line block and whatever
  * follows starts fresh.  The blank line before a heading is removed only
  * when the line above is not a table row, fence marker, or blockquote
- * line.
+ * line.  Lines inside a fenced code block are code, so the walk copies
+ * them through untouched.
  */
 export function normalizeBlockSpacing(md: string): string {
-  const lines = md.replace(/\n{3,}/g, "\n\n").split("\n");
+  const lines = md.split("\n");
   const kept: string[] = [];
+  let closingFence: RegExp | null = null;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    if (
-      line === "" &&
-      index > 0 &&
-      index < lines.length - 1 &&
-      isRemovableHeadingGap(lines[index - 1], lines[index + 1])
-    ) {
+    if (closingFence) {
+      kept.push(line);
+      if (closingFence.test(line)) closingFence = null;
       continue;
+    }
+    const fence = line.match(fenceOpeningLine);
+    if (fence) {
+      kept.push(line);
+      closingFence = fenceClosingLine(fence[1]);
+      continue;
+    }
+    if (line === "") {
+      const previous = kept.at(-1);
+      if (previous === "") continue;
+      let nextIndex = index + 1;
+      while (nextIndex < lines.length && lines[nextIndex] === "") nextIndex++;
+      if (
+        previous !== undefined &&
+        nextIndex < lines.length &&
+        isRemovableHeadingGap(previous, lines[nextIndex])
+      ) {
+        continue;
+      }
     }
     kept.push(line);
   }
