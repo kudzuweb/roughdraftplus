@@ -736,12 +736,15 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     const watcherCount = reviewEvents.waiterCountForDocument(
       target.absolutePath,
     );
+    // The tab polls this while a document is open, so the answering instance
+    // is how it learns the server was replaced while it had nothing to write.
     res.json({
       documentPath: target.absolutePath,
       projectPath: target.projectDir,
       relativePath: target.relativePath,
       watching: watcherCount > 0,
       watcherCount,
+      instanceId,
     });
   });
 

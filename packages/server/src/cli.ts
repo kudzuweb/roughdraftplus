@@ -951,6 +951,12 @@ function printCommandHelp(
     log("  --state-file <path>  Server state file");
     log("  --state-dir <dir>    Directory containing server.json");
     log("");
+    log("If the server stops while waiting (roughdraft stop, an upgrade), the");
+    log("wait survives a restart on the same port: the command reconnects and");
+    log("keeps waiting for Done Reviewing. When the server does not come back");
+    log("within the reconnect window (default 60 s) the command exits 1 and");
+    log("says so; the --json output then carries `disconnected: true`.");
+    log("");
     log("Environment variables:");
     log(
       "  ROUGHDRAFT_HOST       Route open through a hosted Roughdraft instance",
@@ -965,6 +971,9 @@ function printCommandHelp(
     log("                        non-loopback host. Must match the value the");
     log("                        hosted server was started with.");
     log("  ROUGHDRAFT_NO_OPEN    Set to 1 to suppress browser launch.");
+    log("  ROUGHDRAFT_WATCH_RECONNECT_SECONDS");
+    log("                        Seconds to wait for a stopped server to come");
+    log("                        back before giving up (default: 60).");
     log("  ROUGHDRAFT_BIND_HOST  Comma-separated bind hosts for the hosted");
     log(
       "                        server (default: loopback). Set to 0.0.0.0 or",
@@ -2231,30 +2240,127 @@ async function runWatch(
     return (await response.json()) as WatchPayload;
   };
 
-  const isSegmentTimeout = (error: unknown): boolean => {
+  const errorCode = (error: unknown): string | undefined => {
     const withCode = error as {
       cause?: { code?: string };
       code?: string;
-      name?: string;
     } | null;
-    const code = withCode?.cause?.code ?? withCode?.code;
+    return withCode?.cause?.code ?? withCode?.code;
+  };
+
+  const isSegmentTimeout = (error: unknown): boolean => {
+    const code = errorCode(error);
+    const name = (error as { name?: string } | null)?.name;
     return (
       code === "UND_ERR_HEADERS_TIMEOUT" ||
       code === "UND_ERR_BODY_TIMEOUT" ||
-      withCode?.name === "TimeoutError" ||
-      withCode?.name === "AbortError"
+      name === "TimeoutError" ||
+      name === "AbortError"
     );
   };
 
-  // The priming poll returns immediately and yields the sequence cursor, so a
-  // segment that dies before delivering one cannot lose an event.
-  let payload = await postWatch({ fromNow: !options.replay }, 0);
-  let afterSequence =
-    typeof payload.nextSequence === "number" ? payload.nextSequence - 1 : 0;
+  // A stopped server closes the long-poll socket under the CLI, and a server
+  // that has not come back yet refuses the next connection.
+  const isConnectionLoss = (error: unknown): boolean => {
+    const code = errorCode(error);
+    return (
+      code === "UND_ERR_SOCKET" ||
+      code === "ECONNRESET" ||
+      code === "ECONNREFUSED" ||
+      code === "EPIPE"
+    );
+  };
+
+  // null means unreachable; undefined means reachable without an instance id.
+  const readServerInstanceId = async (): Promise<string | null | undefined> => {
+    try {
+      const response = await deps.fetchImpl(new URL(STATUS_PATH, serverUrl), {
+        signal: AbortSignal.timeout(STATUS_TIMEOUT_MS),
+      });
+      if (!response.ok) return null;
+      const payload = (await response.json()) as { instanceId?: unknown };
+      return typeof payload.instanceId === "string"
+        ? payload.instanceId
+        : undefined;
+    } catch {
+      return null;
+    }
+  };
+
+  // A restart mid-review (`roughdraft stop`, upgrade, `roughdraft start`)
+  // must not strand the blocking open: once the watch is established, a lost
+  // connection waits for the server to answer again at the same URL. The
+  // window is bounded so a server that is gone for good is reported instead
+  // of waited on forever.
+  const configuredReconnectSeconds = Number(
+    deps.env.ROUGHDRAFT_WATCH_RECONNECT_SECONDS,
+  );
+  const reconnectWindowSeconds =
+    Number.isFinite(configuredReconnectSeconds) &&
+    configuredReconnectSeconds > 0
+      ? configuredReconnectSeconds
+      : 60;
+  const reconnectIntervalMs = 2000;
+  const reconnectProbes =
+    Math.floor((reconnectWindowSeconds * 1000) / reconnectIntervalMs) + 1;
+
   const deadline =
     options.timeoutSeconds !== undefined
       ? Date.now() + options.timeoutSeconds * 1000
       : undefined;
+
+  const waitForServer = async (
+    knownInstanceId: string | undefined,
+  ): Promise<
+    | { outcome: "restarted"; instanceId: string | undefined }
+    | { outcome: "resumed" }
+    | { outcome: "gone" }
+    | { outcome: "deadline" }
+  > => {
+    deps.error(
+      `Roughdraft server at ${serverUrl} stopped during the review; waiting up to ${reconnectWindowSeconds} s for it to come back.`,
+    );
+    for (let probe = 0; probe < reconnectProbes; probe += 1) {
+      if (probe > 0) {
+        await deps.sleepImpl(reconnectIntervalMs);
+      }
+      if (deadline !== undefined && Date.now() >= deadline) {
+        return { outcome: "deadline" };
+      }
+      const instanceId = await readServerInstanceId();
+      if (instanceId === null) continue;
+      if (knownInstanceId !== undefined && instanceId === knownInstanceId) {
+        return { outcome: "resumed" };
+      }
+      return { outcome: "restarted", instanceId };
+    }
+    return { outcome: "gone" };
+  };
+
+  const reportServerGone = (): number => {
+    const message = `Roughdraft server at ${serverUrl} did not come back within ${reconnectWindowSeconds} s. This command cannot receive Done Reviewing for ${target.openPath}; run \`roughdraft open ${relativeDisplayPath(deps.cwd, target.openPath)}\` again to resume the review.`;
+    if (json) {
+      emitJson(deps.log, {
+        disconnected: true,
+        error: message,
+        ...(options.loop ? { done: false, doneReason: null } : {}),
+      });
+    } else {
+      deps.error(message);
+    }
+    return 1;
+  };
+
+  let serverInstanceId = (await readServerInstanceId()) ?? undefined;
+
+  // The priming poll returns immediately and yields the sequence cursor, so a
+  // segment that dies before delivering one cannot lose an event. A server
+  // that cannot be reached here has nothing to restore, so the failure
+  // propagates as it always has.
+  let payload = await postWatch({ fromNow: !options.replay }, 0);
+  let afterSequence =
+    typeof payload.nextSequence === "number" ? payload.nextSequence - 1 : 0;
+  let primeAgain = false;
 
   while (payload.timedOut) {
     let segmentSeconds = segmentCapSeconds;
@@ -2264,12 +2370,32 @@ async function runWatch(
       segmentSeconds = Math.min(segmentSeconds, remaining);
     }
     try {
-      payload = await postWatch(
-        { fromNow: false, afterSequence },
-        segmentSeconds,
-      );
+      if (primeAgain) {
+        // The replacement's queue starts over, so the old cursor means
+        // nothing to it; prime again exactly as at the start.
+        payload = await postWatch({ fromNow: !options.replay }, 0);
+        primeAgain = false;
+      } else {
+        payload = await postWatch(
+          { fromNow: false, afterSequence },
+          segmentSeconds,
+        );
+      }
     } catch (error) {
-      if (!isSegmentTimeout(error)) throw error;
+      if (isSegmentTimeout(error)) continue;
+      if (!isConnectionLoss(error)) throw error;
+      const reconnect = await waitForServer(serverInstanceId);
+      if (reconnect.outcome === "gone") return reportServerGone();
+      if (reconnect.outcome === "deadline") break;
+      if (reconnect.outcome === "restarted") {
+        serverInstanceId = reconnect.instanceId;
+        primeAgain = true;
+        deps.error(
+          "Reconnected to the restarted Roughdraft server; waiting for Done Reviewing again.",
+        );
+      } else {
+        deps.error("Reconnected to the Roughdraft server; resuming the watch.");
+      }
       continue;
     }
     if (typeof payload.nextSequence === "number") {
