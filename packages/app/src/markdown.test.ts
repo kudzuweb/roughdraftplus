@@ -380,6 +380,22 @@ describe("reserialize fidelity", () => {
     expect(saveCriticMarkdown(markdown)).toBe(markdown);
   });
 
+  it("keeps single tildes in prose as text", () => {
+    const markdown = "Roughly ~57% (~100h) of the work is left.\n";
+
+    expect(toHtml(markdown)).not.toContain("<del>");
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps strikethrough written with two tildes", () => {
+    const markdown = "Ship ~~later~~ today.\n";
+
+    expect(toHtml(markdown)).toContain("<del>later</del>");
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
   it("keeps an aligned table separator row as typed", () => {
     const markdown = "| Left | Right |\n|:-----|------:|\n| First | Ready |\n";
 
