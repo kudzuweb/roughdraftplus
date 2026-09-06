@@ -135,11 +135,14 @@ Quality checks:
 pnpm lint
 pnpm test
 pnpm check
+pnpm test:packaging
 ```
 
 `pnpm check` is the same command the pull request workflow runs before merge.
+
+`pnpm test:packaging` runs separately because it needs the build `pnpm check` produces, and because it reaches the npm registry to install the packed tarball. It packs the repo, installs the tarball into a throwaway prefix outside the worktree, and runs `roughdraft --help` and `roughdraft status --json` from that install. Run it after `pnpm build` whenever you change the root `package.json` — a runtime dependency declared only under `packages/*/package.json` works in the workspace and is missing from a real install, because npm does not install dependencies of `file:` sub-packages. CI runs it on every pull request.
 ## Publishing
-This fork does not publish to npm. The upstream `Publish to npm` workflow is still in the repository but is gated to `github.repository == 'Lex-Inc/roughdraft'`, so it never runs here. Installs come from a local clone via `npm pack` (see the install instructions above).
+This fork does not publish to npm. The upstream `Publish to npm` workflow is still in the repository but is gated to `github.repository == 'Lex-Inc/roughdraft'`, so it never runs here. Installs come from a local clone via `npm pack` (see the install instructions above), which is the artifact `pnpm test:packaging` exercises.
 ## Files on disk
 ```
 my-essay/

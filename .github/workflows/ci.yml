@@ -28,6 +28,10 @@ jobs:
       - name: Run repo checks
         run: pnpm check
 
+      # Consumes the build `pnpm check` produces, so it has to follow that step.
+      - name: Check the packaged install
+        run: pnpm test:packaging
+
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
