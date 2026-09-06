@@ -149,7 +149,7 @@ my-essay/
 
 Roughdraft reads and writes the markdown file directly.
 ## Network exposure
-By default the server binds loopback only (`127.0.0.1` and `::1`), so nothing outside your machine can reach it and no token or extra configuration is needed.
+By default the server binds loopback only (`127.0.0.1` and `::1`), so nothing else on the network can open a connection to it directly, and no token or extra configuration is needed.
 
 `ROUGHDRAFT_BIND_HOST` binds other addresses, which is how a document reaches a browser on another machine over something like Tailscale. Any address outside loopback makes the server reachable from another machine, so a non-loopback deployment must set both variables:
 
@@ -167,6 +167,12 @@ Every route that reads or writes a file on the host then requires the token as `
 The token protects the transport, not the paths themselves: any caller holding it can name any `projectPath` on the host. Give it only to people you would give a shell.
 
 The browser has no way to send a bearer header on the local-document routes, so remote viewing goes through remote-document mode, whose viewer URL carries the token in the query string. A non-loopback server is not a way to browse the host's files from another machine's browser.
+
+### A reverse proxy switches the guard off
+
+The guard reads the addresses the server was told to bind and cannot see anything in front of it. Put nginx, Caddy, a Cloudflare tunnel or `tailscale serve` in front of a loopback-bound Roughdraft and every request arrives from loopback, so the server stays in its unguarded default while the proxy hands the file routes to whoever can reach the proxy. Nothing the server can check would tell the two apart, because the proxy's own connection really is local.
+
+If you front Roughdraft with a proxy, set `ROUGHDRAFT_TOKEN` and bind a non-loopback address so the guard is on, or make the proxy itself require authentication before it forwards anything.
 ## Agent setup
 If you want your local agent to remember the Roughdraft workflow, ask it to read the setup prompt:
 
