@@ -20,7 +20,14 @@ const protectedTableMarkdown = [
   "| --- | --- |",
   "| `a \\| b` | either |",
   "",
+  "Trailing paragraph.",
+  "",
 ].join("\n");
+
+const isMac = process.platform === "darwin";
+const cutShortcut = isMac ? "Meta+x" : "Control+x";
+const pasteShortcut = isMac ? "Meta+v" : "Control+v";
+const selectAllShortcut = isMac ? "Meta+a" : "Control+a";
 
 function placeholder(page: Page) {
   return page.getByTestId("unrendered-block-placeholder");
@@ -31,16 +38,46 @@ function deletionRefusedNote(page: Page) {
 }
 
 async function chooseEditingMode(page: Page) {
-  await page.getByTestId("document-mode-trigger").click();
-  await page.getByTestId("document-mode-option-editing").click();
-  await expect(page.getByTestId("document-mode-trigger")).toContainText(
-    "Editing",
-  );
+  await chooseMode(page, "editing", "Editing");
 }
 
 async function selectPlaceholder(page: Page) {
   await richTextEditor(page).click();
   await placeholder(page).click();
+}
+
+async function chooseMode(page: Page, mode: string, label: string) {
+  await page.getByTestId("document-mode-trigger").click();
+  await page.getByTestId(`document-mode-option-${mode}`).click();
+  await expect(page.getByTestId("document-mode-trigger")).toContainText(label);
+}
+
+/**
+ * Sweep a text range from the paragraph above the placeholder to the end of the
+ * document. Shift-arrow leaves the view's own selection behind the browser's,
+ * so this is the gesture that reaches ProseMirror as an observed DOM change
+ * rather than as a key any handler can decline.
+ */
+async function sweepRangeAcrossPlaceholder(page: Page) {
+  await placeholder(page).click();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Shift+End");
+}
+
+async function expectFileUnchanged(page: Page, projectDir: string) {
+  // Autosave only writes when the editor reports a change, so a refused
+  // gesture should leave the file exactly as it was written.
+  await page.waitForTimeout(1_000);
+  expect(readProjectFile(projectDir, "protected.md")).toBe(
+    protectedTableMarkdown,
+  );
+}
+
+function writeProtectedFile(projectDir: string) {
+  return writeProjectFile(projectDir, "protected.md", protectedTableMarkdown);
 }
 
 test.describe("selected unrendered-block placeholder", () => {
@@ -111,6 +148,97 @@ test.describe("selected unrendered-block placeholder", () => {
 
     await expect(deletionRefusedNote(page)).toBeHidden();
     await expect(placeholder(page)).toBeVisible();
+  });
+
+  test("refuses a cut of the selected placeholder", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openMarkdownFile(page, writeProtectedFile(projectDir));
+    await chooseEditingMode(page);
+    await selectPlaceholder(page);
+
+    await page.keyboard.press(cutShortcut);
+
+    await expect(deletionRefusedNote(page)).toBeVisible();
+    await expect(placeholder(page)).toBeVisible();
+    await expectFileUnchanged(page, projectDir);
+  });
+
+  test("refuses a paste over the selected placeholder", async ({
+    page,
+    context,
+  }) => {
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await openMarkdownFile(page, writeProtectedFile(projectDir));
+    await chooseEditingMode(page);
+    await page.evaluate(() => navigator.clipboard.writeText("PASTED"));
+    await selectPlaceholder(page);
+
+    await page.keyboard.press(pasteShortcut);
+
+    await expect(deletionRefusedNote(page)).toBeVisible();
+    await expect(placeholder(page)).toBeVisible();
+    await expectFileUnchanged(page, projectDir);
+  });
+
+  test("refuses a text range that sweeps across the placeholder", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, writeProtectedFile(projectDir));
+    await chooseEditingMode(page);
+    await richTextEditor(page).click();
+    await sweepRangeAcrossPlaceholder(page);
+
+    await page.keyboard.press("Backspace");
+
+    await expect(deletionRefusedNote(page)).toBeVisible();
+    await expect(placeholder(page)).toBeVisible();
+    await expectFileUnchanged(page, projectDir);
+  });
+
+  test("refuses typing over a whole-document selection", async ({ page }) => {
+    await openMarkdownFile(page, writeProtectedFile(projectDir));
+    await chooseEditingMode(page);
+    await richTextEditor(page).click();
+
+    await page.keyboard.press(selectAllShortcut);
+    await page.keyboard.type("z");
+
+    await expect(deletionRefusedNote(page)).toBeVisible();
+    await expect(placeholder(page)).toBeVisible();
+    await expectFileUnchanged(page, projectDir);
+  });
+
+  test("leaves a caret typing beside the placeholder alone", async ({
+    page,
+  }) => {
+    await openMarkdownFile(page, writeProtectedFile(projectDir));
+    await chooseEditingMode(page);
+    await placeholder(page).click();
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("End");
+
+    await page.keyboard.type(" tail");
+
+    await expect(deletionRefusedNote(page)).toBeHidden();
+    await expect(placeholder(page)).toBeVisible();
+    await expect(richTextEditor(page)).toContainText("Flags in use: tail");
+  });
+
+  test("leaves viewing mode untouched", async ({ page }) => {
+    await openMarkdownFile(page, writeProtectedFile(projectDir));
+    await chooseMode(page, "viewing", "Viewing");
+    await selectPlaceholder(page);
+
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Delete");
+    await page.keyboard.type("x");
+
+    await expect(placeholder(page)).toBeVisible();
+    await expect(deletionRefusedNote(page)).toBeHidden();
+    await expectFileUnchanged(page, projectDir);
   });
 
   test("leaves suggesting mode untouched", async ({ page }) => {

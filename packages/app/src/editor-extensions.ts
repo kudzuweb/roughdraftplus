@@ -15,8 +15,9 @@ import type {
   Node as ProseMirrorNode,
 } from "@tiptap/pm/model";
 import type { EditorState, Transaction } from "@tiptap/pm/state";
-import { NodeSelection, Plugin, PluginKey } from "@tiptap/pm/state";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Transform } from "@tiptap/pm/transform";
+import type { EditorView } from "@tiptap/pm/view";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -927,44 +928,104 @@ export interface RawMarkdownBlockGuardState {
 export const rawMarkdownBlockGuardPluginKey =
   new PluginKey<RawMarkdownBlockGuardState>("rawMarkdownBlockGuard");
 
-function selectedRawMarkdownBlockPos(state: EditorState): number | null {
-  const { selection } = state;
-  if (!(selection instanceof NodeSelection)) return null;
-  return selection.node.type.name === "rawMarkdownBlock"
-    ? selection.from
-    : null;
+/**
+ * Position of the first protected block inside a range that is about to be
+ * replaced, or null when the range holds none. An empty range never matches:
+ * a bare caret deletes nothing on its own, and ProseMirror answers Backspace
+ * beside an atom by selecting it, which is the state this guard then refuses.
+ */
+function rawMarkdownBlockPosInRange(
+  state: EditorState,
+  from: number,
+  to: number,
+): number | null {
+  if (from >= to) return null;
+
+  let found: number | null = null;
+  state.doc.nodesBetween(from, to, (node, pos) => {
+    if (found !== null) return false;
+    if (node.type.name === "rawMarkdownBlock") {
+      found = pos;
+      return false;
+    }
+    return true;
+  });
+
+  return found;
 }
 
 /**
- * Protects a selected unrendered-block placeholder from the keystrokes that
- * would replace it. The placeholder is clickable, so a selected atom takes its
- * Markdown with it on Backspace, Delete or the next character typed, and
- * autosave writes the loss to disk with nothing to undo it from. Refuse the
- * keystroke and mark the block so the placeholder can say why; the code view
- * is where the source is edited.
+ * Position of the first protected block this transaction would delete, or null
+ * when it would delete none. Textblocks are not descended into, so the walk
+ * stays cheap enough to run on every transaction.
+ */
+function firstDeletedRawMarkdownBlockPos(
+  tr: Transaction,
+  doc: ProseMirrorNode,
+): number | null {
+  let found: number | null = null;
+
+  doc.descendants((node, pos) => {
+    if (found !== null) return false;
+    if (node.type.name === "rawMarkdownBlock") {
+      if (tr.mapping.mapResult(pos).deleted) found = pos;
+      return false;
+    }
+    return !node.isTextblock;
+  });
+
+  return found;
+}
+
+/**
+ * Protects an unrendered-block placeholder from every gesture that would
+ * replace it. The placeholder is clickable, so a selected atom takes its
+ * Markdown with it on Backspace, Delete, the next character typed, a cut or a
+ * paste, and autosave writes the loss to disk with nothing to undo it from. A
+ * range selection that merely spans the placeholder does the same.
  *
- * Suggesting mode never reaches this plugin: `PageCard` claims Backspace,
- * Delete and text input in its own editor props, which ProseMirror consults
- * before any plugin's. The priority keeps the guard ahead of the base keymap,
- * which would otherwise delete the node before the guard saw the key.
+ * Two layers do the work, because no single one sees every route. The input
+ * handlers refuse the gesture before it happens and mark the block so the
+ * placeholder can say why. `filterTransaction` is the backstop: a shift-arrow
+ * range leaves `state.selection` behind the browser's own DOM selection, so
+ * that deletion reaches ProseMirror as an observed DOM change rather than as a
+ * key the handlers can decline. Only a rule about the document catches it.
+ *
+ * The two exemptions are the ways a protected block may legitimately leave:
+ * `preventUpdate` marks tiptap's `setContent`, which is how a document is
+ * loaded or reloaded from disk, and the history meta marks an undo or redo.
+ *
+ * Suggesting mode never reaches this plugin: `PageCard` claims key presses,
+ * text input and paste in its own editor props, which ProseMirror consults
+ * before any plugin's, and its own Cmd-X branch stops a cut before the DOM
+ * event exists. Viewing mode never reaches it either, because ProseMirror runs
+ * its edit handlers only on an editable view. The priority keeps the guard
+ * ahead of the base keymap, which would otherwise delete the node before the
+ * guard saw the key.
  */
 const RawMarkdownBlockGuard = Extension.create({
   name: "rawMarkdownBlockGuard",
   priority: 1000,
 
   addProseMirrorPlugins() {
-    const refuse = (
-      state: EditorState,
-      dispatch: (tr: Transaction) => void,
-    ) => {
-      const refusedPos = selectedRawMarkdownBlockPos(state);
+    const { editor } = this;
+
+    const refuseRange = (
+      view: EditorView,
+      from: number,
+      to: number,
+    ): boolean => {
+      const refusedPos = rawMarkdownBlockPosInRange(view.state, from, to);
       if (refusedPos === null) return false;
 
-      dispatch(
-        state.tr.setMeta(rawMarkdownBlockGuardPluginKey, { refusedPos }),
+      view.dispatch(
+        view.state.tr.setMeta(rawMarkdownBlockGuardPluginKey, { refusedPos }),
       );
       return true;
     };
+
+    const refuseSelection = (view: EditorView): boolean =>
+      refuseRange(view, view.state.selection.from, view.state.selection.to);
 
     return [
       new Plugin<RawMarkdownBlockGuardState>({
@@ -982,15 +1043,51 @@ const RawMarkdownBlockGuard = Extension.create({
               : value;
           },
         },
+        filterTransaction(tr, state) {
+          if (!tr.docChanged) return true;
+          // `PluginKey("history")` resolves to this string, and reading it by
+          // name keeps the guard from importing the history plugin.
+          if (tr.getMeta("history$")) return true;
+          if (tr.getMeta("preventUpdate") !== undefined) return true;
+
+          const refusedPos = firstDeletedRawMarkdownBlockPos(tr, state.doc);
+          if (refusedPos === null) return true;
+
+          // The transaction is being rejected, so the position still points at
+          // the block in the document that stays. Dispatching the note has to
+          // wait until this dispatch has finished.
+          queueMicrotask(() => {
+            editor.view.dispatch(
+              editor.state.tr.setMeta(rawMarkdownBlockGuardPluginKey, {
+                refusedPos,
+              }),
+            );
+          });
+          return false;
+        },
         props: {
           handleKeyDown(view, event) {
             if (event.key !== "Backspace" && event.key !== "Delete") {
               return false;
             }
-            return refuse(view.state, view.dispatch.bind(view));
+            return refuseSelection(view);
           },
-          handleTextInput(view) {
-            return refuse(view.state, view.dispatch.bind(view));
+          handleTextInput(view, from, to) {
+            return refuseRange(view, from, to);
+          },
+          handlePaste(view) {
+            return refuseSelection(view);
+          },
+          handleDOMEvents: {
+            // `runCustomHandler` consults these before ProseMirror's own cut
+            // handler, which otherwise dispatches a bare `deleteSelection()`.
+            // Preventing the default also stops the browser removing the DOM
+            // under the node view.
+            cut(view, event) {
+              if (!refuseSelection(view)) return false;
+              event.preventDefault();
+              return true;
+            },
           },
           decorations(state) {
             const refusedPos =
