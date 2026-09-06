@@ -285,7 +285,7 @@ describe("reserialize fidelity", () => {
 
   it("recomputes the separator when the column count no longer matches", () => {
     const html =
-      '<table data-markdown-separator="|---|---|"><thead><tr><th>A</th><th>B</th><th>C</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>';
+      '<table data-markdown-table-separator="|---|---|"><thead><tr><th>A</th><th>B</th><th>C</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>';
 
     expect(toMarkdown(html)).toBe(
       "| A   | B   | C   |\n| --- | --- | --- |\n| 1   | 2   | 3   |\n",
