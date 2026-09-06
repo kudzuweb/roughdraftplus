@@ -72,6 +72,15 @@ export type DocumentDiskChangeState =
   | "paused"
   | "server-gone";
 
+export function diskChangeStateAfterServerGone(
+  current: DocumentDiskChangeState,
+): DocumentDiskChangeState {
+  // Only a clean document becomes "server-gone". A paused, changed or
+  // conflicted one already holds a decision the reviewer has to make, and a
+  // refused write must not replace it or reopen the adoption gate.
+  return current === "clean" ? "server-gone" : current;
+}
+
 export function shouldWarnBeforeUnload({
   activeDocumentPath,
   isDirty,
@@ -1747,8 +1756,11 @@ export function App() {
   adoptReplacementServerRef.current = adoptReplacementServer;
 
   const handleServerInstanceGone = useCallback(() => {
-    documentDiskChangeStateRef.current = "server-gone";
-    setDocumentDiskChangeState("server-gone");
+    const nextState = diskChangeStateAfterServerGone(
+      documentDiskChangeStateRef.current,
+    );
+    documentDiskChangeStateRef.current = nextState;
+    setDocumentDiskChangeState(nextState);
     void adoptReplacementServer();
   }, [adoptReplacementServer]);
 
