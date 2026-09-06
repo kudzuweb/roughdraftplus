@@ -178,9 +178,7 @@ test.describe("CriticMarkup review flows", () => {
       await page.getByTestId(`comment-thread-${commentId}`).click();
       await page
         .getByTestId(`comment-rail-${commentId}-action-delete-thread`)
-        .evaluate((element) => {
-          (element as HTMLButtonElement).click();
-        });
+        .click();
     }
 
     await expect
