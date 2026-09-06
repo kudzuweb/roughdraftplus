@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { Editor } from "@tiptap/core";
+import type { CriticComment } from "../src/critic-markup";
 import {
   advanceReviewIdCounters,
   createCriticChange,
@@ -924,6 +925,31 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     }
 
     expect(removeCommentsFromCriticMarkdown(input, removedIds)).toBe(cleared);
+  });
+
+  it("stops walking descendants when two comments answer each other", () => {
+    const comments = new Map<string, CriticComment>([
+      [
+        "c1",
+        {
+          id: "c1",
+          content: "Needs a source",
+          createdAt: "2026-04-24T00:00:00.000Z",
+          parentCommentId: "c2",
+        },
+      ],
+      [
+        "c2",
+        {
+          id: "c2",
+          content: "Answers c1 while c1 answers it",
+          createdAt: "2026-04-24T00:00:01.000Z",
+          parentCommentId: "c1",
+        },
+      ],
+    ]);
+
+    expect(getCommentDescendantIds("c1", comments)).toEqual(["c2"]);
   });
 
   it("removes a disposable anchor that spans a soft line break", () => {

@@ -287,6 +287,37 @@ describe("document comment layout helpers", () => {
     expect(items[0]?.commentIds).toEqual(["c1", "c2", "c3"]);
   });
 
+  it("builds the rail without hanging when two comments answer each other", () => {
+    const comments = createCommentsMap([
+      {
+        id: "c1",
+        content: "Needs a source",
+        createdAt: "2026-04-24T00:00:00.000Z",
+        parentCommentId: "c2",
+      },
+      {
+        id: "c2",
+        content: "Answers c1 while c1 answers it",
+        createdAt: "2026-04-24T00:00:01.000Z",
+        parentCommentId: "c1",
+      },
+    ]);
+
+    expect(() =>
+      buildCommentThreadRailItems(
+        [
+          {
+            key: "c1",
+            commentIds: ["c1"],
+            anchorTop: 200,
+            anchorBottom: 214,
+          },
+        ],
+        comments,
+      ),
+    ).not.toThrow();
+  });
+
   it("lists an inline reply once when the anchor already carries it", () => {
     const comments = createCommentsMap([
       {

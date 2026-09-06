@@ -776,12 +776,16 @@ export function getCommentDescendantIds(
   }
 
   const descendantIds: string[] = [];
+  // A hand-edited document can point two `re:` entries at each other, which
+  // would otherwise walk forever.
+  const visited = new Set<string>([commentId]);
   const stack = [...(childrenByParentId.get(commentId) ?? [])].reverse();
 
   while (stack.length > 0) {
     const nextCommentId = stack.pop();
-    if (!nextCommentId) continue;
+    if (!nextCommentId || visited.has(nextCommentId)) continue;
 
+    visited.add(nextCommentId);
     descendantIds.push(nextCommentId);
 
     const childIds = childrenByParentId.get(nextCommentId) ?? [];
