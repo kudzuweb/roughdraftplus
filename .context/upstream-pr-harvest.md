@@ -2,7 +2,7 @@
 
 One pass over every open pull request on `Lex-Inc/roughdraft`, the unmaintained upstream of this fork, with a verdict each. Upstream PRs are raw material for the fork's own issues, never merge-as-is candidates: every harvest below is reworked into a fork PR that follows `AGENTS.md`, lands its failing test first, and cites the upstream PR in its build record.
 
-Every verdict was checked on 2026-09-05 against upstream's open list (24 PRs, `gh pr list --repo Lex-Inc/roughdraft --state open`) and this fork's `main` at 98e85d5. A verdict is "harvest" when the PR carries material worth reworking for a named fork issue, and "skip" otherwise, with the reason. Where several PRs address one bug, section 3 compares them and names the design that won.
+Every verdict was checked on 2026-09-05 against upstream's open list (24 PRs, `gh pr list --repo Lex-Inc/roughdraft --state open`) and this fork's `main` at 98e85d5, and re-checked on 2026-09-06 against 5634538, the merge of PR 29 that closed fork issue #3. A verdict is "harvest" when the PR carries material worth reworking for a named fork issue, and "skip" otherwise, with the reason. Where several PRs address one bug, section 3 compares them and names the design that won.
 
 Already fixed at source on this fork, so any upstream PR duplicating them is a skip: the yaml root dependency (4c153c5), the five-minute watch death (dd7fa52), and every registry install and update path (4481200).
 
@@ -45,7 +45,7 @@ Reading depth: the full diff was read for every PR except the seven large featur
 | 139 | 'roughdraft open' crashes after 5 minutes of waiting (gorkamolero, 2026-07-13) | Skip: already fixed in the fork at dd7fa52, whose design is equivalent to this one (section 3). |
 | 141 | Show full-value tooltips for clipped path and filename in the file menu (foobarnes, 2026-07-22) | Skip: #15 wants the document path always visible in the UI, and this shows it only on a 600 ms hover inside the file menu. Its shared `tooltip.tsx` changes (positioner z-index above popovers, optional `arrowClassName`) are not needed by any fork issue. |
 | 142 | Popover arrow rendering artifacts in the document file menu (foobarnes, 2026-07-22) | Skip: no fork issue, cosmetic. Three-line change to `components/ui/popover.tsx` (`isolate`, arrow at `z-[-1]`, `arrowPadding={12}`) that applies as-is if anyone wants it. |
-| 143 | Render Mermaid diagrams and highlight fenced code (simulcast, 2026-08-06) | Harvest, one part, for #3 (serializer reflow): its `serializeCriticCodeChildren` replaces `service.turndown(codeElement.innerHTML)` inside `addCriticCodeBlockRule` with a node walk that serializes comment and change spans inside a fence without routing the code through Turndown, which is the mechanism behind the fork's "fenced blocks flatten onto one line" symptom. The Mermaid and Shiki halves are skipped: no fork issue asks for them, though this is the better of the two Mermaid designs (section 3). |
+| 143 | Render Mermaid diagrams and highlight fenced code (simulcast, 2026-08-06) | Harvest, one part, for the fenced-CriticMarkup ticket to be filed from section 5 (no open fork issue covers it; #3 closed with PR 29 without fixing it): its `serializeCriticCodeChildren` replaces `service.turndown(codeElement.innerHTML)` inside `addCriticCodeBlockRule` with a node walk that serializes comment and change spans inside a fence without routing the code through Turndown. That Turndown call is the mechanism only for fences that carry a comment or change span; a plain multi-line fence round-trips intact on the fork. The Mermaid and Shiki halves are skipped: no fork issue asks for them, though this is the better of the two Mermaid designs (section 3). |
 | 144 | Fix `open`/`watch` crash when a review runs longer than 5 minutes (jamescbury, 2026-08-07) | Harvest, one part, for #11 (server restart mid-review): its bounded retry on transient fetch failures (up to 5 consecutive, 2 s apart, with a stderr line each) plus the test that injects a mid-watch fetch failure. The fork's `runWatch` retries only timeout-class errors and rethrows everything else (`packages/server/src/cli.ts:2173-2187`), so a connection refused during a server restart still kills the blocking `open`. The segmentation itself is already fixed at dd7fa52 (section 3). |
 | 145 | Render replies that live only in YAML endmatter (moiri-gamboni, 2026-08-08) | Harvest for #7; section 1 names what to carry. |
 | 147 | Add document width preference toggle for comfortable/wide layouts (claudiunicolaa, 2026-08-18) | Skip: no fork issue asks for a width preference. Overlaps PR 103's width setting; if ever wanted, this focused version is the one to rework (section 3). |
@@ -87,7 +87,7 @@ Not a bug, three overlapping layout features with no fork issue. PR 103 bundles 
 
 | Fork issue | Upstream material |
 |---|---|
-| #3, serializer reflow | PR 143's `serializeCriticCodeChildren` and the widened `addCriticCodeBlockRule` signature, with its `critic-markup.test.ts` cases for comments and each suggestion form inside a fence. |
+| Fenced CriticMarkup flattens on save (ticket to be filed from section 5) | PR 143's `serializeCriticCodeChildren` and the widened `addCriticCodeBlockRule` signature, with its `critic-markup.test.ts` cases for comments and each suggestion form inside a fence. |
 | #7, legacy endmatter replies | PR 145 in full, per section 1. |
 | #11, server restart mid-review | PR 144's transient-failure retry in `runWatch` with its injected-failure test, and PR 148's `reviewWatcherSeen` flag in `DocumentWorkspace.tsx`, reworked against #28. |
 | #17, disposable anchor flag | PR 131 as the pattern for adding a metadata attribute through `rfm`, the spec, and the schema, in both inline and endmatter form. |
@@ -95,10 +95,11 @@ Not a bug, three overlapping layout features with no fork issue. PR 103 bundles 
 
 ## 5. Bugs the pass found in the fork with no backlog item
 
-These change no verdict above. Each is a candidate ticket.
+These change no verdict above. The orchestrator files each as its own ticket.
 
 | Finding | Evidence |
 |---|---|
+| A multi-line fence that carries a CriticMarkup comment saves as one line. | Checked against 5634538, the merge of PR 29 that closed #3: `packages/app/src/critic-markup/index.ts:1083` still reads `service.turndown(codeElement.innerHTML)` inside `addCriticCodeBlockRule`, and Turndown collapses the code's line breaks on the way out. The PR 30 review probe (2026-09-06, `criticMarkdownToEditorState` then `editorStateToCriticMarkdown`, run on this branch and on `git archive 5634538`) turned a three-line `ts` fence with `{==b==}{>>why b<<}{id="c1" ...}` on its middle line into a single line `const a = 1; const {==b==}{>>why b<<}{id="c1" ...} = 2; const c = 3;`; the same probe round-trips a plain fence with a blank line, and fences carrying `{++ ++}` or `{~~ ~> ~~}` text, unchanged. PR 143's `serializeCriticCodeChildren` is the material (section 2). |
 | A single tilde becomes strikethrough. | `marked.parse("Tracked ~57% of work time (~100h)", {gfm: true})` with the fork's installed marked returns `<del>57% of work time (</del>`, and `toHtml` in `packages/app/src/markdown.ts:575-581` calls marked the same way. PR 135's tokenizer is the fix. |
 | The MCP tool `roughdraft_watch_review_events` still long-polls unbounded. | `packages/server/src/mcp.ts:293-300` issues one fetch with no timeout and no segmentation, so an MCP caller waiting more than five minutes hits the same undici timeout the CLI used to. dd7fa52 fixed `cli.ts` only. PR 149 is the only upstream PR that touches this surface; the fork's segmented loop is the design to reuse. |
 | Nothing guards the root manifest against a future rfm runtime dependency. | The fork has no equivalent of PR 110's `packaging.test.ts`; a new import in `packages/rfm` would reintroduce the global-install crash silently. |
