@@ -1,0 +1,80 @@
+name: Keep parent open
+
+on:
+  issues:
+    types:
+      - closed
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Number of a closed issue to check as if it had just been closed
+        required: true
+        type: string
+
+permissions:
+  issues: write
+
+concurrency:
+  group: keep-parent-open-${{ github.event.issue.number || inputs.issue_number }}
+  cancel-in-progress: false
+
+jobs:
+  reopen-if-sub-issues-open:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const issueNumber = Number(context.payload.issue?.number ?? context.payload.inputs?.issue_number);
+            if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+              core.setFailed(`No usable issue number in the event payload (${JSON.stringify(context.payload.inputs ?? null)}).`);
+              return;
+            }
+
+            const { repository } = await github.graphql(
+              `query ($owner: String!, $repo: String!, $number: Int!) {
+                repository(owner: $owner, name: $repo) {
+                  issue(number: $number) {
+                    state
+                    subIssuesSummary {
+                      total
+                      completed
+                    }
+                  }
+                }
+              }`,
+              { owner, repo, number: issueNumber },
+            );
+
+            const issue = repository.issue;
+            const { total, completed } = issue.subIssuesSummary;
+            const stillOpen = total - completed;
+            core.info(`#${issueNumber} is ${issue.state} with ${total} sub-issues, ${completed} completed, ${stillOpen} still open.`);
+
+            if (issue.state !== "CLOSED") {
+              core.info("Issue is not closed; nothing to do.");
+              return;
+            }
+            if (total === 0) {
+              core.info("Issue has no sub-issues; leaving it closed.");
+              return;
+            }
+            if (stillOpen <= 0) {
+              core.info("Every sub-issue is closed; leaving it closed.");
+              return;
+            }
+
+            await github.rest.issues.update({ owner, repo, issue_number: issueNumber, state: "open" });
+
+            const noun = total === 1 ? "sub-issue" : "sub-issues";
+            const verb = stillOpen === 1 ? "is" : "are";
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              body: `[github-actions] Reopened this issue because ${stillOpen} of its ${total} ${noun} ${verb} still open. Close the sub-issues first, then close this one.`,
+            });
+
+            core.notice(`Reopened #${issueNumber}: ${stillOpen} of ${total} sub-issues still open.`);
