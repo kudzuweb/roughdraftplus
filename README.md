@@ -235,7 +235,7 @@ ROUGHDRAFT_DEV_WRAPPER_REPO_ROOT
 ## Roughdraft-flavored CriticMarkup
 Roughdraft uses [CriticMarkup](https://criticmarkup.com) as the readable review layer inside normal Markdown files. It supports the standard markers for comments, highlights, insertions, deletions, and substitutions:
 
-The canonical Roughdraft Flavored Markdown spec is published at [roughdraft.md/spec/roughdraft-flavored-markdown.md](https://roughdraft.md/spec/roughdraft-flavored-markdown.md). The review-index JSON Schema is published at [roughdraft.md/spec/roughdraft-flavored-markdown.schema.json](https://roughdraft.md/spec/roughdraft-flavored-markdown.schema.json).
+The canonical Roughdraft Flavored Markdown spec is [docs/spec/roughdraft-flavored-markdown.md](docs/spec/roughdraft-flavored-markdown.md) in this repository, and the review-index JSON Schema is [docs/spec/roughdraft-flavored-markdown.schema.json](docs/spec/roughdraft-flavored-markdown.schema.json). The copies hosted at roughdraft.md are upstream's and still prescribe endmatter replies, which Roughdraft does not display.
 
 ```markdown
 This is {--deleted--} text.
@@ -245,15 +245,15 @@ This is {>>a comment<<} in the margin.
 This is {==highlighted==} text.
 ```
 
-Roughdraft extends those markers with compact id references so review state can round-trip through the file. Root comments and suggestions keep an inline anchor such as `{#c1}` or `{#s1}`, while metadata lives in final YAML endmatter:
+Roughdraft extends those markers with an inline attribute block written immediately after each one, so review state round-trips through the file next to the text it describes:
 
 ```markdown
-Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2026-06-14T06:38:34.897Z"}{>><<}{id="c6" by="user" at="2026-06-14T06:48:16.819Z" re="c1"}. --- comments: c1: by: user at: "2026-04-28T12:00:00.000Z"
+Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.
 ```
 
 Supported attributes:
 
-- `id` is the compact inline reference after the comment or suggested change.
+- `id` is the stable document-local id of the comment, reply, or suggested change.
   
 - `by` records the reviewer or agent that created it.
   
@@ -262,33 +262,21 @@ Supported attributes:
 - `re` links a reply to another comment or suggestion id.
   
 
-Replies are stored in endmatter with a `body` and `re` pointer:
+Replies are inline: each one sits directly after the comment it answers, with `re` pointing at the parent id.
 
 ```markdown
-Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2026-06-14T06:38:34.897Z"}{>><<}{id="c6" by="user" at="2026-06-14T06:48:16.819Z" re="c1"}. --- comments: c1: by: user at: "2026-04-28T12:00:00.000Z" c2: body: I can add one from the intro. by: AI at: "2026-04-28T12:05:00.000Z" re: c1
+Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}{>>I can add one from the intro.<<}{id="r1" by="AI" at="2026-04-28T12:05:00.000Z" re="c1"}.
 ```
 
-Suggested changes can also carry ids and discussion:
+Suggested changes carry ids the same way, and a comment after a suggestion discusses it:
 
 ```markdown
-Add {++one concrete example++}{#s1}.
-Remove {--vague phrasing--}{#s2}.
-Use {~~rough~>specific~~}{#s3} wording.
-
----
-suggestions:
-  s1:
-    by: AI
-    at: "2026-04-28T12:10:00.000Z"
-  s2:
-    by: user
-    at: "2026-04-28T12:13:00.000Z"
-  s3:
-    by: AI
-    at: "2026-04-28T12:14:00.000Z"
+Add {++one concrete example++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}{>>Use the launch story.<<}{id="r2" by="user" at="2026-04-28T12:12:00.000Z" re="s1"}.
+Remove {--vague phrasing--}{id="s2" by="user" at="2026-04-28T12:13:00.000Z"}.
+Use {~~rough~>specific~~}{id="s3" by="AI" at="2026-04-28T12:14:00.000Z"} wording.
 ```
 
-Ids are never reused within a document. Once a comment or suggestion has been removed, the endmatter records the highest number allocated for that family in a `counters` map, whether the review markup itself is inline or endmatter-backed, and new ids are allocated above it:
+Ids are never reused within a document. Once a comment or suggestion has been removed, the endmatter records the highest number allocated for that family in a `counters` map, whether the review markup itself is inline or endmatter-backed, and new ids are allocated above it. This map is the only review metadata Roughdraft writes to endmatter:
 
 ```markdown
 ---
@@ -297,7 +285,7 @@ counters:
   suggestions: 2
 ```
 
-Older inline metadata such as `{id="c1" by="user" at="..."}` and legacy `{@id:c1; by:user; at:...@}` blocks are still accepted for compatibility.
+Older documents may carry the upstream format instead: compact references such as `{#c1}` with `comments:` and `suggestions:` maps in final YAML endmatter, and replies stored there as entries with `body` and `re`. Roughdraft reads that format and preserves it on items it is not rewriting, but never writes new review items in it, because endmatter replies are not displayed. Legacy `{@id:c1; by:user; at:...@}` blocks are also still accepted.
 
 CriticMarkup inside inline code and fenced code blocks is treated as literal example text, not live review feedback:
 

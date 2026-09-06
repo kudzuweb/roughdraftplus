@@ -92,17 +92,17 @@ mkdir -p "$HOME/.claude"
 
 Use imports or symlinks only when the target agent supports normal Markdown files at that path. For UI-only settings such as Cursor User Rules or GitHub Copilot personal instructions, tell the user what text to add rather than editing an unknown file.
 
-The canonical Roughdraft instruction block is hosted at https://roughdraft.md/prompt.md. After you identify or create the right instruction file, prefer appending or merging that exact block:
+The canonical Roughdraft instruction block is `packages/app/public/prompt.md` in the roughdraftplus repository, served raw at https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/packages/app/public/prompt.md. Do not fetch it from roughdraft.md, whose hosted copy is upstream's and prescribes a reply format Roughdraft does not display. After you identify or create the right instruction file, prefer appending or merging that exact block:
 
 ```bash
 agent_instructions_file="/absolute/path/to/AGENTS.md"
 printf "\n\n" >> "$agent_instructions_file"
-curl -fsSL https://roughdraft.md/prompt.md >> "$agent_instructions_file"
+curl -fsSL https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/packages/app/public/prompt.md >> "$agent_instructions_file"
 ```
 
-If the instruction file already has Roughdraft guidance, merge in any missing guidance from https://roughdraft.md/prompt.md instead of duplicating the section.
+If the instruction file already has Roughdraft guidance, merge in any missing guidance from that file instead of duplicating the section. The block below is the same text, so you can copy it from here when `curl` is unavailable.
 
-If you cannot use `curl`, add guidance like this:
+If you cannot use `curl`, add exactly this block:
 
 ````markdown
 ## Roughdraft
@@ -135,32 +135,21 @@ Deletion: `{--old text--}`
 Substitution: `{~~old~>new~~}`
 Highlight: `{==text==}`
 
-When you add a new comment or suggested change, use the extended Roughdraft format with a compact inline reference such as `{#c1}` or `{#s1}`, then add metadata in final YAML endmatter. Generate a stable document-local id (`c1`, `c2`, etc. for comments; `s1`, `s2`, etc. for suggestions), set `by` to your agent or author label, set `at` to the current ISO timestamp, and set `re` when replying to an existing comment or suggestion. Never reuse an id the document has already used: allocate above every id present and above `counters.comments` or `counters.suggestions` in the endmatter when that map exists, and raise the counter to the id you allocated. When you remove threads or suggestions, you must record the counter: set `counters.comments` or `counters.suggestions` in the final YAML endmatter to the highest id number removed whenever it exceeds every id of that family still present, creating the `counters` map if the document has none. Without that record the next comment the reviewer adds would get a removed id.
+When you add a new comment or suggested change, write its metadata as an inline attribute block immediately after the marker, such as `{>>Comment text<<}{id="c1" by="AI" at="2026-04-28T12:00:00.000Z"}`. Generate a stable document-local id (`c1`, `c2`, etc. for comments; `s1`, `s2`, etc. for suggestions), set `by` to your agent or author label, and set `at` to the current ISO timestamp. Never reuse an id the document has already used: allocate above every id present and above `counters.comments` or `counters.suggestions` in the final YAML endmatter when that map exists, and raise the counter to the id you allocated. When you remove threads or suggestions, you must record the counter: set `counters.comments` or `counters.suggestions` in the final YAML endmatter to the highest id number removed whenever it exceeds every id of that family still present, creating the `counters` map if the document has none. Without that record the next comment the reviewer adds would get a removed id. The `counters` map is the only review metadata that belongs in endmatter.
 
-Roughdraft may already have inline attribute blocks after comments and suggestions from older documents. Preserve these attributes unless you are intentionally removing the associated comment or suggestion. For new feedback, prefer compact references plus YAML endmatter.
+Replies are inline. Write each reply directly after the comment it answers, in the same attribute form, with `re` pointing at the parent id and a reply id (`r1`, `r2`, etc.) the document has not used:
 
-Anchored comments usually look like `{==selected text==}{>>Comment text<<}{#c1}`. Suggested changes usually look like `{++new text++}{#s1}` or `{~~old text~>new text~~}{#s2}`. Replies live in final YAML endmatter with a `body` and `re` pointer.
+`{>>reply text<<}{id="rN" by="AI" at="<ISO timestamp>" re="cN"}`
+
+Older documents may keep review metadata in final YAML endmatter behind compact references such as `{#c1}`, with replies stored as `comments.<id>` entries that carry `body` and `re`. That is a legacy format: read it and preserve it on items you are not rewriting, but never write new comments, replies, or suggestions in it. Roughdraft does not show endmatter replies, so a reply written there is invisible to the reviewer.
+
+Anchored comments look like `{==selected text==}{>>Comment text<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}`. Suggested changes look like `{++new text++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}` or `{~~old text~>new text~~}{id="s2" by="AI" at="2026-04-28T12:11:00.000Z"}`. A reply follows its parent on the same line.
 
 Example:
 
 ```markdown
-{==selected text==}{>>Comment text<<}{#c1}
-{++new text++}{#s1}
-
----
-comments:
-  c1:
-    by: AI
-    at: "2026-04-28T12:00:00.000Z"
-  c2:
-    body: I can make that edit.
-    by: AI
-    at: "2026-04-28T12:05:00.000Z"
-    re: c1
-suggestions:
-  s1:
-    by: AI
-    at: "2026-04-28T12:10:00.000Z"
+{==selected text==}{>>Comment text<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}{>>I can make that edit.<<}{id="r1" by="AI" at="2026-04-28T12:05:00.000Z" re="c1"}
+{++new text++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}
 ```
 
 Use `roughdraft help` and `roughdraft help criticmarkup` for local command and syntax details.
@@ -172,7 +161,7 @@ After updating your instructions, briefly tell the user which file you changed.
 
 Roughdraft uses CriticMarkup for inline comments and suggested changes while keeping all review state in the Markdown file.
 
-For exact syntax, metadata, and round-trip behavior, read the official Roughdraft Flavored Markdown spec at https://roughdraft.md/spec/roughdraft-flavored-markdown.md. The review-index JSON Schema is available at https://roughdraft.md/spec/roughdraft-flavored-markdown.schema.json.
+For exact syntax, metadata, and round-trip behavior, read the Roughdraft Flavored Markdown spec at `docs/spec/roughdraft-flavored-markdown.md` in the roughdraftplus repository, served raw at https://raw.githubusercontent.com/kudzuweb/roughdraftplus/main/docs/spec/roughdraft-flavored-markdown.md. The review-index JSON Schema sits beside it as `roughdraft-flavored-markdown.schema.json`.
 
 Base markers:
 
@@ -184,53 +173,27 @@ Substitution: `{~~old~>new~~}`
 Highlight: `{==text==}`
 ```
 
-When adding review feedback, prefer the extended Roughdraft format so comments and suggested changes keep ids, authors, timestamps, and thread relationships.
-
-Roughdraft extensions:
+When adding review feedback, use the extended Roughdraft format so comments, replies, and suggested changes keep ids, authors, timestamps, and thread relationships. Metadata is an inline attribute block written immediately after the marker it describes, and a reply sits directly after the comment it answers:
 
 ```markdown
-{==selected text==}{>>Comment text<<}{#c1}
-{++new text++}{#s1}
-{--old text--}{#s2}
-{~~old text~>new text~~}{#s3}
-
----
-comments:
-  c1:
-    by: user
-    at: "2026-04-28T12:00:00.000Z"
-  c2:
-    body: I can make that edit.
-    by: AI
-    at: "2026-04-28T12:05:00.000Z"
-    re: c1
-  c3:
-    body: Use the customer example here.
-    by: user
-    at: "2026-04-28T12:13:00.000Z"
-    re: s1
-suggestions:
-  s1:
-    by: AI
-    at: "2026-04-28T12:10:00.000Z"
-  s2:
-    by: user
-    at: "2026-04-28T12:11:00.000Z"
-  s3:
-    by: AI
-    at: "2026-04-28T12:12:00.000Z"
+{==selected text==}{>>Comment text<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}{>>I can make that edit.<<}{id="r1" by="AI" at="2026-04-28T12:05:00.000Z" re="c1"}
+{++new text++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}{>>Use the customer example here.<<}{id="r2" by="user" at="2026-04-28T12:13:00.000Z" re="s1"}
+{--old text--}{id="s2" by="user" at="2026-04-28T12:11:00.000Z"}
+{~~old text~>new text~~}{id="s3" by="AI" at="2026-04-28T12:12:00.000Z"}
 ```
 
-Metadata is written in final YAML endmatter:
+Attributes:
 
 ```text
-id  Stable document-local id for a comment or suggested change
+id  Stable document-local id for a comment, reply, or suggested change
 by  Author or agent label
 at  ISO timestamp
 re  Parent comment or suggestion id for replies
 ```
 
-A top-level `counters` map in the endmatter (`comments`, `suggestions`) records the highest id number ever allocated for each family so removed ids are never reused. Allocate above it, never lower it, and when you remove threads or suggestions record the highest id removed there if it exceeds every id still present.
+A top-level `counters` map in final YAML endmatter (`comments`, `suggestions`) records the highest id number ever allocated for each family so removed ids are never reused. Allocate above it, never lower it, and when you remove threads or suggestions record the highest id removed there if it exceeds every id still present. That map is the only review metadata that belongs in endmatter.
+
+Legacy documents may instead carry compact references such as `{#c1}` with `comments:` and `suggestions:` maps in YAML endmatter, and replies stored there as entries with `body` and `re`. Read that format and preserve it on items you are not rewriting, but never write new comments, replies, or suggestions in it: Roughdraft does not display endmatter replies.
 
 CriticMarkup inside fenced code blocks is literal example text. Do not treat it as review feedback.
 

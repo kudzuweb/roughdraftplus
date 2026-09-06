@@ -28,32 +28,21 @@ Deletion: `{--old text--}`
 Substitution: `{~~old~>new~~}`
 Highlight: `{==text==}`
 
-When you add a new comment or suggested change, use the extended Roughdraft format with a compact inline reference such as `{#c1}` or `{#s1}`, then add metadata in final YAML endmatter. Generate a stable document-local id (`c1`, `c2`, etc. for comments; `s1`, `s2`, etc. for suggestions), set `by` to your agent or author label, set `at` to the current ISO timestamp, and set `re` when replying to an existing comment or suggestion.
+When you add a new comment or suggested change, write its metadata as an inline attribute block immediately after the marker, such as `{>>Comment text<<}{id="c1" by="AI" at="2026-04-28T12:00:00.000Z"}`. Generate a stable document-local id (`c1`, `c2`, etc. for comments; `s1`, `s2`, etc. for suggestions), set `by` to your agent or author label, and set `at` to the current ISO timestamp. Never reuse an id the document has already used: allocate above every id present and above `counters.comments` or `counters.suggestions` in the final YAML endmatter when that map exists, and raise the counter to the id you allocated. When you remove threads or suggestions, you must record the counter: set `counters.comments` or `counters.suggestions` in the final YAML endmatter to the highest id number removed whenever it exceeds every id of that family still present, creating the `counters` map if the document has none. Without that record the next comment the reviewer adds would get a removed id. The `counters` map is the only review metadata that belongs in endmatter.
 
-Roughdraft may already have inline attribute blocks after comments and suggestions from older documents. Preserve those attributes unless you are intentionally removing the associated comment or suggestion. For new feedback, prefer compact references plus YAML endmatter.
+Replies are inline. Write each reply directly after the comment it answers, in the same attribute form, with `re` pointing at the parent id and a reply id (`r1`, `r2`, etc.) the document has not used:
 
-Anchored comments usually look like `{==selected text==}{>>Comment text<<}{#c1}`. Suggested changes usually look like `{++new text++}{#s1}` or `{~~old text~>new text~~}{#s2}`. Replies live in final YAML endmatter with a `body` and `re` pointer.
+`{>>reply text<<}{id="rN" by="AI" at="<ISO timestamp>" re="cN"}`
+
+Older documents may keep review metadata in final YAML endmatter behind compact references such as `{#c1}`, with replies stored as `comments.<id>` entries that carry `body` and `re`. That is a legacy format: read it and preserve it on items you are not rewriting, but never write new comments, replies, or suggestions in it. Roughdraft does not show endmatter replies, so a reply written there is invisible to the reviewer.
+
+Anchored comments look like `{==selected text==}{>>Comment text<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}`. Suggested changes look like `{++new text++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}` or `{~~old text~>new text~~}{id="s2" by="AI" at="2026-04-28T12:11:00.000Z"}`. A reply follows its parent on the same line.
 
 Example:
 
 ```markdown
-{==selected text==}{>>Comment text<<}{#c1}
-{++new text++}{#s1}
-
----
-comments:
-  c1:
-    by: AI
-    at: "2026-04-28T12:00:00.000Z"
-  c2:
-    body: I can make that edit.
-    by: AI
-    at: "2026-04-28T12:05:00.000Z"
-    re: c1
-suggestions:
-  s1:
-    by: AI
-    at: "2026-04-28T12:10:00.000Z"
+{==selected text==}{>>Comment text<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}{>>I can make that edit.<<}{id="r1" by="AI" at="2026-04-28T12:05:00.000Z" re="c1"}
+{++new text++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}
 ```
 
 Use `roughdraft help` and `roughdraft help criticmarkup` for local command and syntax details.

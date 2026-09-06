@@ -10,7 +10,7 @@ The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", and "MAY" in this docu
 
 This specification defines the review markup that Roughdraft reads and writes. It does not define a replacement for Markdown, a hosted document format, a sync protocol, or a project database.
 
-A conforming document is a Markdown document that may contain Roughdraft review spans. Markdown parsing SHOULD follow CommonMark with GitHub Flavored Markdown extensions. Implementations MAY preserve YAML frontmatter as document metadata. Roughdraft review state lives in the same Markdown file, either as inline review anchors or as final YAML endmatter.
+A conforming document is a Markdown document that may contain Roughdraft review spans. Markdown parsing SHOULD follow CommonMark with GitHub Flavored Markdown extensions. Implementations MAY preserve YAML frontmatter as document metadata. Roughdraft review state lives in the same Markdown file as inline review anchors, each carrying its metadata in an inline attribute block. A final YAML endmatter block holds only the [id counters](#id-counters); documents written by older implementations may also keep review metadata there, and the [Legacy Endmatter Metadata](#legacy-endmatter-metadata) section says how readers treat it.
 
 ## Canonical Markers
 
@@ -41,13 +41,7 @@ Comment text is plain inline Markdown content. Comment text MUST NOT contain the
 A comment MAY appear by itself when the feedback applies to the surrounding paragraph or document:
 
 ```markdown
-Add one concrete launch example here.{>>This should come from the customer story.<<}{#c1}
-
----
-comments:
-  c1:
-    by: user
-    at: "2026-04-28T12:00:00.000Z"
+Add one concrete launch example here.{>>This should come from the customer story.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}
 ```
 
 ## Anchored Comments
@@ -62,13 +56,7 @@ highlight        = "{==" anchor-text "==}"
 Example:
 
 ```markdown
-Please revisit {==this sentence==}{>>Needs a source.<<}{#c1}.
-
----
-comments:
-  c1:
-    by: user
-    at: "2026-04-28T12:00:00.000Z"
+Please revisit {==this sentence==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.
 ```
 
 The highlighted text is the visible anchor. Implementations SHOULD attach all immediately following comment blocks to the same anchor until another token interrupts the sequence.
@@ -86,13 +74,7 @@ addition = "{++" new-text "++}" [ metadata ] *comment
 ```
 
 ```markdown
-Add {++one concrete example++}{#s1}.
-
----
-suggestions:
-  s1:
-    by: AI
-    at: "2026-04-28T12:05:00.000Z"
+Add {++one concrete example++}{id="s1" by="AI" at="2026-04-28T12:05:00.000Z"}.
 ```
 
 ### Deletion
@@ -102,13 +84,7 @@ deletion = "{--" old-text "--}" [ metadata ] *comment
 ```
 
 ```markdown
-Remove {--vague phrasing--}{#s2}.
-
----
-suggestions:
-  s2:
-    by: user
-    at: "2026-04-28T12:06:00.000Z"
+Remove {--vague phrasing--}{id="s2" by="user" at="2026-04-28T12:06:00.000Z"}.
 ```
 
 ### Substitution
@@ -118,82 +94,18 @@ substitution = "{~~" old-text "~>" new-text "~~}" [ metadata ] *comment
 ```
 
 ```markdown
-Use {~~rough~>specific~~}{#s3} wording.
-
----
-suggestions:
-  s3:
-    by: AI
-    at: "2026-04-28T12:07:00.000Z"
+Use {~~rough~>specific~~}{id="s3" by="AI" at="2026-04-28T12:07:00.000Z"} wording.
 ```
 
-Trailing comment blocks after a suggestion attach discussion to that suggestion:
+Trailing comment blocks after a suggestion attach discussion to that suggestion; each carries `re` pointing at the suggestion id:
 
 ```markdown
-Add {++one concrete example++}{#s1}.
-
----
-comments:
-  c2:
-    body: Use the launch story.
-    by: user
-    at: "2026-04-28T12:08:00.000Z"
-    re: s1
-suggestions:
-  s1:
-    by: AI
-    at: "2026-04-28T12:05:00.000Z"
+Add {++one concrete example++}{id="s1" by="AI" at="2026-04-28T12:05:00.000Z"}{>>Use the launch story.<<}{id="r1" by="user" at="2026-04-28T12:08:00.000Z" re="s1"}.
 ```
 
 ## Metadata
 
-Roughdraft's preferred metadata format is a compact inline reference backed by final YAML endmatter:
-
-```ebnf
-reference = "{#" id "}"
-id        = ALPHA *( ALPHA / DIGIT / "_" / "-" )
-```
-
-```markdown
-Please revisit {==this sentence==}{>>Needs a source.<<}{#c1}.
-
----
-comments:
-  c1:
-    by: user
-    at: "2026-04-28T12:00:00.000Z"
-```
-
-Root comment bodies and suggestion text stay inline so their anchors remain portable. Replies live entirely in endmatter because their `re` field already points at a parent id:
-
-```markdown
-Please revisit {==this sentence==}{>>Needs a source.<<}{#c1}.
-
----
-comments:
-  c1:
-    by: user
-    at: "2026-04-28T12:00:00.000Z"
-  c2:
-    body: I can add one from the intro.
-    by: AI
-    at: "2026-04-28T12:05:00.000Z"
-    re: c1
-```
-
-Suggested-change metadata lives under `suggestions:`:
-
-```markdown
-Add {++one concrete example++}{#s1}.
-
----
-suggestions:
-  s1:
-    by: AI
-    at: "2026-04-28T12:05:00.000Z"
-```
-
-For compatibility, readers also accept the older inline attribute block written immediately after a comment or suggestion:
+Every comment, reply, and suggestion carries its metadata in an inline attribute block written immediately after the marker it describes:
 
 ```ebnf
 metadata  = "{" 1*attribute "}"
@@ -202,6 +114,10 @@ name      = ALPHA *( ALPHA / DIGIT / "_" / "-" )
 ```
 
 Attribute values are double-quoted strings. Inside a quoted value, `\"` represents a literal quote and `\\` represents a literal backslash.
+
+```markdown
+Please revisit {==this sentence==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.
+```
 
 Known metadata attributes:
 
@@ -214,46 +130,24 @@ Known metadata attributes:
 | `status` | Comments and suggestions | No | Review state. Roughdraft currently writes `resolved` when an item has been addressed. |
 | `resolved` | Comments and suggestions | No | Optional short resolution summary for an item whose `status` is `resolved`. |
 
-Example:
+Implementations SHOULD generate simple document-local ids:
 
-```markdown
-{>>Needs a source.<<}{#c1}
-
----
-comments:
-  c1:
-    by: user
-    at: "2026-04-28T12:00:00.000Z"
+```ebnf
+id = ALPHA *( ALPHA / DIGIT / "_" / "-" )
 ```
 
-Implementations SHOULD generate simple document-local ids. Roughdraft uses `c1`, `c2`, and so on for comments and `s1`, `s2`, and so on for suggestions. A writer MUST NOT give a new comment or suggestion an id the document has already used, even after every item that carried it has been removed; the [Id Counters](#id-counters) section defines how that is recorded. Implementations MUST preserve unknown valid attributes or YAML keys when possible, but they MUST NOT require unknown metadata for correct review rendering.
+Roughdraft uses `c1`, `c2`, and so on for comments and `s1`, `s2`, and so on for suggestions. An agent's replies use `r1`, `r2`, and so on, so a reply is distinguishable from a root comment by its id. A writer MUST NOT give a new comment, reply, or suggestion an id the document has already used, even after every item that carried it has been removed; the [Id Counters](#id-counters) section defines how that is recorded. Implementations MUST preserve unknown valid attributes when possible, but they MUST NOT require unknown metadata for correct review rendering.
 
-For compatibility, readers MAY accept legacy comment metadata of the form `{@id:c1; by:AI; at:2026-04-28T12:00:00.000Z@}`. Writers SHOULD emit compact references plus YAML endmatter for new review data.
+### Legacy Endmatter Metadata
 
-## Id Counters
+Earlier versions of this format placed metadata in final YAML endmatter behind a compact inline reference:
 
-Agents track threads across review rounds by id, so an id MUST stay unique for the life of a document. The ids still present cannot show which ids have been removed, so the endmatter records the highest number ever allocated for each id family in a `counters` map:
-
-```markdown
-Body text.
-
----
-counters:
-  comments: 9
-  suggestions: 2
+```ebnf
+reference = "{#" id "}"
 ```
 
-- `counters.comments` is the highest `n` ever allocated as a `c<n>` comment id, and `counters.suggestions` is the highest `n` ever allocated as an `s<n>` suggestion id. Each value is a non-negative integer, and a missing family counts as `0`. Ids that do not follow the `c<n>` or `s<n>` form are not tracked.
-- The effective counter for a family is the greater of the recorded value and the highest id of that family present anywhere in the document, including `comments:` and `suggestions:` entries. Writers MUST allocate new ids above the effective counter.
-- Writers MUST record a family's counter once it exceeds the highest id of that family still present, and MUST NOT lower or drop a recorded counter afterwards. A writer MAY leave a counter unrecorded while every allocated id is still present, since the ids imply it; that keeps a save of an untouched document byte-identical.
-- Readers MUST treat a final YAML block containing a valid `counters` map as review endmatter even when it has no `comments:` or `suggestions:` entries and the body has no compact references, so a document whose review items have all been removed keeps its counters.
-
-## Threads
-
-Threading is represented by `re`.
-
 ```markdown
-Review {==this sentence==}{>>Needs a source.<<}{#c1}.
+Please revisit {==this sentence==}{>>Needs a source.<<}{#c1}.
 
 ---
 comments:
@@ -265,9 +159,43 @@ comments:
     by: AI
     at: "2026-04-28T12:05:00.000Z"
     re: c1
+suggestions:
+  s1:
+    by: AI
+    at: "2026-04-28T12:05:00.000Z"
 ```
 
-A reply whose `re` points to a missing id SHOULD be treated as a top-level comment. A comment MUST NOT be its own parent.
+In that form, root comment bodies and suggestion text stay inline while their `by` and `at` live under `comments:` or `suggestions:`, and a reply lives entirely in endmatter as an entry with `body` and `re`. Roughdraft does not display endmatter replies.
+
+Readers MUST accept this form and MUST preserve its `comments:` and `suggestions:` maps on items they are not rewriting. Writers MUST NOT emit new comments, replies, or suggestions in it. For compatibility, readers MAY also accept legacy comment metadata of the form `{@id:c1; by:AI; at:2026-04-28T12:00:00.000Z@}`.
+
+## Id Counters
+
+Agents track threads across review rounds by id, so an id MUST stay unique for the life of a document. The ids still present cannot show which ids have been removed, so the endmatter records the highest number ever allocated for each id family in a `counters` map. This map is the only review metadata a writer places in endmatter:
+
+```markdown
+Body text.
+
+---
+counters:
+  comments: 9
+  suggestions: 2
+```
+
+- `counters.comments` is the highest `n` ever allocated as a `c<n>` comment id, and `counters.suggestions` is the highest `n` ever allocated as an `s<n>` suggestion id. Each value is a non-negative integer, and a missing family counts as `0`. Ids that do not follow the `c<n>` or `s<n>` form are not tracked, so a writer allocating an `r<n>` reply id MUST allocate above every `r<n>` present in the document.
+- The effective counter for a family is the greater of the recorded value and the highest id of that family present anywhere in the document, including legacy `comments:` and `suggestions:` entries. Writers MUST allocate new ids above the effective counter.
+- Writers MUST record a family's counter once it exceeds the highest id of that family still present, and MUST NOT lower or drop a recorded counter afterwards. A writer MAY leave a counter unrecorded while every allocated id is still present, since the ids imply it; that keeps a save of an untouched document byte-identical.
+- Readers MUST treat a final YAML block containing a valid `counters` map as review endmatter even when it has no `comments:` or `suggestions:` entries and the body has no compact references, so a document whose review items have all been removed keeps its counters.
+
+## Threads
+
+Threading is represented by `re`. A reply is written directly after the comment or suggestion it answers, and its `re` names that parent's id:
+
+```markdown
+Review {==this sentence==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}{>>I can add one from the intro.<<}{id="r1" by="AI" at="2026-04-28T12:05:00.000Z" re="c1"}.
+```
+
+A reply to a reply points `re` at the reply's id and follows it in the same run of comment blocks. A reply whose `re` points to a missing id SHOULD be treated as a top-level comment. A comment MUST NOT be its own parent.
 
 ## Parsing And Round Trips
 
@@ -283,6 +211,7 @@ Round trips SHOULD preserve:
 - Raw review marker text inside code contexts.
 - Metadata values, including escaped quotes and backslashes.
 - The `counters` map in YAML endmatter.
+- Legacy `comments:` and `suggestions:` maps in YAML endmatter, for documents that carry them.
 
 When importing a valid comment or suggestion without metadata, an implementation MAY synthesize missing `id`, `by`, and `at` values on write.
 
@@ -299,7 +228,7 @@ Example:
   "format": "roughdraft-flavored-markdown",
   "version": "0.1",
   "source": {
-    "markdown": "Please revisit {==this sentence==}{>>Needs a source.<<}{#c1}.\\n\\n---\\ncomments:\\n  c1:\\n    by: user\\n    at: \"2026-04-28T12:00:00.000Z\"\\n"
+    "markdown": "Please revisit {==this sentence==}{>>Needs a source.<<}{id=\"c1\" by=\"user\" at=\"2026-04-28T12:00:00.000Z\"}.\\n"
   },
   "comments": [
     {
