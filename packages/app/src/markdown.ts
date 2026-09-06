@@ -420,13 +420,28 @@ export function createTurndownService(): TurndownService {
   service.use(tables as Parameters<TurndownService["use"]>[0]);
   service.use(taskListItems as Parameters<TurndownService["use"]>[0]);
 
+  // Turndown prefixes every line with "> ", which leaves a trailing space
+  // on the blank line between quoted paragraphs.
+  service.addRule("blockquoteWithoutTrailingSpace", {
+    filter: "blockquote",
+    replacement(content) {
+      const quoted = content
+        .replace(/^\n+|\n+$/g, "")
+        .replace(/^(.?)/gm, (_line, first: string) =>
+          first ? `> ${first}` : ">",
+        );
+      return `\n\n${quoted}\n\n`;
+    },
+  });
+
   service.addRule("compactListItem", {
     filter: "li",
     replacement(content, node, options) {
       const trimmed = content
         .replace(/^\n+/, "")
         .replace(/\n+$/, "\n")
-        .replace(/\n/gm, "\n  ");
+        .replace(/\n{2,}(?=(?:[-*+]|\d+[.)]) )/g, "\n")
+        .replace(/\n(?=[^\n])/g, "\n  ");
 
       let prefix = `${options.bulletListMarker} `;
       const parent = node.parentNode;

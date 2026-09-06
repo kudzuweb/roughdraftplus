@@ -265,9 +265,7 @@ describe("reserialize fidelity", () => {
     const saved = saveCriticMarkdown("- a\n  - nested\n- b\n");
 
     expect(saved).not.toMatch(/[ \t]+\n/);
-    expect(saved).toContain("- a\n");
-    expect(saved).toContain("  - nested\n");
-    expect(saved).toContain("- b\n");
+    expect(saved).toBe("- a\n  - nested\n- b\n");
   });
 
   it("keeps the table separator row as typed", () => {
