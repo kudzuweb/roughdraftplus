@@ -254,7 +254,8 @@ describe("reserialize fidelity", () => {
   });
 
   it("writes a blank blockquote line as a bare marker", () => {
-    const markdown = "> First quoted paragraph.\n>\n> Second quoted paragraph.\n";
+    const markdown =
+      "> First quoted paragraph.\n>\n> Second quoted paragraph.\n";
 
     expect(toMarkdown(toHtml(markdown))).toBe(markdown);
     expect(saveCriticMarkdown(markdown)).toBe(markdown);
@@ -278,8 +279,7 @@ describe("reserialize fidelity", () => {
   });
 
   it("keeps an aligned table separator row as typed", () => {
-    const markdown =
-      "| Left | Right |\n|:-----|------:|\n| First | Ready |\n";
+    const markdown = "| Left | Right |\n|:-----|------:|\n| First | Ready |\n";
 
     expect(toMarkdown(toHtml(markdown))).toBe(markdown);
     expect(saveCriticMarkdown(markdown)).toBe(markdown);
