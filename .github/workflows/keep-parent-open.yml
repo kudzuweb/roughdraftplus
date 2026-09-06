@@ -68,12 +68,13 @@ jobs:
 
             await github.rest.issues.update({ owner, repo, issue_number: issueNumber, state: "open" });
 
-            const plural = stillOpen === 1 ? "sub-issue is" : "sub-issues are";
+            const noun = total === 1 ? "sub-issue" : "sub-issues";
+            const verb = stillOpen === 1 ? "is" : "are";
             await github.rest.issues.createComment({
               owner,
               repo,
               issue_number: issueNumber,
-              body: `[github-actions] Reopened this issue because ${stillOpen} of its ${total} ${plural} still open. Close the sub-issues first, then close this one.`,
+              body: `[github-actions] Reopened this issue because ${stillOpen} of its ${total} ${noun} ${verb} still open. Close the sub-issues first, then close this one.`,
             });
 
             core.notice(`Reopened #${issueNumber}: ${stillOpen} of ${total} sub-issues still open.`);
