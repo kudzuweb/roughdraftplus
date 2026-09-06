@@ -748,6 +748,12 @@ function CommentThreadNode({
     }) ?? defaultVisibleActions;
   const nodeRef = useRef<HTMLDivElement>(null);
   const previousApprovalStateRef = useRef<CommentApprovalState>(approvalState);
+  // The pending state's undo control is whichever lit action the owner
+  // renders, so its key is read off the rendered action rather than fixed
+  // here. That keeps the focus target a full test id owned by this comment,
+  // without this list having to know the owner's action vocabulary.
+  const pendingUndoActionKey =
+    actions.find((action) => action.active)?.key ?? null;
 
   useLayoutEffect(() => {
     const previousApprovalState = previousApprovalStateRef.current;
@@ -758,13 +764,11 @@ function CommentThreadNode({
     // that replaced it.
     if (previousApprovalState === approvalState) return;
 
-    // The pending state's undo control is whichever lit action the owner
-    // renders, so it is found by its pressed state rather than a fixed key.
     const focusSelector =
       approvalState === "confirming"
         ? `[data-testid="comment-${variant}-${comment.id}-action-approve-confirm"]`
-        : approvalState === "pending"
-          ? '[aria-pressed="true"]'
+        : approvalState === "pending" && pendingUndoActionKey
+          ? `[data-testid="comment-${variant}-${comment.id}-action-${pendingUndoActionKey}"]`
           : approvalState === "available" &&
               (previousApprovalState === "confirming" ||
                 previousApprovalState === "pending")
@@ -773,7 +777,7 @@ function CommentThreadNode({
     if (!focusSelector) return;
 
     nodeRef.current?.querySelector<HTMLElement>(focusSelector)?.focus();
-  }, [approvalState, comment.id, variant]);
+  }, [approvalState, comment.id, variant, pendingUndoActionKey]);
 
   const ancestorGuideOffsets = parentLines.reduce<number[]>(
     (offsets, showLine, guideIndex) => {
