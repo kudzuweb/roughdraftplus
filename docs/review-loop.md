@@ -81,10 +81,12 @@ no separate diff view (backlog item 10).
 
 The approve button (item 6, PR #50) is product behavior: a checkmark on each agent reply swaps to
 an inline confirm, confirming marks the reply Approved, and Done Reviewing applies every pending
-approval in the same save as the handoff, removing only that reply's markup. Until then a pending
-approval is tab state: it survives a switch between rich text and code view and a reload from
-disk, and a browser refresh discards it along with any unsaved edits. Done Reviewing applies
-pending approvals from code view too, by resolving them on the Markdown text.
+approval in the same save as the handoff, removing only that reply's markup. Until Done Reviewing,
+a pending approval is tab state: it survives a switch between rich text and code view and a reload
+from disk, and a browser refresh discards it along with any unsaved edits. Done Reviewing applies
+pending approvals from code view too, by resolving them on the Markdown text. A Done from code view
+normalizes the document the same way a rich-text save does, so the Hygiene list below of what a
+save still rewrites applies to that file even if it was only ever edited in code view.
 
 ## Hygiene during the loop
 
