@@ -28,7 +28,9 @@ the loop.
 
 `roughdraft open --loop` reports that decision after each round, in human and `--json` output
 (`done`, and `doneReason` as `overall-comment`, `threads-cleared`, or null), so the agent reopens
-on the CLI's answer instead of inferring it from the file. The server decides on the Done Reviewing
+on the CLI's answer instead of inferring it from the file. When the server stopped mid-round and
+did not come back, the `--json` output is instead `disconnected: true` with an `error` and
+`done: false`, and the exit code is 1; reopen the document to resume. The server decides on the Done Reviewing
 event. An overall comment counts as done when its whole text is one of these phrases, ignoring
 case and punctuation, an optional leading "ok", "okay", "yes" or "the", and an optional trailing
 "thanks", "thank you" or "ty": "done", "all done", "I'm done", "we're done", "done reviewing",
