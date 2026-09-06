@@ -120,6 +120,19 @@ function indexOfUnescaped(
   return -1;
 }
 
+// A document written before escaping existed can end a marker's text with a
+// bare backslash, which the scan above reads as escaping the delimiter that
+// closes the marker. Falling back to the first raw delimiter keeps that marker
+// readable, and only when nothing else closes it.
+function indexOfMarkerDelimiter(
+  markdown: string,
+  delimiter: string,
+  from: number,
+): number {
+  const unescaped = indexOfUnescaped(markdown, delimiter, from);
+  return unescaped === -1 ? markdown.indexOf(delimiter, from) : unescaped;
+}
+
 interface IdReference {
   id: string;
   kind: "comment" | "suggestion";
@@ -348,7 +361,7 @@ export function validateRoughdraftMarkdown(
     }
 
     if (markdown.startsWith("{==", offset)) {
-      const end = indexOfUnescaped(markdown, "==}", offset + 3);
+      const end = indexOfMarkerDelimiter(markdown, "==}", offset + 3);
       if (end === -1) {
         addDiagnostic(
           "error",
@@ -557,7 +570,7 @@ export function extractRoughdraftReviewIndex(markdown: string): RfmReviewIndex {
     }
 
     if (markdown.startsWith("{==", offset)) {
-      const end = indexOfUnescaped(markdown, "==}", offset + 3);
+      const end = indexOfMarkerDelimiter(markdown, "==}", offset + 3);
       if (end === -1) {
         offset += 3;
         continue;
@@ -873,7 +886,7 @@ function parseComment(
     offset: number,
   ) => void,
 ): ParsedComment | null {
-  const close = indexOfUnescaped(markdown, "<<}", offset + 3);
+  const close = indexOfMarkerDelimiter(markdown, "<<}", offset + 3);
   if (close === -1) {
     addDiagnostic(
       "error",
@@ -966,9 +979,11 @@ function parseSuggestion(
   }
 
   if (markdown.startsWith("{~~", offset)) {
-    const separator = indexOfUnescaped(markdown, "~>", offset + 3);
+    const separator = indexOfMarkerDelimiter(markdown, "~>", offset + 3);
     const close =
-      separator === -1 ? -1 : indexOfUnescaped(markdown, "~~}", separator + 2);
+      separator === -1
+        ? -1
+        : indexOfMarkerDelimiter(markdown, "~~}", separator + 2);
 
     if (separator === -1 || close === -1) {
       addDiagnostic(
@@ -1009,7 +1024,11 @@ function parseWrappedMarker(
 ): { endOffset: number } | null {
   if (!markdown.startsWith(open, offset)) return null;
 
-  const closeOffset = indexOfUnescaped(markdown, close, offset + open.length);
+  const closeOffset = indexOfMarkerDelimiter(
+    markdown,
+    close,
+    offset + open.length,
+  );
   return closeOffset === -1 ? null : { endOffset: closeOffset + close.length };
 }
 

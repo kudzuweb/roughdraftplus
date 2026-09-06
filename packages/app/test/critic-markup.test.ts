@@ -2309,6 +2309,21 @@ describe("CriticMarkup delimiter escaping", () => {
     });
   });
 
+  it("still reads a body that ends with a bare backslash", () => {
+    // Written before escaping existed, so the backslash is ordinary text
+    // rather than an escape of the delimiter that closes the comment.
+    const input = `Review {==this claim==}{>>ends with a backslash\\<<}${commentMetadata}.\n`;
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    expect(comments.get("c1")?.content).toBe("ends with a backslash\\");
+
+    const saved = editorStateToCriticMarkdown(doc, comments);
+    expect(saved).toContain(String.raw`{>>ends with a backslash\\<<}`);
+    expect(criticMarkdownToEditorState(saved).comments.get("c1")?.content).toBe(
+      "ends with a backslash\\",
+    );
+  });
+
   it("leaves a document-level comment in endmatter unescaped", () => {
     const input = [
       "Body text.",

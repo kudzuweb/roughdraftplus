@@ -95,13 +95,48 @@ const criticDelimiterEscapePattern =
   /\\|\{==|==\}|\{>>|<<\}|\{\+\+|\+\+\}|\{--|--\}|\{~~|~~\}|~>/g;
 const criticDelimiterUnescapePattern =
   /\\(\\|\{==|==\}|\{>>|<<\}|\{\+\+|\+\+\}|\{--|--\}|\{~~|~~\}|~>)/g;
-const criticCommentAnchorPattern = /^\{==((?:\\[\s\S]|[^\\])+?)==\}/;
-const criticCommentBlockPattern =
-  /^\{>>((?:\\[\s\S]|[^\\])*?)<<\}(?:(\{@([\s\S]+?)@\})|(\{(?:\s*[A-Za-z][A-Za-z0-9_-]*="(?:\\[\s\S]|[^"\\])*")+\s*\})|(\{#[A-Za-z][A-Za-z0-9_-]*\}))?/;
-const criticAdditionPattern = /^\{\+\+((?:\\[\s\S]|[^\\])+?)\+\+\}/;
-const criticDeletionPattern = /^\{--((?:\\[\s\S]|[^\\])+?)--\}/;
-const criticSubstitutionPattern =
-  /^\{~~((?:\\[\s\S]|[^\\])+?)~>((?:\\[\s\S]|[^\\])+?)~~\}/;
+// Scanning for a marker's closing delimiter treats a backslash as covering the
+// character after it, which is what makes an escaped delimiter literal. A
+// document written before escaping existed can end a marker's text with a bare
+// backslash, and that scan reads it as escaping the close, leaving the marker
+// unterminated. Each marker therefore has a legacy form as well, tried only
+// when the escape-aware form finds no close at all, which reads every backslash
+// as ordinary text. Both forms come from one shape so they cannot drift.
+const markerTextAtom = String.raw`(?:\\[\s\S]|[^\\])`;
+const legacyMarkerTextAtom = String.raw`[\s\S]`;
+
+interface MarkerPattern {
+  escaped: RegExp;
+  legacy: RegExp;
+}
+
+function markerPattern(build: (textAtom: string) => string): MarkerPattern {
+  return {
+    escaped: new RegExp(build(markerTextAtom)),
+    legacy: new RegExp(build(legacyMarkerTextAtom)),
+  };
+}
+
+function matchMarker(src: string, pattern: MarkerPattern) {
+  return src.match(pattern.escaped) ?? src.match(pattern.legacy);
+}
+
+const criticCommentAnchorPattern = markerPattern(
+  (text) => String.raw`^\{==(${text}+?)==\}`,
+);
+const criticCommentBlockPattern = markerPattern(
+  (text) =>
+    String.raw`^\{>>(${text}*?)<<\}(?:(\{@([\s\S]+?)@\})|(\{(?:\s*[A-Za-z][A-Za-z0-9_-]*="(?:\\[\s\S]|[^"\\])*")+\s*\})|(\{#[A-Za-z][A-Za-z0-9_-]*\}))?`,
+);
+const criticAdditionPattern = markerPattern(
+  (text) => String.raw`^\{\+\+(${text}+?)\+\+\}`,
+);
+const criticDeletionPattern = markerPattern(
+  (text) => String.raw`^\{--(${text}+?)--\}`,
+);
+const criticSubstitutionPattern = markerPattern(
+  (text) => String.raw`^\{~~(${text}+?)~>(${text}+?)~~\}`,
+);
 const attributeMetadataBlockPattern =
   /^\{(?:\s*[A-Za-z][A-Za-z0-9_-]*="(?:\\[\s\S]|[^"\\])*")+\s*\}/;
 const metadataAttributePattern =
@@ -935,7 +970,7 @@ function tokenizeCriticCommentAnchor(
       comments: CriticComment[];
     }
   | undefined {
-  const anchorMatch = src.match(criticCommentAnchorPattern);
+  const anchorMatch = matchMarker(src, criticCommentAnchorPattern);
 
   if (!anchorMatch) return undefined;
 
@@ -945,7 +980,7 @@ function tokenizeCriticCommentAnchor(
   const parsedComments: CriticComment[] = [];
 
   while (offset < src.length) {
-    const nextMatch = src.slice(offset).match(criticCommentBlockPattern);
+    const nextMatch = matchMarker(src.slice(offset), criticCommentBlockPattern);
     if (!nextMatch) break;
 
     const [
@@ -1022,7 +1057,10 @@ function tokenizeCriticCommentBlocks(
   const parsedComments: CriticComment[] = [];
 
   while (nextOffset < src.length) {
-    const nextMatch = src.slice(nextOffset).match(criticCommentBlockPattern);
+    const nextMatch = matchMarker(
+      src.slice(nextOffset),
+      criticCommentBlockPattern,
+    );
     if (!nextMatch) break;
 
     const [
@@ -1098,7 +1136,7 @@ function tokenizeCriticChange(
       comments: CriticComment[];
     }
   | undefined {
-  const additionMatch = src.match(criticAdditionPattern);
+  const additionMatch = matchMarker(src, criticAdditionPattern);
 
   if (additionMatch) {
     const [, text] = additionMatch;
@@ -1127,7 +1165,7 @@ function tokenizeCriticChange(
     };
   }
 
-  const deletionMatch = src.match(criticDeletionPattern);
+  const deletionMatch = matchMarker(src, criticDeletionPattern);
 
   if (deletionMatch) {
     const [, text] = deletionMatch;
@@ -1156,7 +1194,7 @@ function tokenizeCriticChange(
     };
   }
 
-  const substitutionMatch = src.match(criticSubstitutionPattern);
+  const substitutionMatch = matchMarker(src, criticSubstitutionPattern);
 
   if (substitutionMatch) {
     const [, oldText, newText] = substitutionMatch;
@@ -1223,7 +1261,10 @@ function renderCriticCodeText(
   let offset = 0;
 
   while (offset < text.length) {
-    const anchorMatch = text.slice(offset).match(criticCommentAnchorPattern);
+    const anchorMatch = matchMarker(
+      text.slice(offset),
+      criticCommentAnchorPattern,
+    );
 
     if (!anchorMatch || anchorMatch.index !== 0) {
       result += escapeHtml(text[offset] ?? "");
@@ -1236,9 +1277,10 @@ function renderCriticCodeText(
     const parsedComments: CriticComment[] = [];
 
     while (nextOffset < text.length) {
-      const commentMatch = text
-        .slice(nextOffset)
-        .match(criticCommentBlockPattern);
+      const commentMatch = matchMarker(
+        text.slice(nextOffset),
+        criticCommentBlockPattern,
+      );
       if (!commentMatch) break;
 
       const [

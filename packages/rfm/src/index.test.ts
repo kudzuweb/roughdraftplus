@@ -804,6 +804,17 @@ describe("escaped review delimiters", () => {
     );
   });
 
+  it("still reads a body that ends with a bare backslash", () => {
+    // Written before escaping existed, so the backslash is ordinary text
+    // rather than an escape of the delimiter that closes the comment.
+    const markdown = `Please revisit {==this claim==}{>>ends with a backslash\\<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.\n`;
+
+    expect(codes(markdown)).toEqual([]);
+    expect(extractRoughdraftReviewIndex(markdown).items).toMatchObject([
+      { id: "c1", text: "ends with a backslash\\" },
+    ]);
+  });
+
   it("appends a reply after a comment whose body carries escapes", () => {
     const markdown = `Please revisit {==this claim==}{>>${escapedText}<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.\n`;
 
