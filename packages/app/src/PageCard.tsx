@@ -1730,14 +1730,17 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
 
       if (commentIdsToDelete.length === 0) return commentsRef.current;
 
-      const nextComments = new Map(commentsRef.current);
+      const previousComments = commentsRef.current;
+      const nextComments = new Map(previousComments);
       for (const id of commentIdsToDelete) {
         nextComments.delete(id);
       }
 
       const chain = currentEditor.chain().focus();
       for (const id of commentIdsToDelete) {
-        chain.removeCommentId(id);
+        chain.removeCommentId(id, {
+          disposeAnchor: previousComments.get(id)?.anchor === "disposable",
+        });
       }
       chain.run();
 
@@ -1824,7 +1827,8 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       );
       const commentIdsToDelete = [commentId, ...descendantIds];
       const deletedIds = new Set(commentIdsToDelete);
-      const nextComments = new Map(commentsRef.current);
+      const previousComments = commentsRef.current;
+      const nextComments = new Map(previousComments);
       for (const id of commentIdsToDelete) {
         nextComments.delete(id);
       }
@@ -1833,7 +1837,9 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
 
       const chain = currentEditor.chain().focus();
       for (const id of commentIdsToDelete) {
-        chain.removeCommentId(id);
+        chain.removeCommentId(id, {
+          disposeAnchor: previousComments.get(id)?.anchor === "disposable",
+        });
       }
       chain.run();
       setSelectedCommentId((current) =>
@@ -1884,7 +1890,8 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     if (approvedIds.length === 0) return;
 
     const approvedIdSet = new Set(approvedIds);
-    const nextComments = new Map(commentsRef.current);
+    const previousComments = commentsRef.current;
+    const nextComments = new Map(previousComments);
     for (const id of approvedIds) {
       nextComments.delete(id);
     }
@@ -1893,7 +1900,9 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
 
     const chain = currentEditor.chain();
     for (const id of approvedIds) {
-      chain.removeCommentId(id);
+      chain.removeCommentId(id, {
+        disposeAnchor: previousComments.get(id)?.anchor === "disposable",
+      });
     }
     chain.run();
 

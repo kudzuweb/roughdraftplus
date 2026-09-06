@@ -30,7 +30,10 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     commentRef: {
       setCommentRef: (attributes: { commentIds: string[] }) => ReturnType;
-      removeCommentId: (commentId: string) => ReturnType;
+      removeCommentId: (
+        commentId: string,
+        options?: { disposeAnchor?: boolean },
+      ) => ReturnType;
       unsetCommentRef: () => ReturnType;
     };
     criticChange: {
@@ -108,13 +111,17 @@ const CommentRef = Mark.create({
         ({ commands }) =>
           commands.setMark(this.name, attributes),
       removeCommentId:
-        (commentId) =>
+        (commentId, options) =>
         ({ tr, state, dispatch }) => {
           const markType = state.schema.marks.commentRef;
 
           if (!markType) return false;
 
           let found = false;
+          // Anchor text that was written only to carry this thread leaves
+          // with it. Ranges are collected during the walk and deleted from
+          // the end so earlier positions stay valid.
+          const disposedRanges: Array<{ from: number; to: number }> = [];
 
           state.doc.descendants((node, pos) => {
             if (!isInlineAtomOrText(node)) return;
@@ -140,8 +147,17 @@ const CommentRef = Mark.create({
 
             if (nextIds.length > 0) {
               tr.addMark(from, to, markType.create({ commentIds: nextIds }));
+            } else if (options?.disposeAnchor) {
+              disposedRanges.push({ from, to });
             }
           });
+
+          for (let index = disposedRanges.length - 1; index >= 0; index -= 1) {
+            const range = disposedRanges[index];
+            if (range) {
+              tr.delete(range.from, range.to);
+            }
+          }
 
           if (found && dispatch) {
             dispatch(tr);
