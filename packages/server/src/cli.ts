@@ -1046,6 +1046,17 @@ function printCommandHelp(
     );
     log("  --state-file <path>       Server state file");
     log("  --state-dir <dir>         Directory containing server.json");
+    log("");
+    log("If the server stops while waiting (roughdraft stop, an upgrade), the");
+    log("wait survives a restart on the same port: the command reconnects and");
+    log("keeps waiting for Done Reviewing. When the server does not come back");
+    log("within the reconnect window (default 60 s) the command exits 1 and");
+    log("says so; the --json output then carries `disconnected: true`.");
+    log("");
+    log("Environment variables:");
+    log("  ROUGHDRAFT_WATCH_RECONNECT_SECONDS");
+    log("                        Seconds to wait for a stopped server to come");
+    log("                        back before giving up (default: 60).");
     return;
   }
 
