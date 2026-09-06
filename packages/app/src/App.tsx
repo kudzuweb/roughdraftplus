@@ -1473,6 +1473,7 @@ export function PreviewPage() {
         documentCopyPath={PREVIEW_DOCUMENT_PATH}
         documentFilenameLabel={PREVIEW_DOCUMENT_PATH}
         documentSessionLabel={null}
+        showDocumentLocation={false}
         documentEditorViewMode={editorViewMode}
         onDocumentEditorViewModeChange={setEditorViewMode}
         onSaveDocument={handleSaveDocument}

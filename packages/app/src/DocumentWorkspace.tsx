@@ -421,6 +421,7 @@ interface DocumentWorkspaceProps {
   documentCopyPath: string | null;
   documentFilenameLabel: string;
   documentSessionLabel: string | null;
+  showDocumentLocation?: boolean;
   documentEditorViewMode: DocumentEditorViewMode;
   onDocumentEditorViewModeChange: (mode: DocumentEditorViewMode) => void;
   onSaveDocument: (id: string, content: string) => Promise<void>;
@@ -448,6 +449,7 @@ export function DocumentWorkspace({
   documentCopyPath,
   documentFilenameLabel,
   documentSessionLabel,
+  showDocumentLocation = true,
   documentEditorViewMode,
   onDocumentEditorViewModeChange,
   onSaveDocument,
@@ -1264,29 +1266,31 @@ export function DocumentWorkspace({
                   </Select>
                 </div>
               </div>
-              <div
-                data-testid="document-location"
-                className="mt-1 flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-[0.68rem] leading-4 text-stone-400 dark:text-slate-500"
-              >
-                {documentCopyPath ? (
-                  <span
-                    data-testid="document-path"
-                    title={documentCopyPath}
-                    className="min-w-0 max-w-full truncate font-mono"
-                  >
-                    {documentCopyPath}
-                  </span>
-                ) : null}
-                <span
-                  data-testid="document-session-label"
-                  title={documentSessionLabel ?? undefined}
-                  className="min-w-0 max-w-full truncate"
+              {showDocumentLocation ? (
+                <div
+                  data-testid="document-location"
+                  className="mt-1 flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 px-1 text-[0.68rem] leading-4 text-stone-400 dark:text-slate-500"
                 >
-                  {documentSessionLabel
-                    ? `Opened by ${documentSessionLabel}`
-                    : "No session label"}
-                </span>
-              </div>
+                  {documentCopyPath ? (
+                    <span
+                      data-testid="document-path"
+                      title={documentCopyPath}
+                      className="min-w-0 max-w-full truncate font-mono"
+                    >
+                      {documentCopyPath}
+                    </span>
+                  ) : null}
+                  <span
+                    data-testid="document-session-label"
+                    title={documentSessionLabel ?? undefined}
+                    className="min-w-0 max-w-full truncate"
+                  >
+                    {documentSessionLabel
+                      ? `Opened by ${documentSessionLabel}`
+                      : "No session label"}
+                  </span>
+                </div>
+              ) : null}
             </div>
           </div>
         ) : null}

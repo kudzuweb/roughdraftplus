@@ -113,6 +113,15 @@ test.describe("open document path and session in the header", () => {
     );
   });
 
+  test("shows no path or session line on the in-memory preview route", async ({
+    page,
+  }) => {
+    await page.goto("/preview?editor=code");
+    await expect(codeEditor(page)).toContainText("Live Preview");
+    await expect(page.getByTestId("document-page-header")).toBeVisible();
+    await expect(page.getByTestId("document-location")).toHaveCount(0);
+  });
+
   test("truncates a long session label and keeps the full label in its title", async ({
     page,
   }) => {
