@@ -34,6 +34,7 @@ export interface CriticComment {
   authorId?: string | null;
   parentCommentId?: string | null;
   scope?: "document";
+  anchor?: "disposable";
 }
 
 export interface CriticCommentThread {
@@ -155,6 +156,7 @@ function parseAttributeMetadata(
     authorType: author.toUpperCase() === "AI" ? "ai" : "user",
     authorId: author.toUpperCase() === "AI" ? null : author,
     parentCommentId: fields.get("re") ?? null,
+    anchor: fields.get("anchor") === "disposable" ? "disposable" : undefined,
   };
 }
 
@@ -212,6 +214,10 @@ function serializeMetadata(comment: CriticComment): string {
 
   if (comment.parentCommentId) {
     fields.push(["re", comment.parentCommentId]);
+  }
+
+  if (comment.anchor === "disposable") {
+    fields.push(["anchor", comment.anchor]);
   }
 
   return `{${fields
@@ -612,6 +618,7 @@ function createCommentWithContext(
     authorId: partial?.authorId ?? (authorType === "ai" ? null : "user"),
     parentCommentId: partial?.parentCommentId ?? null,
     scope: partial?.scope,
+    anchor: partial?.anchor,
   };
 }
 
@@ -1699,10 +1706,32 @@ export function editorStateToCriticMarkdown(
   );
 }
 
+/**
+ * The ids among these whose comment flags its anchor as disposable filler.
+ * Both clear paths derive their disposal set through this, so the editor and
+ * the code view apply one rule to the whole set of comments being removed.
+ */
+export function disposableAnchorCommentIds(
+  commentIds: Iterable<string>,
+  comments: ReadonlyMap<string, CriticComment>,
+): string[] {
+  return [...commentIds].filter(
+    (commentId) => comments.get(commentId)?.anchor === "disposable",
+  );
+}
+
+/**
+ * Removes the given comment ids from every commentRef mark. A node whose
+ * anchor loses its last comment id is dropped when one of the removed ids
+ * carried the disposable-anchor flag, so filler text written only to carry
+ * a thread leaves with the thread; otherwise the text stays as plain prose.
+ */
 function removeCommentIdsFromDoc(
   node: JSONContent,
   commentIds: ReadonlySet<string>,
-): JSONContent {
+  disposableAnchorIds: ReadonlySet<string>,
+): JSONContent | null {
+  let disposeNode = false;
   const marks = node.marks?.flatMap((mark) => {
     if (mark.type !== "commentRef") return [mark];
 
@@ -1712,12 +1741,23 @@ function removeCommentIdsFromDoc(
     const nextIds = currentIds.filter((id) => !commentIds.has(id));
 
     if (nextIds.length === currentIds.length) return [mark];
-    if (nextIds.length === 0) return [];
+    if (nextIds.length === 0) {
+      disposeNode = currentIds.some((id) => disposableAnchorIds.has(id));
+      return [];
+    }
     return [{ ...mark, attrs: { ...mark.attrs, commentIds: nextIds } }];
   });
-  const content = node.content?.map((child) =>
-    removeCommentIdsFromDoc(child, commentIds),
-  );
+
+  if (disposeNode) return null;
+
+  const content = node.content?.flatMap((child) => {
+    const next = removeCommentIdsFromDoc(
+      child,
+      commentIds,
+      disposableAnchorIds,
+    );
+    return next ? [next] : [];
+  });
 
   return {
     ...node,
@@ -1728,7 +1768,7 @@ function removeCommentIdsFromDoc(
 
 /**
  * Drops the given comments from a Markdown document without a mounted editor,
- * the same way removeCommentId plus a comments-map delete does inside one.
+ * the same way removeCommentIds plus a comments-map delete does inside one.
  * Returns the input untouched when none of the ids are present, so a no-op
  * never rewrites the file.
  */
@@ -1745,13 +1785,16 @@ export function removeCommentsFromCriticMarkdown(
 
   if (removedIds.size === 0) return markdown;
 
+  const disposableAnchorIds = new Set(
+    disposableAnchorCommentIds(removedIds, comments),
+  );
   const nextComments = new Map(comments);
   for (const commentId of removedIds) {
     nextComments.delete(commentId);
   }
 
   return editorStateToCriticMarkdown(
-    removeCommentIdsFromDoc(doc, removedIds),
+    removeCommentIdsFromDoc(doc, removedIds, disposableAnchorIds) ?? doc,
     nextComments,
     { frontmatter, endmatter, idCounters },
   );

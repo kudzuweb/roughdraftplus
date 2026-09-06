@@ -988,7 +988,7 @@ describe("change and comment walkers across a soft break", () => {
     });
     expect(atomMarks).toEqual(["commentRef"]);
 
-    expect(editor.commands.removeCommentId("c1")).toBe(true);
+    expect(editor.commands.removeCommentIds(["c1"])).toBe(true);
 
     let commentMarks = 0;
     editor.state.doc.descendants((node) => {

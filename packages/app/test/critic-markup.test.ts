@@ -11,6 +11,7 @@ import {
   criticMarkdownHasReviewRail,
   criticMarkdownToEditorState,
   criticMarkdownToRenderedHtml,
+  disposableAnchorCommentIds,
   editorStateToCriticMarkdown,
   getCommentDescendantIds,
   removeCommentsFromCriticMarkdown,
@@ -723,7 +724,7 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     });
 
     try {
-      editor.commands.removeCommentId("c2");
+      editor.commands.removeCommentIds(["c2"]);
       const nextComments = new Map(comments);
       nextComments.delete("c2");
 
@@ -743,6 +744,143 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
       'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n',
     );
     expect(removeCommentsFromCriticMarkdown(input, ["missing"])).toBe(input);
+  });
+
+  it("round-trips a disposable anchor flag on a comment", () => {
+    const input =
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}\n\nClosing paragraph.\n';
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("c1")).toMatchObject({
+      id: "c1",
+      anchor: "disposable",
+    });
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("removes a disposable anchor with its thread in the editor and keeps an unflagged anchor", () => {
+    const disposableInput =
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}\n\nClosing paragraph.\n';
+    const plainInput =
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z"}\n\nClosing paragraph.\n';
+
+    const clearThread = (input: string) => {
+      const { doc, comments, idCounters } = criticMarkdownToEditorState(input);
+      const editor = new Editor({
+        extensions: createEditorExtensions(""),
+        content: doc,
+      });
+
+      try {
+        editor.commands.removeCommentIds(["c1"], {
+          disposableCommentIds: disposableAnchorCommentIds(["c1"], comments),
+        });
+        const nextComments = new Map(comments);
+        nextComments.delete("c1");
+        return editorStateToCriticMarkdown(editor.getJSON(), nextComments, {
+          idCounters,
+        });
+      } finally {
+        editor.destroy();
+      }
+    };
+
+    expect(clearThread(disposableInput)).toBe(
+      "Intro paragraph.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
+    );
+    expect(clearThread(plainInput)).toBe(
+      "Intro paragraph.\n\nPlaceholder for the pricing decision.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
+    );
+  });
+
+  it("removes a disposable anchor with its thread from a Markdown string and keeps an unflagged anchor", () => {
+    const disposableInput =
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}\n\nClosing paragraph.\n';
+    const plainInput =
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z"}\n\nClosing paragraph.\n';
+
+    expect(removeCommentsFromCriticMarkdown(disposableInput, ["c1"])).toBe(
+      "Intro paragraph.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
+    );
+    expect(removeCommentsFromCriticMarkdown(plainInput, ["c1"])).toBe(
+      "Intro paragraph.\n\nPlaceholder for the pricing decision.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
+    );
+  });
+
+  it("keeps a disposable anchor while any comment still references it", () => {
+    const input =
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}{>>Free tier first.<<}{id="c2" by="user" at="2024-01-15T10:31:00.000Z" re="c1"}\n\nClosing paragraph.\n';
+
+    expect(removeCommentsFromCriticMarkdown(input, ["c2"])).toBe(
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 2\n',
+    );
+  });
+
+  it("removes a disposable anchor when the flagged thread is cleared with its reply, on both clear paths", () => {
+    const input =
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}{>>Free tier first.<<}{id="c2" by="user" at="2024-01-15T10:31:00.000Z" re="c1"}\n\nClosing paragraph.\n';
+    const cleared =
+      "Intro paragraph.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 2\n";
+
+    const { doc, comments, idCounters } = criticMarkdownToEditorState(input);
+    const removedIds = ["c1", ...getCommentDescendantIds("c1", comments)];
+    const editor = new Editor({
+      extensions: createEditorExtensions(""),
+      content: doc,
+    });
+
+    try {
+      editor.commands.removeCommentIds(removedIds, {
+        disposableCommentIds: disposableAnchorCommentIds(removedIds, comments),
+      });
+      const nextComments = new Map(comments);
+      for (const id of removedIds) {
+        nextComments.delete(id);
+      }
+
+      expect(
+        editorStateToCriticMarkdown(editor.getJSON(), nextComments, {
+          idCounters,
+        }),
+      ).toBe(cleared);
+    } finally {
+      editor.destroy();
+    }
+
+    expect(removeCommentsFromCriticMarkdown(input, removedIds)).toBe(cleared);
+  });
+
+  it("removes a disposable anchor that spans a soft line break", () => {
+    const input =
+      'Intro paragraph.\n\n{==Placeholder for the pricing decision,\nwritten only to carry this thread.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2024-01-15T10:30:00.000Z" anchor="disposable"}\n\nClosing paragraph.\n';
+    const { doc, comments, idCounters } = criticMarkdownToEditorState(input);
+    const editor = new Editor({
+      extensions: createEditorExtensions(""),
+      content: doc,
+    });
+
+    try {
+      editor.commands.removeCommentIds(["c1"], {
+        disposableCommentIds: ["c1"],
+      });
+      const nextComments = new Map(comments);
+      nextComments.delete("c1");
+
+      expect(
+        editorStateToCriticMarkdown(editor.getJSON(), nextComments, {
+          idCounters,
+        }),
+      ).toBe(
+        "Intro paragraph.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
+      );
+    } finally {
+      editor.destroy();
+    }
+
+    expect(removeCommentsFromCriticMarkdown(input, ["c1"])).toBe(
+      "Intro paragraph.\n\nClosing paragraph.\n\n---\ncounters:\n  comments: 1\n",
+    );
   });
 
   it("round-trips nested replies in preorder", () => {

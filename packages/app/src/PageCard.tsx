@@ -24,6 +24,7 @@ import {
   createCriticComment,
   criticMarkdownHasReviewRail,
   criticMarkdownToEditorState,
+  disposableAnchorCommentIds,
   editorStateToCriticMarkdown,
   getCommentDescendantIds,
   removeCommentsFromCriticMarkdown,
@@ -1730,16 +1731,22 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
 
       if (commentIdsToDelete.length === 0) return commentsRef.current;
 
-      const nextComments = new Map(commentsRef.current);
+      const previousComments = commentsRef.current;
+      const nextComments = new Map(previousComments);
       for (const id of commentIdsToDelete) {
         nextComments.delete(id);
       }
 
-      const chain = currentEditor.chain().focus();
-      for (const id of commentIdsToDelete) {
-        chain.removeCommentId(id);
-      }
-      chain.run();
+      currentEditor
+        .chain()
+        .focus()
+        .removeCommentIds(commentIdsToDelete, {
+          disposableCommentIds: disposableAnchorCommentIds(
+            commentIdsToDelete,
+            previousComments,
+          ),
+        })
+        .run();
 
       commentsRef.current = nextComments;
       setComments(nextComments);
@@ -1824,18 +1831,24 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       );
       const commentIdsToDelete = [commentId, ...descendantIds];
       const deletedIds = new Set(commentIdsToDelete);
-      const nextComments = new Map(commentsRef.current);
+      const previousComments = commentsRef.current;
+      const nextComments = new Map(previousComments);
       for (const id of commentIdsToDelete) {
         nextComments.delete(id);
       }
       commentsRef.current = nextComments;
       setComments(nextComments);
 
-      const chain = currentEditor.chain().focus();
-      for (const id of commentIdsToDelete) {
-        chain.removeCommentId(id);
-      }
-      chain.run();
+      currentEditor
+        .chain()
+        .focus()
+        .removeCommentIds(commentIdsToDelete, {
+          disposableCommentIds: disposableAnchorCommentIds(
+            commentIdsToDelete,
+            previousComments,
+          ),
+        })
+        .run();
       setSelectedCommentId((current) =>
         current && deletedIds.has(current) ? null : current,
       );
@@ -1884,18 +1897,23 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     if (approvedIds.length === 0) return;
 
     const approvedIdSet = new Set(approvedIds);
-    const nextComments = new Map(commentsRef.current);
+    const previousComments = commentsRef.current;
+    const nextComments = new Map(previousComments);
     for (const id of approvedIds) {
       nextComments.delete(id);
     }
     commentsRef.current = nextComments;
     setComments(nextComments);
 
-    const chain = currentEditor.chain();
-    for (const id of approvedIds) {
-      chain.removeCommentId(id);
-    }
-    chain.run();
+    currentEditor
+      .chain()
+      .removeCommentIds(approvedIds, {
+        disposableCommentIds: disposableAnchorCommentIds(
+          approvedIds,
+          previousComments,
+        ),
+      })
+      .run();
 
     setSelectedCommentId((current) =>
       current && approvedIdSet.has(current) ? null : current,

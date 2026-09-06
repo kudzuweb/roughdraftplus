@@ -205,6 +205,63 @@ test.describe("CriticMarkup review flows", () => {
     });
   });
 
+  test("removes a disposable anchor with its replied thread and keeps an unflagged anchor @smoke", async ({
+    page,
+  }) => {
+    const relativePath = "disposable-anchor.md";
+    // The flagged thread carries a reply because that is the loop's normal
+    // shape: the agent answers every thread inline before the reviewer clears
+    // it, and clearing the root and its replies together is what left the
+    // filler sentence behind until the removal read the whole set at once.
+    const filePath = writeProjectFile(
+      projectDir,
+      relativePath,
+      [
+        "# Disposable Anchors",
+        "",
+        '{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2026-04-23T18:00:00.000Z" anchor="disposable"}{>>Free tier first.<<}{id="r1" by="user" at="2026-04-23T18:05:00.000Z" re="c1"}',
+        "",
+        'Keep {==this sentence==}{>>Needs a source<<}{id="c2" by="AI" at="2026-04-23T18:01:00.000Z"} as prose.',
+        "",
+      ].join("\n"),
+    );
+
+    await openMarkdownFile(page, filePath);
+    const rail = page.getByTestId("document-review-rail");
+    await expect(rail).toContainText("Free tier first.");
+
+    await page.getByTestId("comment-thread-c1").click();
+    await page.getByTestId("comment-rail-c1-action-delete-thread").click();
+
+    await expect
+      .poll(() => readProjectFile(projectDir, relativePath))
+      .not.toContain("Placeholder for the pricing decision.");
+    await expect(page.getByTestId("rich-text-editor")).not.toContainText(
+      "Placeholder for the pricing decision.",
+    );
+    const afterFlaggedThread = readProjectFile(projectDir, relativePath);
+    expect(afterFlaggedThread).not.toContain('id="r1"');
+    expect(afterFlaggedThread).not.toContain("Free tier first.");
+    expect(afterFlaggedThread).toContain(
+      '{==this sentence==}{>>Needs a source<<}{id="c2"',
+    );
+
+    await page.getByTestId("comment-thread-c2").click();
+    await page.getByTestId("comment-rail-c2-action-delete-thread").click();
+
+    await expect
+      .poll(() => readProjectFile(projectDir, relativePath))
+      .not.toContain('id="c2"');
+    const savedMarkdown = readProjectFile(projectDir, relativePath);
+    expect(savedMarkdown).toContain("Keep this sentence as prose.");
+    expect(savedMarkdown).not.toContain("Placeholder");
+    expect(savedMarkdown).toContain("counters:\n  comments: 2\n");
+
+    logE2eEvent("criticmarkup.disposable-anchor-cleared", {
+      file: relativePath,
+    });
+  });
+
   test("animates the document layout when the review rail appears and disappears @smoke", async ({
     page,
   }) => {

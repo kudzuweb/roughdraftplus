@@ -30,7 +30,10 @@ declare module "@tiptap/core" {
   interface Commands<ReturnType> {
     commentRef: {
       setCommentRef: (attributes: { commentIds: string[] }) => ReturnType;
-      removeCommentId: (commentId: string) => ReturnType;
+      removeCommentIds: (
+        commentIds: Iterable<string>,
+        options?: { disposableCommentIds?: Iterable<string> },
+      ) => ReturnType;
       unsetCommentRef: () => ReturnType;
     };
     criticChange: {
@@ -107,14 +110,29 @@ const CommentRef = Mark.create({
         (attributes) =>
         ({ commands }) =>
           commands.setMark(this.name, attributes),
-      removeCommentId:
-        (commentId) =>
+      removeCommentIds:
+        (commentIds, options) =>
         ({ tr, state, dispatch }) => {
           const markType = state.schema.marks.commentRef;
 
           if (!markType) return false;
 
+          const removedIds = new Set(commentIds);
+
+          if (removedIds.size === 0) return false;
+
+          // The whole set of comments leaving the document is known here, so
+          // an anchor emptied by that set is judged once against every id it
+          // carried — the rule removeCommentsFromCriticMarkdown applies in
+          // code view. Deciding per comment instead would spare the anchor of
+          // a flagged thread that has replies, since the flagged root leaves
+          // while its replies still hold the mark.
+          const disposableIds = new Set(options?.disposableCommentIds ?? []);
           let found = false;
+          // Anchor text that was written only to carry a thread leaves with
+          // it. Ranges are collected during the walk and deleted from the end
+          // so earlier positions stay valid.
+          const disposedRanges: Array<{ from: number; to: number }> = [];
 
           state.doc.descendants((node, pos) => {
             if (!isInlineAtomOrText(node)) return;
@@ -123,7 +141,9 @@ const CommentRef = Mark.create({
               (candidate) =>
                 candidate.type === markType &&
                 Array.isArray(candidate.attrs.commentIds) &&
-                candidate.attrs.commentIds.includes(commentId),
+                (candidate.attrs.commentIds as string[]).some((id) =>
+                  removedIds.has(id),
+                ),
             );
 
             if (!mark) return;
@@ -132,16 +152,24 @@ const CommentRef = Mark.create({
 
             const from = pos;
             const to = pos + node.nodeSize;
-            const nextIds = (mark.attrs.commentIds as string[]).filter(
-              (id) => id !== commentId,
-            );
+            const currentIds = mark.attrs.commentIds as string[];
+            const nextIds = currentIds.filter((id) => !removedIds.has(id));
 
             tr.removeMark(from, to, markType);
 
             if (nextIds.length > 0) {
               tr.addMark(from, to, markType.create({ commentIds: nextIds }));
+            } else if (currentIds.some((id) => disposableIds.has(id))) {
+              disposedRanges.push({ from, to });
             }
           });
+
+          for (let index = disposedRanges.length - 1; index >= 0; index -= 1) {
+            const range = disposedRanges[index];
+            if (range) {
+              tr.delete(range.from, range.to);
+            }
+          }
 
           if (found && dispatch) {
             dispatch(tr);
