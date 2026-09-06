@@ -52,7 +52,7 @@ describe("createApp", () => {
     const publicDir = path.join(serverRoot, "packages", "app", "public");
     const promptPath = path.join(publicDir, "prompt.md");
 
-    it("serves /prompt.md byte-for-byte from the repo file", async () => {
+    it("serves /prompt.md byte-for-byte from the static dir it is given (the built dist copy is checked by scripts/copy-app-spec.mjs at build time)", async () => {
       const { app } = createApp({ homeDir, staticDirPath: publicDir });
 
       const response = await request(app).get("/prompt.md");
