@@ -38,6 +38,16 @@ with open threads continues the loop. Every thread is cleared when the document 
 comment, reply or suggestion. An overall comment that is not a done-signal is new feedback, so it
 continues the loop even when the threads are otherwise clear.
 
+The server persists every overall comment, done-signal or not, into the document's YAML
+endmatter as a document-level comment, and the tab re-attaches the endmatter on every save, so the
+comment survives into later rounds and counts as unresolved until it carries `status: resolved`.
+Until then the threads-cleared signal cannot fire, and the "item(s) still open" count runs one
+higher than the visible threads. The review rail does not render document-level comments today, so
+the reviewer cannot see or clear it in the browser; the agent clears it after acting on it, by
+marking it resolved (`roughdraft_mark_resolved` over MCP, or `markRoughdraftResolved` from
+`@roughdraft/rfm`) or by removing the entry from the endmatter. Rendering document-level comments
+in the rail, with a way to clear them, is a follow-up.
+
 ## Replies
 
 Inline replies are canonical: a reply sits directly after the comment it answers, in the same
