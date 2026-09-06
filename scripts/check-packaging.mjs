@@ -26,11 +26,25 @@ const requiredBuildOutputs = [
   "packages/server/dist/cli.js",
 ];
 
+// Assigned once the temporary directory exists. `fail()` has to remove it
+// itself: process.exit() does not unwind the stack, so the finally block at the
+// end of this file never runs on a failure, and each failed run would otherwise
+// strand ~15 MB in the OS temp directory.
+let workDir = null;
+
+function cleanUpWorkDir() {
+  if (workDir === null) return;
+  const doomed = workDir;
+  workDir = null;
+  fs.rmSync(doomed, { recursive: true, force: true });
+}
+
 function fail(message, details = []) {
   console.error(`Packaging guard failed: ${message}\n`);
   for (const detail of details) {
     if (detail.trim().length > 0) console.error(detail);
   }
+  cleanUpWorkDir();
   process.exit(1);
 }
 
@@ -96,7 +110,7 @@ for (const relativePath of requiredBuildOutputs) {
 // Outside the repo on purpose: a prefix nested under the worktree would let
 // node walk up into the workspace node_modules and resolve what the tarball
 // failed to declare.
-const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-packaging-"));
+workDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-packaging-"));
 const packDir = path.join(workDir, "pack");
 const prefix = path.join(workDir, "prefix");
 const stateDir = path.join(workDir, "state");
@@ -185,5 +199,5 @@ try {
     `Packed ${tarballs[0]}, installed it into a temporary prefix, and ran \`roughdraft --help\` and \`roughdraft status --json\` from it in ${elapsedSeconds}s.`,
   );
 } finally {
-  fs.rmSync(workDir, { recursive: true, force: true });
+  cleanUpWorkDir();
 }
