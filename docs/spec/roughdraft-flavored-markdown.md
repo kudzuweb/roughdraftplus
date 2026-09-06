@@ -88,7 +88,9 @@ A comment must anchor on some text, so when nothing in the document is a natural
 {==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2026-04-28T12:00:00.000Z" anchor="disposable"}
 ```
 
-When a comment carrying `anchor="disposable"` is removed and no comment remains on its anchor, an implementation MUST remove the anchor text with it. While any comment still references the anchor, including a reply to the flagged comment, the anchor text stays. Removing a comment without the flag leaves its anchor text in place as plain prose. A writer SHOULD put the flag on the root comment of the thread, and MUST NOT put it on a comment whose anchor is real document text.
+When a comment carrying `anchor="disposable"` is removed and no comment remains on its anchor, an implementation MUST remove the anchor text with it. This applies to the whole set of comments removed together: clearing a flagged thread removes its replies and the anchor in one action. While any comment still references the anchor, the anchor text stays. Removing a comment without the flag leaves its anchor text in place as plain prose. A writer SHOULD put the flag on the root comment of the thread, and MUST NOT put it on a comment whose anchor is real document text.
+
+The flag is read only from a comment's inline attribute block. A comment written in the legacy compact reference form, `{#c1}` with its metadata in the YAML endmatter, cannot carry it: an endmatter `anchor` entry is ignored and the anchor text stays.
 
 ## Suggestions
 
