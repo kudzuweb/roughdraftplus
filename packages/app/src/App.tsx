@@ -59,6 +59,7 @@ import {
   type CompleteReviewOptions,
   MarkdownFileConflictError,
   type Page,
+  ServerInstanceGoneError,
   type StorageBackend,
 } from "./storage";
 import { UpdateNotice } from "./UpdateNotice";
@@ -68,7 +69,17 @@ export type DocumentDiskChangeState =
   | "clean"
   | "changed"
   | "conflict"
-  | "paused";
+  | "paused"
+  | "server-gone";
+
+export function diskChangeStateAfterServerGone(
+  current: DocumentDiskChangeState,
+): DocumentDiskChangeState {
+  // Only a clean document becomes "server-gone". A paused, changed or
+  // conflicted one already holds a decision the reviewer has to make, and a
+  // refused write must not replace it or reopen the adoption gate.
+  return current === "clean" ? "server-gone" : current;
+}
 
 export function shouldWarnBeforeUnload({
   activeDocumentPath,
@@ -1492,6 +1503,7 @@ export function App() {
   const [documentForceResetKey, setDocumentForceResetKey] = useState<
     string | null
   >(null);
+  const [serverRestartNotice, setServerRestartNotice] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -1504,11 +1516,15 @@ export function App() {
   const documentDirtyRef = useRef(false);
   const documentSaveStateRef = useRef<DocumentSaveState>("saved");
   const documentDraftContentRef = useRef<string | null>(null);
+  const documentDiskChangeStateRef = useRef<DocumentDiskChangeState>("clean");
+  const adoptingServerRef = useRef(false);
+  const adoptReplacementServerRef = useRef<() => Promise<void>>(async () => {});
 
   backendRef.current = backend;
   documentPageRef.current = documentPage;
   activeDocumentPathRef.current = activeDocumentPath;
   documentSaveStateRef.current = documentSaveState;
+  documentDiskChangeStateRef.current = documentDiskChangeState;
 
   const applyDocumentPage = useCallback((nextDocument: Page) => {
     setDocumentPage(nextDocument);
@@ -1522,6 +1538,7 @@ export function App() {
       setActiveDocumentPath(relativePath);
       documentDirtyRef.current = false;
       setDocumentDiskChangeState("clean");
+      setServerRestartNotice(false);
       return nextDocument;
     },
     [applyDocumentPage],
@@ -1555,6 +1572,7 @@ export function App() {
       try {
         const payload = JSON.parse((event as MessageEvent<string>).data) as {
           url?: unknown;
+          instanceId?: unknown;
         };
         if (typeof payload.url !== "string" || !payload.url.trim()) return;
 
@@ -1562,6 +1580,16 @@ export function App() {
         window.focus();
         if (nextUrl.href !== window.location.href) {
           window.location.assign(nextUrl.href);
+          return;
+        }
+
+        // The same document opened again from a server this tab has not
+        // seen: the server was restarted, so adopt it instead of reloading.
+        if (
+          typeof payload.instanceId === "string" &&
+          payload.instanceId !== backendRef.current?.info.serverInstanceId
+        ) {
+          void adoptReplacementServerRef.current();
         }
       } catch (error) {
         console.error("Failed to handle Roughdraft open request:", error);
@@ -1670,6 +1698,76 @@ export function App() {
     requestedPathState.rawPath,
   ]);
 
+  const adoptReplacementServer = useCallback(async () => {
+    const currentBackend = backendRef.current;
+    const currentPath = activeDocumentPathRef.current;
+    const currentDocument = documentPageRef.current;
+    const currentState = documentDiskChangeStateRef.current;
+    if (
+      !currentBackend?.refreshServerInstance ||
+      !currentPath ||
+      !currentDocument ||
+      adoptingServerRef.current
+    ) {
+      return;
+    }
+
+    // A paused, changed or conflicted document already holds a decision the
+    // reviewer has to make; a restart must not make it for them.
+    if (currentState !== "clean" && currentState !== "server-gone") return;
+
+    adoptingServerRef.current = true;
+    try {
+      await currentBackend.refreshServerInstance();
+      // The file-change stream reconnects on its own, but the new server
+      // emits nothing for changes made while it was away, so re-read.
+      const nextDocument = await currentBackend.getMarkdownFile(currentPath);
+      if (activeDocumentPathRef.current !== currentPath) return;
+
+      if (!documentDirtyRef.current) {
+        applyDocumentPage(nextDocument);
+        setDocumentDiskChangeState("clean");
+        if (nextDocument.content !== currentDocument.content) {
+          setDocumentForceResetKey(
+            `${currentPath}:${nextDocument.version ?? Date.now()}:adopt`,
+          );
+        }
+        return;
+      }
+
+      // Versions derive from the file itself, so an equal version means the
+      // recorded one still guards the next write against the new server.
+      if (
+        nextDocument.version &&
+        nextDocument.version === currentDocument.version
+      ) {
+        setDocumentDiskChangeState("clean");
+        setServerRestartNotice(true);
+        return;
+      }
+
+      setDocumentDiskChangeState("changed");
+    } catch (error) {
+      console.error("Failed to adopt the restarted Roughdraft server:", error);
+    } finally {
+      adoptingServerRef.current = false;
+    }
+  }, [applyDocumentPage]);
+  adoptReplacementServerRef.current = adoptReplacementServer;
+
+  const handleServerInstanceGone = useCallback(() => {
+    const nextState = diskChangeStateAfterServerGone(
+      documentDiskChangeStateRef.current,
+    );
+    documentDiskChangeStateRef.current = nextState;
+    setDocumentDiskChangeState(nextState);
+    void adoptReplacementServer();
+  }, [adoptReplacementServer]);
+
+  const handleDismissServerRestartNotice = useCallback(() => {
+    setServerRestartNotice(false);
+  }, []);
+
   const handleSaveDocument = useCallback(
     async (id: string, content: string) => {
       if (!activeDocumentPath) return;
@@ -1689,6 +1787,9 @@ export function App() {
         if (error instanceof MarkdownFileConflictError) {
           setDocumentDiskChangeState("conflict");
         }
+        if (error instanceof ServerInstanceGoneError) {
+          handleServerInstanceGone();
+        }
         throw error;
       }
 
@@ -1706,7 +1807,7 @@ export function App() {
       documentDirtyRef.current = false;
       setDocumentDiskChangeState("clean");
     },
-    [activeDocumentPath, applyDocumentPage],
+    [activeDocumentPath, applyDocumentPage, handleServerInstanceGone],
   );
 
   const handleDocumentDirtyStateChange = useCallback((isDirty: boolean) => {
@@ -1775,10 +1876,20 @@ export function App() {
     const fallbackTitle =
       currentDocument.id.split("/").at(-1) || currentDocument.id;
     const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
-    const savedDocument = (await currentBackend.saveMarkdownFile(
-      currentPath,
-      content,
-    )) ?? {
+    let savedDocument: Page | undefined;
+    try {
+      savedDocument = await currentBackend.saveMarkdownFile(
+        currentPath,
+        content,
+      );
+    } catch (error) {
+      if (error instanceof ServerInstanceGoneError) {
+        handleServerInstanceGone();
+        return;
+      }
+      throw error;
+    }
+    savedDocument ??= {
       ...currentDocument,
       content,
       title,
@@ -1791,7 +1902,11 @@ export function App() {
     setDocumentForceResetKey(
       `${currentPath}:${savedDocument.version ?? Date.now()}:overwrite`,
     );
-  }, [applyDocumentPage, handleDocumentSaveStateChange]);
+  }, [
+    applyDocumentPage,
+    handleDocumentSaveStateChange,
+    handleServerInstanceGone,
+  ]);
 
   const handleCompleteReview = useCallback(
     async (options?: CompleteReviewOptions) => {
@@ -1804,31 +1919,43 @@ export function App() {
 
       const content =
         documentDraftContentRef.current ?? currentDocument.content;
-      const expectedVersion = currentDocument.version;
-      const firstLine = content.split("\n")[0] || "";
-      const fallbackTitle =
-        currentDocument.id.split("/").at(-1) || currentDocument.id;
-      const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
 
-      const savedDocument = (await currentBackend.saveMarkdownFile(
-        currentPath,
-        content,
-        expectedVersion,
-      )) ?? {
-        ...currentDocument,
-        content,
-        title,
-      };
+      try {
+        // Only write when the reviewer's draft differs from what is on disk;
+        // approving an untouched document must leave its bytes alone.
+        if (content !== currentDocument.content) {
+          const expectedVersion = currentDocument.version;
+          const firstLine = content.split("\n")[0] || "";
+          const fallbackTitle =
+            currentDocument.id.split("/").at(-1) || currentDocument.id;
+          const title = firstLine.replace(/^#*\s*/, "") || fallbackTitle;
 
-      applyDocumentPage(savedDocument);
-      documentDirtyRef.current = false;
-      setDocumentDiskChangeState("clean");
+          const savedDocument = (await currentBackend.saveMarkdownFile(
+            currentPath,
+            content,
+            expectedVersion,
+          )) ?? {
+            ...currentDocument,
+            content,
+            title,
+          };
 
-      return currentBackend.completeReview
-        ? currentBackend.completeReview(currentPath, options)
-        : { delivered: false };
+          applyDocumentPage(savedDocument);
+          documentDirtyRef.current = false;
+          setDocumentDiskChangeState("clean");
+        }
+
+        return currentBackend.completeReview
+          ? await currentBackend.completeReview(currentPath, options)
+          : { delivered: false };
+      } catch (error) {
+        if (error instanceof ServerInstanceGoneError) {
+          handleServerInstanceGone();
+        }
+        throw error;
+      }
     },
-    [applyDocumentPage],
+    [applyDocumentPage, handleServerInstanceGone],
   );
 
   useEffect(() => {
@@ -1850,7 +1977,10 @@ export function App() {
           return;
         }
 
-        if (documentDiskChangeState === "paused") {
+        if (
+          documentDiskChangeState === "paused" ||
+          documentDiskChangeState === "server-gone"
+        ) {
           return;
         }
 
@@ -1956,6 +2086,8 @@ export function App() {
         onReloadDocumentFromDisk={handleReloadDocumentFromDisk}
         onKeepEditingWithoutAutosave={handleKeepEditingWithoutAutosave}
         onOverwriteDocumentOnDisk={handleOverwriteDocumentOnDisk}
+        documentServerRestartNotice={serverRestartNotice}
+        onDismissServerRestartNotice={handleDismissServerRestartNotice}
         onCompleteReview={handleCompleteReview}
         backend={backend}
       />

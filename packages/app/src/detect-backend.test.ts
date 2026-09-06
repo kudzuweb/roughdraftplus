@@ -71,6 +71,26 @@ describe("detectBackend", () => {
     expect(createRemoteBackend).not.toHaveBeenCalled();
   });
 
+  it("records the server instance id so later writes can prove which server the tab loaded from", async () => {
+    global.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            backend: "local-files",
+            projectDir: "/work",
+            instanceId: "instance-1",
+            capabilities: {},
+          }),
+          { status: 200 },
+        ),
+    ) as unknown as typeof fetch;
+
+    const backend = await detectBackend();
+
+    expect(backend).toBeInstanceOf(ApiBackend);
+    expect(backend.info.serverInstanceId).toBe("instance-1");
+  });
+
   it("does not hide a broken remote session by falling back to local storage", async () => {
     window.history.replaceState(null, "", "/?session=missing&token=bad");
     global.fetch = vi.fn(

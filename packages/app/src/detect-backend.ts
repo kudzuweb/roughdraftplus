@@ -6,6 +6,7 @@ import { RemoteBackend } from "./remote-backend";
 interface StatusPayload {
   backend?: string;
   projectDir?: string;
+  instanceId?: string;
   stateless?: boolean;
   capabilities?: { remoteDocuments?: boolean };
 }
@@ -47,6 +48,7 @@ export async function detectBackend(): Promise<StorageBackend> {
           ? "Open a markdown file"
           : "Markdown file on disk",
         projectPath: statusPayload.projectDir,
+        serverInstanceId: statusPayload.instanceId,
       });
     }
   }
