@@ -69,8 +69,8 @@ no separate diff view (backlog item 10).
 
 ## Approvals
 
-- A reviewer reply that is an approval ("approved", "okay approved", or the approve button once it
-  ships) **resolves exactly the comment it answers** — never the rest of a stacked thread, because
+- A reviewer reply that is an approval ("approved", "okay approved", or the approve button)
+  **resolves exactly the comment it answers** — never the rest of a stacked thread, because
   different questions in one stack can have different answers. The agent removes the resolved
   markup when processing the round; the anchor text stays if it is real prose, and the thread's
   other comments survive untouched.
@@ -79,8 +79,12 @@ no separate diff view (backlog item 10).
   the approval, answers the question, and the thread (or its live tail) survives until the
   reviewer clears it.
 
-Planned UI (backlog item 6): a checkmark affordance on agent replies that swaps to an inline
-confirm, records a pending approval, and applies it when the reviewer clicks Done Reviewing.
+The approve button (item 6, PR #50) is product behavior: a checkmark on each agent reply swaps to
+an inline confirm, confirming marks the reply Approved, and Done Reviewing applies every pending
+approval in the same save as the handoff, removing only that reply's markup. Until then a pending
+approval is tab state: it survives a switch between rich text and code view and a reload from
+disk, and a browser refresh discards it along with any unsaved edits. Done Reviewing applies
+pending approvals from code view too, by resolving them on the Markdown text.
 
 ## Hygiene during the loop
 
@@ -122,7 +126,7 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 | Auto-reopen until done-signal | `roughdraft open --loop` reports the done-signal after each round (item 14) | The reopen on `done: false` remains agent discipline |
 | Meaningful changes stand out | Agent marks them `{++ins++}` / `{~~sub~~}`, leaves mechanical edits unmarked | Jump-to-next-mark navigation (item 10, deferred behind item 5) |
 | Approving a mark accepts it into prose | Agent strips markup on approval | Approve action accepts the suggestion (items 6, 10) |
-| Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |
+| Approval resolves its comment (per-comment only) | Product behavior: approve button, applied on Done Reviewing | Shipped (item 6) |
 | Inline replies canonical | Agent discipline; prompt/spec still say endmatter | Prompt/spec rewrite + legacy rendering (item 4) |
 | Collapsed threads, newest reply visible | Product behavior | Shipped (item 5) |
 | Tab writes only on reviewer edits; stops after Done or until a replaced server is adopted | Product behavior | Shipped (item 2) |
