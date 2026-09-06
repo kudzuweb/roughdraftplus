@@ -2805,7 +2805,7 @@ describe("cli", () => {
       '  {>>Needs a source<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}{>>Added one from the intro.<<}{id="r1" by="AI" at="2026-04-28T12:05:00.000Z" re="c1"}',
     );
     expect(test.logs).toContain(
-      "  Read that form but never write it: Roughdraft does not display endmatter replies.",
+      "  Read that form but never write it. Roughdraft displays the endmatter replies a document already carries.",
     );
     expect(test.logs).toContain(
       "  Comment ids are document-local and usually look like `c1`, `c2`, `c3`.",

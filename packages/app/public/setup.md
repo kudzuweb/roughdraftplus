@@ -145,7 +145,7 @@ Replies are inline. Write each reply directly after the comment it answers, in t
 
 `{>>reply text<<}{id="rN" by="AI" at="<ISO timestamp>" re="cN"}`
 
-Older documents may keep review metadata in final YAML endmatter behind compact references such as `{#c1}`, with replies stored as `comments.<id>` entries that carry `body` and `re`. That is a legacy format: read it and preserve it on items you are not rewriting, but never write new comments, replies, or suggestions in it. Roughdraft does not show endmatter replies, so a reply written there is invisible to the reviewer.
+Older documents may keep review metadata in final YAML endmatter behind compact references such as `{#c1}`, with replies stored as `comments.<id>` entries that carry `body` and `re`. That is a legacy format: read it and preserve it on items you are not rewriting, but never write new comments, replies, or suggestions in it. Roughdraft shows an endmatter reply the document already carries, in the thread of the comment its `re` names, so treat it as live feedback like any other reply.
 
 Anchored comments look like `{==selected text==}{>>Comment text<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}`. When nothing in the document is a natural anchor for a comment, add a sentence written only to carry it and mark the comment with `anchor="disposable"`, such as `{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2026-04-28T12:00:00.000Z" anchor="disposable"}`; when the reviewer clears that thread, Roughdraft removes the sentence with it. Without the flag the anchor text stays after its thread is cleared, so never put the flag on a comment anchored to real document text. Suggested changes look like `{++new text++}{id="s1" by="AI" at="2026-04-28T12:10:00.000Z"}` or `{~~old text~>new text~~}{id="s2" by="AI" at="2026-04-28T12:11:00.000Z"}`. A reply follows its parent on the same line.
 
@@ -197,7 +197,7 @@ re  Parent comment or suggestion id for replies
 
 A top-level `counters` map in final YAML endmatter (`comments`, `suggestions`) records the highest id number ever allocated for each family so removed ids are never reused. Allocate above it, never lower it, and when you remove threads or suggestions record the highest id removed there if it exceeds every id still present. Two live items belong in endmatter and nothing else: that map, and the reviewer's overall comment, which the server writes under `comments:` at Done Reviewing as an entry with a `body`, `by: user`, no `re`, and no matching `{#id}` in the document. Act on it, then clear it with `status: resolved` or by removing the entry.
 
-Legacy documents may instead carry compact references such as `{#c1}` with `comments:` and `suggestions:` maps in YAML endmatter, and replies stored there as entries with `body` and `re`. Read that format and preserve it on items you are not rewriting, but never write new comments, replies, or suggestions in it: Roughdraft does not display endmatter replies.
+Legacy documents may instead carry compact references such as `{#c1}` with `comments:` and `suggestions:` maps in YAML endmatter, and replies stored there as entries with `body` and `re`. Read that format and preserve it on items you are not rewriting, but never write new comments, replies, or suggestions in it. Roughdraft displays the endmatter replies such a document already carries.
 
 CriticMarkup inside fenced code blocks is literal example text. Do not treat it as review feedback.
 

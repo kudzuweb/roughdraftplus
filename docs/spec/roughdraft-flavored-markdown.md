@@ -195,7 +195,7 @@ suggestions:
     at: "2026-04-28T12:05:00.000Z"
 ```
 
-In that form, root comment bodies and suggestion text stay inline while their `by` and `at` live under `comments:` or `suggestions:`, and a reply lives entirely in endmatter as an entry with `body` and `re`. Roughdraft does not display endmatter replies.
+In that form, root comment bodies and suggestion text stay inline while their `by` and `at` live under `comments:` or `suggestions:`, and a reply lives entirely in endmatter as an entry with `body` and `re`. An endmatter reply has no marker of its own in the body, so a reader MUST attach it to the item its `re` names and MUST NOT require an inline marker to display it. Roughdraft shows such a reply in the thread of the nearest ancestor that does have a marker.
 
 Readers MUST accept this form and MUST preserve its `comments:` and `suggestions:` maps on items they are not rewriting. Writers MUST NOT emit new body comments, replies, or suggestions in it. The only endmatter entries a writer emits are the `counters` map ([Id Counters](#id-counters)) and a [document-level comment](#document-level-comments); neither is legacy. For compatibility, readers MAY also accept legacy comment metadata of the form `{@id:c1; by:AI; at:2026-04-28T12:00:00.000Z@}`.
 
