@@ -205,6 +205,56 @@ test.describe("CriticMarkup review flows", () => {
     });
   });
 
+  test("removes a disposable anchor with its thread and keeps an unflagged anchor @smoke", async ({
+    page,
+  }) => {
+    const relativePath = "disposable-anchor.md";
+    const filePath = writeProjectFile(
+      projectDir,
+      relativePath,
+      [
+        "# Disposable Anchors",
+        "",
+        '{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2026-04-23T18:00:00.000Z" anchor="disposable"}',
+        "",
+        'Keep {==this sentence==}{>>Needs a source<<}{id="c2" by="AI" at="2026-04-23T18:01:00.000Z"} as prose.',
+        "",
+      ].join("\n"),
+    );
+
+    await openMarkdownFile(page, filePath);
+    const rail = page.getByTestId("document-review-rail");
+    await expect(rail).toContainText("Which tier ships first?");
+
+    await page.getByTestId("comment-thread-c1").click();
+    await page.getByTestId("comment-rail-c1-action-delete-thread").click();
+
+    await expect
+      .poll(() => readProjectFile(projectDir, relativePath))
+      .not.toContain("Placeholder for the pricing decision.");
+    await expect(page.getByTestId("rich-text-editor")).not.toContainText(
+      "Placeholder for the pricing decision.",
+    );
+    expect(readProjectFile(projectDir, relativePath)).toContain(
+      '{==this sentence==}{>>Needs a source<<}{id="c2"',
+    );
+
+    await page.getByTestId("comment-thread-c2").click();
+    await page.getByTestId("comment-rail-c2-action-delete-thread").click();
+
+    await expect
+      .poll(() => readProjectFile(projectDir, relativePath))
+      .not.toContain('id="c2"');
+    const savedMarkdown = readProjectFile(projectDir, relativePath);
+    expect(savedMarkdown).toContain("Keep this sentence as prose.");
+    expect(savedMarkdown).not.toContain("Placeholder");
+    expect(savedMarkdown).toContain("counters:\n  comments: 2\n");
+
+    logE2eEvent("criticmarkup.disposable-anchor-cleared", {
+      file: relativePath,
+    });
+  });
+
   test("animates the document layout when the review rail appears and disappears @smoke", async ({
     page,
   }) => {
