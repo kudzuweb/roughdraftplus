@@ -874,6 +874,86 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     expect(change.changeId).toBe("s4");
   });
 
+  it("never reuses a comment id in an inline-attribute document after every thread has been cleared", () => {
+    const input = [
+      "# Plan",
+      "",
+      'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-05-24T10:00:00.000Z"}{>>Added one.<<}{id="c2" by="AI" at="2026-05-24T10:05:00.000Z" re="c1"} and {==that one==}{>>Also this.<<}{id="c3" by="user" at="2026-05-24T10:06:00.000Z"}.',
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    expect([...loaded.comments.keys()]).toEqual(["c1", "c2", "c3"]);
+    expect(loaded.endmatter).toBeNull();
+
+    const plain = criticMarkdownToEditorState(
+      "# Plan\n\nPlease revisit this claim and that one.\n",
+    );
+    const cleared = editorStateToCriticMarkdown(plain.doc, new Map(), {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(cleared);
+
+    expect(cleared).toContain("counters:\n  comments: 3\n");
+    expect(reloaded.comments.size).toBe(0);
+    expect(
+      createCriticComment(undefined, {
+        existingComments: reloaded.comments.values(),
+        idCounters: reloaded.idCounters,
+      }).id,
+    ).toBe("c4");
+  });
+
+  it("never reuses a suggestion id in an inline-attribute document after every suggestion has been cleared", () => {
+    const input =
+      'Add {++one++}{id="s1" by="user" at="2026-05-24T10:00:00.000Z"} and {++two++}{id="s2" by="user" at="2026-05-24T10:01:00.000Z"}.\n';
+
+    const loaded = criticMarkdownToEditorState(input);
+    const plain = criticMarkdownToEditorState("Add.\n");
+    const cleared = editorStateToCriticMarkdown(plain.doc, new Map(), {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(cleared);
+
+    expect(cleared).toContain("counters:\n  suggestions: 2\n");
+    expect(
+      createCriticChange("addition", undefined, {
+        existingChanges: [],
+        idCounters: reloaded.idCounters,
+      }).changeId,
+    ).toBe("s3");
+  });
+
+  it("keeps inline replies inline across a save when only counters live in the endmatter", () => {
+    const input = [
+      'Please revisit {==this claim==}{>>Needs a source.<<}{id="c1" by="user" at="2026-05-24T10:00:00.000Z"}{>>Added one.<<}{id="c2" by="AI" at="2026-05-24T10:05:00.000Z" re="c1"}.',
+      "",
+      "---",
+      "counters:",
+      "  comments: 3",
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    const output = editorStateToCriticMarkdown(loaded.doc, loaded.comments, {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+
+    expect(output).toBe(input);
+    expect(
+      createCriticComment(
+        { parentCommentId: "c1" },
+        {
+          existingComments: loaded.comments.values(),
+          idCounters: loaded.idCounters,
+        },
+      ).id,
+    ).toBe("c4");
+  });
+
   it("reads id counters from YAML endmatter and raises them to the ids in use", () => {
     const input = [
       "Add {++one++}{#s5} to {==this==}{>>Needs work.<<}{#c1}.",
