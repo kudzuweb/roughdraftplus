@@ -108,3 +108,19 @@ Known variances, recorded rather than fixed:
 - A loose list saves tight (#23).
 - A space typed just before a wrap point persists as a single trailing space; two typed spaces save as one, so no hard break is produced.
 - Not demonstrated for the soft break: Firefox and Safari caret behaviour around the non-editable inline, IME composition and touch selection, undo and redo across an atom deletion, and find-and-replace.
+
+### Review round 2
+
+The re-verdict on round 1 found walkers the round-1 change had not reached. Changes applied:
+
+- **R1.** The seven remaining text-only walkers in `PageCard.tsx` (comment ids under a selection, change ids under a selection, `addCommentIdsToAnchor`, `getDocumentCriticChanges`, the review-rail item builder, `getCriticChangeRange`, `addCommentIdsToCriticChange`) now use `isInlineAtomOrText`. Before, a deletion covering only the soft-break atom was invisible to `getDocumentCriticChanges`, so the next suggestion was allocated the same id and accepting one applied both; `getCriticChangeRange` returned null for it. The rail builder reads `textContent` instead of `text`, so the atom contributes its space to the preview. `getDocumentCriticChanges` and `getCriticChangeRange` are exported so tests can call the real walkers.
+- **R2.** `removeCommentId` in `editor-extensions.ts` uses the same predicate, so removing a comment anchored across a wrap clears the atom's `commentRef` mark instead of leaving a stale one that resurfaced as extra anchors on a surviving comment or a phantom `{==\n==}` when the id was reused.
+- **R4.** Every saved string in the soft-break suggesting tests, and the reflow fixture round trip, asserts that U+200B is absent. Two new `markdown.test.ts` cases pin `{--this line\ncontinues--}` and `{--\n--}` through the CriticMarkup save path byte for byte, and a suggesting-mode test pins that rejecting a deletion across a wrap restores the wrap.
+- **R5.** Group 3 of the hygiene bullet in `docs/review-loop.md` names the seven further rewrites the reviewer verified and says the group is not exhaustive.
+
+Tests added, all in `packages/app/src/suggesting-mode.test.ts` under "change and comment walkers across a soft break" unless noted: rejecting a deletion across a wrap point restores the wrap; a change allocated after an atom-only deletion gets `s2` (calls the real `getDocumentCriticChanges`); `getCriticChangeRange` finds an atom-only change; removing a comment anchored across a wrap leaves no `commentRef` mark and saves the original text. The three walker tests fail with the old `isText` guards restored at `getDocumentCriticChanges`, `getCriticChangeRange` and `removeCommentId`, and pass with the fix. In real Chromium (temporary Playwright spec, not committed) a Backspace after the wrap point followed by typing at the paragraph end saved `{--\n--}{id="s1" ...}` and `{++NEW++}{id="s2" ...}`. After this round `pnpm check` passed (biome over 113 files, the selector check, 29 rfm tests, 254 app tests, 124 server tests, and the build) and `pnpm test:smoke` passed 12 of 12.
+
+Known variances, recorded rather than fixed:
+
+- **Test structure.** The suggesting-mode tests mirror the `PageCard.tsx` keyboard, paste and cut handlers in local helper functions rather than calling them, because those handlers are closures inside the editor props. That is why R1 passed a green suite in round 1: the helpers were updated and the module-private walkers were not. The two walkers this round exports are now called directly; the handler mirrors remain, for a follow-up that extracts the segment collector into a shared module.
+- **R3 (own ticket, filed by the orchestrator).** A deletion covering only the soft break inside bold, italic or a link serializes badly (`**a**{----}**b**`, a link split in three); the family is pre-existing for whitespace-only suggestions inside emphasis and is not touched here.
