@@ -77,12 +77,24 @@ interface CreateAppResult {
 // One connected tab. `path` is the document it has open (null on the
 // homepage) and `sessionLabel` names the agent session that opened it; the
 // tab reports both when it subscribes, and a delivered open request updates
-// the label. Together the entries are the server's record of open documents.
+// the label. `openedAt` is when the tab subscribed and `lastSavedAt` the last
+// time this server wrote the document to disk while the tab was connected.
+// Together the entries are the server's record of open documents.
 interface OpenRequestClient {
   id: number;
   path: string | null;
   sessionLabel: string | null;
+  openedAt: string;
+  lastSavedAt: string | null;
   response: Response;
+}
+
+// What `/api/status` reports for each tab that has a document open.
+export interface OpenDocumentRecord {
+  path: string;
+  sessionLabel: string | null;
+  openedAt: string;
+  lastSavedAt: string | null;
 }
 
 interface OpenRequestPayload {
@@ -687,6 +699,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       : markdown;
     if (persistedMarkdown !== markdown) {
       fs.writeFileSync(target.absolutePath, persistedMarkdown);
+      recordDocumentSave(target.absolutePath);
     }
 
     const index = extractRoughdraftReviewIndex(persistedMarkdown);
@@ -798,6 +811,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     // mtime and turn every other open tab's version stale.
     if (fs.readFileSync(absolutePath, "utf-8") !== content) {
       fs.writeFileSync(absolutePath, content);
+      recordDocumentSave(absolutePath);
     }
     res.json(markdownPageFromFile(relativePath, absolutePath));
   });
@@ -833,6 +847,29 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     res.json({ ok: true });
   });
 
+  function openDocuments(): OpenDocumentRecord[] {
+    const documents: OpenDocumentRecord[] = [];
+    for (const client of openRequestClients) {
+      if (client.path === null) continue;
+      documents.push({
+        path: client.path,
+        sessionLabel: client.sessionLabel,
+        openedAt: client.openedAt,
+        lastSavedAt: client.lastSavedAt,
+      });
+    }
+    return documents;
+  }
+
+  function recordDocumentSave(absolutePath: string): void {
+    const savedAt = new Date().toISOString();
+    for (const client of openRequestClients) {
+      if (client.path !== null && path.resolve(client.path) === absolutePath) {
+        client.lastSavedAt = savedAt;
+      }
+    }
+  }
+
   app.get("/api/status", (_req, res) => {
     res.json({
       backend: "local-files",
@@ -844,6 +881,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
         : undefined,
       serverRoot,
       stateless: true,
+      documents: openDocuments(),
       capabilities: {
         projectPathRequired: true,
         fileSystemBrowsing: true,
@@ -880,6 +918,8 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       id: nextOpenRequestClientId,
       path: requestedPath,
       sessionLabel: normalizeSessionLabel(req.query.label),
+      openedAt: new Date().toISOString(),
+      lastSavedAt: null,
       response: res,
     };
     nextOpenRequestClientId += 1;
