@@ -17,7 +17,7 @@ Make both blank-line removals in `normalizeBlockSpacing` (`packages/app/src/mark
 The issue's wording conflicts with tests already in the suite in two places, so the fix is narrower than the wording:
 
 - List items are not in the keep-set. The existing compact round-trip test in `markdown.test.ts` ("does not add blank lines between headings and adjacent blocks on round-trip") has headings glued to list items on both sides and expects them to stay glued.
-- The blank line after a heading is still always removed, even when a table, fence, or blockquote follows. Keeping it broke three existing tests that pin compact heading-then-table output: the `mixed-roundtrip.md` fixture round trip in `test/critic-markup.test.ts` and two autosave tests in `test/page-card.test.tsx`, plus the headerless-table round trip in `markdown.test.ts`. A heading is a single-line block, so the block after it starts fresh and that blank line is not structural. The acceptance criteria name only the heading-after-table and heading-after-fence direction, and both hold.
+- The blank line after a heading is still always removed, even when a table, fence, or blockquote follows. Keeping it broke four existing tests that pin compact heading-then-table output: the `mixed-roundtrip.md` fixture round trip in `test/critic-markup.test.ts` and two autosave tests in `test/page-card.test.tsx`, plus the headerless-table round trip in `markdown.test.ts`. A heading is a single-line block, so the block after it starts fresh and that blank line is not structural. The acceptance criteria name only the heading-after-table and heading-after-fence direction, and both hold.
 
 The literal "heading absorbed into the table on the next parse" does not reproduce in this app's parser: `| 1 | 2 |\n## After` parsed through marked 15.0.12 and through `toHtml` yields a table followed by an `h2`, and a second save is byte-identical to the first. What does reproduce, on every save, is the loss of the author's blank line at each of these boundaries, and that is what the new tests pin.
 
@@ -40,4 +40,4 @@ All five failed against the old function and pass after the fix. The tests commi
 ### Left undone
 
 - A blank line inside a fenced code block before a line starting with `# ` is still stripped, as before: the function does not track fence state. Out of scope for this issue.
-- A heading followed by a table, fence, or blockquote still compacts, for the reason above. If that direction should keep its blank line too, the three tests named above need new expectations, which is a separate decision.
+- A heading followed by a table, fence, or blockquote still compacts, for the reason above. If that direction should keep its blank line too, the four tests named above need new expectations, which is a separate decision.
