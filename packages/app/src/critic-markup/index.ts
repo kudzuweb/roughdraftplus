@@ -1699,6 +1699,64 @@ export function editorStateToCriticMarkdown(
   );
 }
 
+function removeCommentIdsFromDoc(
+  node: JSONContent,
+  commentIds: ReadonlySet<string>,
+): JSONContent {
+  const marks = node.marks?.flatMap((mark) => {
+    if (mark.type !== "commentRef") return [mark];
+
+    const currentIds = Array.isArray(mark.attrs?.commentIds)
+      ? (mark.attrs.commentIds as string[])
+      : [];
+    const nextIds = currentIds.filter((id) => !commentIds.has(id));
+
+    if (nextIds.length === currentIds.length) return [mark];
+    if (nextIds.length === 0) return [];
+    return [{ ...mark, attrs: { ...mark.attrs, commentIds: nextIds } }];
+  });
+  const content = node.content?.map((child) =>
+    removeCommentIdsFromDoc(child, commentIds),
+  );
+
+  return {
+    ...node,
+    ...(marks ? { marks } : {}),
+    ...(content ? { content } : {}),
+  };
+}
+
+/**
+ * Drops the given comments from a Markdown document without a mounted editor,
+ * the same way removeCommentId plus a comments-map delete does inside one.
+ * Returns the input untouched when none of the ids are present, so a no-op
+ * never rewrites the file.
+ */
+export function removeCommentsFromCriticMarkdown(
+  markdown: string,
+  commentIds: Iterable<string>,
+  options?: MarkdownOptions,
+): string {
+  const { doc, comments, frontmatter, endmatter, idCounters } =
+    criticMarkdownToEditorState(markdown, options);
+  const removedIds = new Set(
+    [...commentIds].filter((commentId) => comments.has(commentId)),
+  );
+
+  if (removedIds.size === 0) return markdown;
+
+  const nextComments = new Map(comments);
+  for (const commentId of removedIds) {
+    nextComments.delete(commentId);
+  }
+
+  return editorStateToCriticMarkdown(
+    removeCommentIdsFromDoc(doc, removedIds),
+    nextComments,
+    { frontmatter, endmatter, idCounters },
+  );
+}
+
 export function createCriticComment(
   partial?: Partial<CriticComment>,
   options?: {

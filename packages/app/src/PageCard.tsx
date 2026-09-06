@@ -26,6 +26,7 @@ import {
   criticMarkdownToEditorState,
   editorStateToCriticMarkdown,
   getCommentDescendantIds,
+  removeCommentsFromCriticMarkdown,
   type ReviewIdCounters,
 } from "./critic-markup";
 import {
@@ -2251,10 +2252,6 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     },
     [],
   );
-  const applyPendingApprovals = useCallback(() => {
-    applyPendingApprovalsRef.current?.();
-  }, []);
-
   const reportDirtyState = useCallback(
     (isDirty: boolean) => {
       if (localDirtyRef.current === isDirty) return;
@@ -2379,11 +2376,6 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     return await performSave(pendingMarkdownRef.current);
   }, [onSaveStateChange, performSave]);
 
-  useEffect(() => {
-    onSaveControllerChange?.({ flushSave, applyPendingApprovals });
-    return () => onSaveControllerChange?.(null);
-  }, [applyPendingApprovals, flushSave, onSaveControllerChange]);
-
   const handleMarkdownChange = useCallback(
     (nextMarkdown: string) => {
       pendingMarkdownRef.current = nextMarkdown;
@@ -2394,6 +2386,33 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     },
     [onLocalContentChange, reportDirtyState, scheduleSave],
   );
+
+  const applyPendingApprovals = useCallback(() => {
+    // The rich editor applies approvals through its own commands while it is
+    // mounted. In code view it is not, so resolve them on the Markdown
+    // itself; the code editor picks the result up through its value prop.
+    if (applyPendingApprovalsRef.current) {
+      applyPendingApprovalsRef.current();
+      return;
+    }
+
+    if (pendingApprovalCommentIds.length === 0) return;
+
+    const currentMarkdown = pendingMarkdownRef.current;
+    const nextMarkdown = removeCommentsFromCriticMarkdown(
+      currentMarkdown,
+      pendingApprovalCommentIds,
+    );
+    setPendingApprovalCommentIds([]);
+    if (nextMarkdown === currentMarkdown) return;
+
+    handleMarkdownChange(nextMarkdown);
+  }, [handleMarkdownChange, pendingApprovalCommentIds]);
+
+  useEffect(() => {
+    onSaveControllerChange?.({ flushSave, applyPendingApprovals });
+    return () => onSaveControllerChange?.(null);
+  }, [applyPendingApprovals, flushSave, onSaveControllerChange]);
 
   useEffect(() => {
     const forceResetChanged = forceResetKeyRef.current !== forceResetKey;

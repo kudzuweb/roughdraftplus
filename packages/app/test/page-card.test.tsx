@@ -1826,6 +1826,69 @@ describe("PageCard editor integration", () => {
     expect(rendered.onSave).toHaveBeenCalledTimes(1);
   });
 
+  it("applies pending approvals from code view, where the rich editor is unmounted", async () => {
+    const rendered = await renderPageCard({
+      page: {
+        id: "doc-approve-reply-code-view-1",
+        title: "Doc Approve Reply Code View 1",
+        content:
+          '{==alpha==}{>>Root comment<<}{id="root" by="user" at="2026-04-25T23:56:00.000Z"}{>>First answer<<}{id="a1" by="AI" at="2026-04-25T23:57:00.000Z" re="root"}{>>Newest answer<<}{id="a2" by="AI" at="2026-04-25T23:58:00.000Z" re="root"}\n\nParagraph',
+      },
+      selected: true,
+    });
+
+    await selectText(rendered.getEditor(), "alpha");
+    await act(async () => {
+      getByTestId(
+        rendered.container,
+        "comment-banner-a2-action-approve",
+      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      getByTestId(
+        rendered.container,
+        "comment-banner-a2-action-approve-confirm",
+      ).dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    await rendered.rerender({ editorViewMode: "code" });
+    expect(queryByTestId(rendered.container, "rich-text-editor")).toBeNull();
+    expect(
+      queryByTestId(rendered.container, "markdown-code-editor"),
+    ).not.toBeNull();
+
+    vi.useFakeTimers();
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+    });
+    expect(rendered.onSave).not.toHaveBeenCalled();
+
+    let result: ManualSaveResult | undefined;
+    await act(async () => {
+      rendered.getSaveController().applyPendingApprovals();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      result = await rendered.getSaveController().flushSave();
+    });
+
+    expect(result).toEqual({ status: "saved" });
+    expect(rendered.onSave).toHaveBeenCalledTimes(1);
+    const savedMarkdown = rendered.onSave.mock.calls[0]?.[1];
+    expect(savedMarkdown).toContain("{==alpha==}");
+    expect(savedMarkdown).toContain('id="root"');
+    expect(savedMarkdown).toContain("First answer");
+    expect(savedMarkdown).toContain('id="a1"');
+    expect(savedMarkdown).not.toContain("Newest answer");
+    expect(savedMarkdown).not.toContain('id="a2"');
+    expect(
+      getByTestId(rendered.container, "markdown-code-editor").textContent,
+    ).not.toContain("Newest answer");
+  });
+
   it("renders suggestion replies only inside the suggestion card", async () => {
     const commentText = "Looks good as an inserted phrase.";
     const rendered = await renderPageCard({
