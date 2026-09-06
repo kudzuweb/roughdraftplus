@@ -16,6 +16,7 @@ import {
   ROUGHDRAFT_PUBLIC_HOST,
 } from "./network.js";
 import { findAvailablePort } from "./ports.js";
+import type { ReviewDoneReason } from "./review-events.js";
 import { resolveUpdateStatus, type UpdateStatus } from "./update-status.js";
 
 const AGENT_SETUP_URL =
@@ -147,6 +148,7 @@ interface ParsedCommandOptions {
   batchWindowSeconds: number;
   help: boolean;
   json: boolean;
+  loop: boolean;
   noOpen: boolean;
   noWatch: boolean;
   printUrl: boolean;
@@ -163,6 +165,7 @@ interface ParsedWatchOptions {
   batchWindowSeconds: number;
   help: boolean;
   json: boolean;
+  loop?: boolean;
   positionals: string[];
   replay: boolean;
   serverUrl?: string;
@@ -275,6 +278,7 @@ function parseCommandOptions(
     batchWindowSeconds: 0.25,
     help: false,
     json: false,
+    loop: false,
     noOpen: false,
     noWatch: false,
     positionals: [],
@@ -329,6 +333,12 @@ function parseCommandOptions(
     if (arg === "--no-watch") {
       if (!options.allowWatch) throw new Error(`Unknown flag: ${arg}`);
       parsed.noWatch = true;
+      continue;
+    }
+
+    if (arg === "--loop") {
+      if (!options.allowWatch) throw new Error(`Unknown flag: ${arg}`);
+      parsed.loop = true;
       continue;
     }
 
@@ -871,6 +881,7 @@ function printHelp(log: (message: string) => void) {
   log("  roughdraft open ./draft.md --print-url");
   log("  roughdraft open ./draft.md --json");
   log("  roughdraft open ./draft.md --no-watch");
+  log("  roughdraft open ./draft.md --loop --json");
   log("  roughdraft watch ./draft.md --json");
   log("  roughdraft status --json");
   log("");
@@ -885,12 +896,26 @@ function printCommandHelp(
   if (command === "open") {
     log("Usage:");
     log(
-      "  roughdraft open <path> [--no-open] [--no-watch] [--print-url] [--port <port>]",
+      "  roughdraft open <path> [--no-open] [--no-watch] [--loop] [--print-url] [--port <port>]",
     );
     log("");
     log(
       "Opens one Markdown file and waits for Done Reviewing. Starts Roughdraft if needed.",
     );
+    log("");
+    log(
+      "Loop mode (--loop) returns after each round like the default, and also",
+    );
+    log(
+      "reports whether the reviewer signaled done: an overall comment that says",
+    );
+    log('the review is done ("done", "lgtm", "looks good", "approved" and');
+    log(
+      "the like, as the whole comment) or a submission with every thread cleared.",
+    );
+    log("Anything else means act on the feedback and reopen the document. The");
+    log('--json output carries `done` and `doneReason` ("overall-comment",');
+    log('"threads-cleared" or null); the exit code is unchanged.');
     log("");
     log("Flags:");
     log(
@@ -900,6 +925,9 @@ function printCommandHelp(
       "  --print-url          Print only the document URL and do not open it",
     );
     log("  --no-watch           Open the file without waiting");
+    log(
+      "  --loop               Report whether the round ended with a done-signal",
+    );
     log("  --timeout <seconds>  Maximum watch time; omitted means no timeout");
     log("  --replay             Allow watch to return retained older events");
     log("  --json               Print machine-readable output");
@@ -2134,8 +2162,14 @@ async function runWatch(
       : 240;
   const abortMarginSeconds = 15;
 
+  interface WatchPayloadEvent {
+    done?: boolean;
+    doneReason?: ReviewDoneReason | null;
+    summary?: { unresolved?: number };
+  }
+
   interface WatchPayload {
-    events?: unknown[];
+    events?: WatchPayloadEvent[];
     timedOut?: boolean;
     nextSequence?: number;
   }
@@ -2213,8 +2247,18 @@ async function runWatch(
     }
   }
 
+  // A batch window can deliver several events in one round; the newest one
+  // reflects the document's latest state, so it decides the done-signal.
+  const latestEvent = payload.events?.at(-1);
+  const doneReason = latestEvent?.doneReason ?? null;
+
   if (json) {
-    emitJson(deps.log, payload);
+    emitJson(
+      deps.log,
+      options.loop
+        ? { ...payload, done: doneReason !== null, doneReason }
+        : payload,
+    );
     return payload.timedOut ? 1 : 0;
   }
 
@@ -2225,7 +2269,24 @@ async function runWatch(
 
   deps.log(`Review completed for ${target.openPath}.`);
   deps.log(`Received ${(payload.events ?? []).length} event(s).`);
+  if (options.loop) {
+    deps.log(describeDoneSignal(doneReason, latestEvent?.summary?.unresolved));
+  }
   return 0;
+}
+
+function describeDoneSignal(
+  doneReason: ReviewDoneReason | null,
+  unresolved: number | undefined,
+): string {
+  if (doneReason === "overall-comment") {
+    return "Reviewer signaled done: the overall comment says the review is done.";
+  }
+  if (doneReason === "threads-cleared") {
+    return "Reviewer signaled done: every thread is cleared.";
+  }
+  const openCount = typeof unresolved === "number" ? `${unresolved} ` : "";
+  return `Review continues: ${openCount}item(s) still open and no done-signal. Act on the feedback and reopen the document.`;
 }
 
 function isMarkdownPath(targetPath: string): boolean {
@@ -2754,6 +2815,16 @@ export async function runCli(
         return USAGE_ERROR;
       }
 
+      if (options.loop && options.noWatch) {
+        deps.error("Use either --loop or --no-watch, not both.");
+        return USAGE_ERROR;
+      }
+
+      if (options.loop && options.printUrl) {
+        deps.error("Use either --loop or --print-url, not both.");
+        return USAGE_ERROR;
+      }
+
       deps = applyCliEnvOverrides(deps, options);
       const json = parsed.global.json || options.json;
       let resolvedTarget: ResolvedTargetPath;
@@ -2771,6 +2842,12 @@ export async function runCli(
           ? deps.env.ROUGHDRAFT_HOST.trim()
           : "";
       if (remoteHost.length > 0) {
+        if (options.loop) {
+          deps.error(
+            "--loop is not supported with ROUGHDRAFT_HOST: a remote session never receives Done Reviewing.",
+          );
+          return USAGE_ERROR;
+        }
         return runRemoteOpen(deps, {
           host: remoteHost,
           openPath,
@@ -2838,6 +2915,7 @@ export async function runCli(
           batchWindowSeconds: options.batchWindowSeconds,
           help: false,
           json,
+          loop: options.loop,
           positionals: [target],
           replay: options.replay,
           serverUrl: liveDevFrontend?.apiUrl ?? undefined,

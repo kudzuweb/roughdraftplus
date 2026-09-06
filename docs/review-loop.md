@@ -23,6 +23,14 @@ The loop ends only when the reviewer signals it:
 Anything else — including submitting with no new comments while threads remain open — continues
 the loop.
 
+`roughdraft open --loop` reports that decision after each round, in human and `--json` output
+(`done`, and `doneReason` as `overall-comment`, `threads-cleared`, or null), so the agent reopens
+on the CLI's answer instead of inferring it from the file. The server decides on the Done Reviewing
+event: an overall comment counts as done when its whole text, ignoring case and punctuation, is a
+phrase such as "done", "lgtm", "looks good" or "approved"; every thread is cleared when the document
+has no unresolved comment, reply or suggestion. An overall comment that is not a done-signal is new
+feedback, so it continues the loop even when the threads are otherwise clear.
+
 ## Replies
 
 Inline replies are canonical: a reply sits directly after the comment it answers, in the same
@@ -94,7 +102,7 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 
 | Behavior | Today | Destination |
 |---|---|---|
-| Auto-reopen until done-signal | Agent discipline | CLI loop mode (backlog item 14) |
+| Auto-reopen until done-signal | `roughdraft open --loop` reports the done-signal after each round; the reopen itself is agent discipline | Loop mode shipped (item 14) |
 | Meaningful changes stand out | Agent marks them `{++ins++}` / `{~~sub~~}`, leaves mechanical edits unmarked | Jump-to-next-mark navigation (item 10, deferred behind item 5) |
 | Approving a mark accepts it into prose | Agent strips markup on approval | Approve action accepts the suggestion (items 6, 10) |
 | Approval resolves its comment (per-comment only) | Agent discipline | Approve button + auto-clear on save (item 6) |

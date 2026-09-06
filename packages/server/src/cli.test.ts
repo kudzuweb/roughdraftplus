@@ -1110,8 +1110,9 @@ describe("cli", () => {
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const stateFile = getServerStateFilePath(env);
       if (fs.existsSync(stateFile)) {
-        return (JSON.parse(fs.readFileSync(stateFile, "utf8")) as { port: number })
-          .port;
+        return (
+          JSON.parse(fs.readFileSync(stateFile, "utf8")) as { port: number }
+        ).port;
       }
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
@@ -1125,7 +1126,11 @@ describe("cli", () => {
     const response = await fetch(`http://localhost:${port}/api/review-events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ projectPath: projectDir, path: "draft.md", ...body }),
+      body: JSON.stringify({
+        projectPath: projectDir,
+        path: "draft.md",
+        ...body,
+      }),
     });
     expect(response.status).toBe(201);
   }
