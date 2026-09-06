@@ -37,16 +37,20 @@ function saveCriticMarkdown(markdown: string): string {
 // single save, so every round is asserted, and each against the text the saves
 // are meant to settle on rather than against the round before it. Text already
 // at its fixed point cannot tell the two apart on its own, because round one
-// passing then forces the rest; the cases that need the distinction pass a
-// `settled` that differs from `markdown`.
+// passing then forces the rest; the case that needs the distinction passes a
+// `settled` that differs from `markdown` and a `settlesBy` above one, so the
+// rounds after the drift stops are real assertions. Rounds before `settlesBy`
+// are left unasserted rather than required to differ, so that normalizing in
+// fewer rounds is an improvement rather than a failure.
 function expectSavesToSettleOn(
   markdown: string,
   settled: string,
-  rounds = 4,
+  { settlesBy = 1, rounds = 4 }: { settlesBy?: number; rounds?: number } = {},
 ): void {
   let saved = markdown;
   for (let round = 1; round <= rounds; round += 1) {
     saved = saveCriticMarkdown(saved);
+    if (round < settlesBy) continue;
     expect(saved, `save ${round}`).toBe(settled);
   }
 }
@@ -505,13 +509,18 @@ describe("reserialize fidelity", () => {
 
   // The one fence case whose input is not already at its fixed point, so it is
   // the one that can tell a settling normalization from a corruption that
-  // compounds. Save one drops the fence's trailing blank line; every save after
-  // it has to leave the result alone.
-  it("settles a fence's trailing blank line in one save and then holds", () => {
+  // compounds. Each save drops one of the fence's two trailing blank lines, so
+  // the drift spans two rounds and rounds three and four are what prove it
+  // stopped. A plain fence loses the same two lines, so this is general fence
+  // handling rather than anything markers do; it is here for the drift.
+  it("settles a fence's trailing blank lines over two saves and then holds", () => {
+    const anchored =
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}';
     const markdown = [
       "```text",
       "code",
-      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      anchored,
+      "",
       "",
       "```",
       "",
@@ -521,7 +530,7 @@ describe("reserialize fidelity", () => {
     const settled = [
       "```text",
       "code",
-      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      anchored,
       "```",
       "",
       "Prose after.",
@@ -529,7 +538,7 @@ describe("reserialize fidelity", () => {
     ].join("\n");
 
     expect(settled).not.toBe(markdown);
-    expectSavesToSettleOn(markdown, settled);
+    expectSavesToSettleOn(markdown, settled, { settlesBy: 2 });
   });
 
   it("keeps a fenced block whose comment metadata lives in the endmatter", () => {
