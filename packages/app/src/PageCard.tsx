@@ -7,7 +7,9 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CommentEditorList } from "./CommentEditorList";
 import {
+  advanceReviewIdCounters,
   type CriticChangeAttrs,
+  type CriticChangeKind,
   type CriticComment,
   createCriticChange,
   createCriticComment,
@@ -15,6 +17,7 @@ import {
   criticMarkdownToEditorState,
   editorStateToCriticMarkdown,
   getCommentDescendantIds,
+  type ReviewIdCounters,
 } from "./critic-markup";
 import {
   type CriticChangeRailItem,
@@ -654,6 +657,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   );
   const frontmatterRef = useRef<string | null>(parsedContent.frontmatter);
   const endmatterRef = useRef<string | null>(parsedContent.endmatter);
+  const idCountersRef = useRef<ReviewIdCounters>(parsedContent.idCounters);
 
   useEffect(() => {
     commentsRef.current = comments;
@@ -682,11 +686,40 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
           {
             frontmatter: frontmatterRef.current,
             endmatter: endmatterRef.current,
+            idCounters: idCountersRef.current,
           },
         ),
       );
     },
     [onMarkdownChange],
+  );
+
+  const allocateCriticComment = useCallback(
+    (partial?: Partial<CriticComment>) => {
+      const comment = createCriticComment(partial, {
+        existingComments: commentsRef.current.values(),
+        idCounters: idCountersRef.current,
+      });
+      idCountersRef.current = advanceReviewIdCounters(idCountersRef.current, [
+        comment.id,
+      ]);
+      return comment;
+    },
+    [],
+  );
+
+  const allocateCriticChange = useCallback(
+    (kind: CriticChangeKind, currentEditor: Editor) => {
+      const change = createCriticChange(kind, undefined, {
+        existingChanges: getDocumentCriticChanges(currentEditor),
+        idCounters: idCountersRef.current,
+      });
+      idCountersRef.current = advanceReviewIdCounters(idCountersRef.current, [
+        change.changeId,
+      ]);
+      return change;
+    },
+    [],
   );
 
   const insertFiles = useCallback(
@@ -819,12 +852,9 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             const hasOriginalText = segments.some((s) => !s.isAddition);
 
             if (hasOriginalText) {
-              const oldChange = createCriticChange(
+              const oldChange = allocateCriticChange(
                 "substitution-old",
-                undefined,
-                {
-                  existingChanges: getDocumentCriticChanges(currentEditor),
-                },
+                currentEditor,
               );
               const newMark = view.state.schema.marks.criticChange.create({
                 ...oldChange,
@@ -860,9 +890,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
               const mark =
                 existingMark ??
                 view.state.schema.marks.criticChange.create(
-                  createCriticChange("addition", undefined, {
-                    existingChanges: getDocumentCriticChanges(currentEditor),
-                  }),
+                  allocateCriticChange("addition", currentEditor),
                 );
               tr.insert(insertPos, view.state.schema.text(text, [mark]));
               tr.setSelection(
@@ -877,9 +905,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             const mark =
               existingMark ??
               view.state.schema.marks.criticChange.create(
-                createCriticChange("addition", undefined, {
-                  existingChanges: getDocumentCriticChanges(currentEditor),
-                }),
+                allocateCriticChange("addition", currentEditor),
               );
             tr.insert(from, view.state.schema.text(text, [mark]));
             tr.setSelection(TextSelection.create(tr.doc, from + text.length));
@@ -931,12 +957,9 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             const hasOriginalText = segments.some((s) => !s.isAddition);
 
             if (hasOriginalText) {
-              const oldChange = createCriticChange(
+              const oldChange = allocateCriticChange(
                 "substitution-old",
-                undefined,
-                {
-                  existingChanges: getDocumentCriticChanges(currentEditor),
-                },
+                currentEditor,
               );
               const newMark = view.state.schema.marks.criticChange.create({
                 ...oldChange,
@@ -972,9 +995,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
               const mark =
                 existingMark ??
                 view.state.schema.marks.criticChange.create(
-                  createCriticChange("addition", undefined, {
-                    existingChanges: getDocumentCriticChanges(currentEditor),
-                  }),
+                  allocateCriticChange("addition", currentEditor),
                 );
               tr.insert(insertPos, view.state.schema.text(text, [mark]));
               tr.setSelection(
@@ -989,9 +1010,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             const mark =
               existingMark ??
               view.state.schema.marks.criticChange.create(
-                createCriticChange("addition", undefined, {
-                  existingChanges: getDocumentCriticChanges(currentEditor),
-                }),
+                allocateCriticChange("addition", currentEditor),
               );
             tr.insert(from, view.state.schema.text(text, [mark]));
             tr.setSelection(TextSelection.create(tr.doc, from + text.length));
@@ -1016,9 +1035,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             if (!$from.parent.isTextblock) return true;
             if ($from.parentOffset !== $from.parent.content.size) return true;
 
-            const change = createCriticChange("addition", undefined, {
-              existingChanges: getDocumentCriticChanges(currentEditor),
-            });
+            const change = allocateCriticChange("addition", currentEditor);
             const mark = view.state.schema.marks.criticChange.create(change);
             const tr = view.state.tr.split(selection.from);
             const insertPos = tr.selection.from;
@@ -1097,9 +1114,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
                     seg.to,
                   ) ??
                   view.state.schema.marks.criticChange.create(
-                    createCriticChange("deletion", undefined, {
-                      existingChanges: getDocumentCriticChanges(currentEditor),
-                    }),
+                    allocateCriticChange("deletion", currentEditor),
                   );
                 tr.addMark(seg.from, seg.to, deletionMark);
               }
@@ -1201,9 +1216,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
                   seg.to,
                 ) ??
                 view.state.schema.marks.criticChange.create(
-                  createCriticChange("deletion", undefined, {
-                    existingChanges: getDocumentCriticChanges(currentEditor),
-                  }),
+                  allocateCriticChange("deletion", currentEditor),
                 );
               tr.addMark(seg.from, seg.to, deletionMark);
             }
@@ -1292,6 +1305,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
 
     frontmatterRef.current = parsedContent.frontmatter;
     endmatterRef.current = parsedContent.endmatter;
+    idCountersRef.current = parsedContent.idCounters;
     commentsRef.current = parsedContent.comments;
     setComments(parsedContent.comments);
     setSelectedCommentId(null);
@@ -1484,9 +1498,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     if (!currentEditor || currentEditor.state.selection.empty) return;
 
     const existingIds = getSelectionCommentIds(currentEditor);
-    const comment = createCriticComment(undefined, {
-      existingComments: commentsRef.current.values(),
-    });
+    const comment = allocateCriticComment();
     const nextComments = new Map(commentsRef.current);
     nextComments.set(comment.id, comment);
     commentsRef.current = nextComments;
@@ -1510,20 +1522,18 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     requestAnimationFrame(() => {
       measureLayout();
     });
-  }, [measureLayout]);
+  }, [measureLayout, allocateCriticComment]);
 
   const handleSuggestDeletion = useCallback(() => {
     const currentEditor = editorRef.current;
     if (!currentEditor || currentEditor.state.selection.empty) return;
 
-    const change = createCriticChange("deletion", undefined, {
-      existingChanges: getDocumentCriticChanges(currentEditor),
-    });
+    const change = allocateCriticChange("deletion", currentEditor);
 
     currentEditor.chain().focus().setCriticChange(change).run();
     emitMarkdownChange(currentEditor.getJSON());
     refreshCriticChanges();
-  }, [emitMarkdownChange, refreshCriticChanges]);
+  }, [emitMarkdownChange, refreshCriticChanges, allocateCriticChange]);
 
   const handleSuggestReplacement = useCallback(() => {
     const currentEditor = editorRef.current;
@@ -1550,9 +1560,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     }
 
     if (draftSuggestion.type === "insertion") {
-      const change = createCriticChange("addition", undefined, {
-        existingChanges: getDocumentCriticChanges(currentEditor),
-      });
+      const change = allocateCriticChange("addition", currentEditor);
 
       currentEditor
         .chain()
@@ -1575,9 +1583,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       return;
     }
 
-    const change = createCriticChange("substitution-old", undefined, {
-      existingChanges: getDocumentCriticChanges(currentEditor),
-    });
+    const change = allocateCriticChange("substitution-old", currentEditor);
     const replacementChange: CriticChangeAttrs = {
       ...change,
       kind: "substitution-new",
@@ -1603,7 +1609,12 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     setDraftSuggestion(null);
     emitMarkdownChange(currentEditor.getJSON());
     refreshCriticChanges();
-  }, [draftSuggestion, emitMarkdownChange, refreshCriticChanges]);
+  }, [
+    draftSuggestion,
+    emitMarkdownChange,
+    refreshCriticChanges,
+    allocateCriticChange,
+  ]);
 
   const handleSuggestInsertion = useCallback(() => {
     const currentEditor = editorRef.current;
@@ -1652,14 +1663,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       const currentEditor = editorRef.current;
       if (!currentEditor) return;
 
-      const comment = createCriticComment(
-        {
-          parentCommentId: commentId,
-        },
-        {
-          existingComments: commentsRef.current.values(),
-        },
-      );
+      const comment = allocateCriticComment({ parentCommentId: commentId });
       suppressNextMarkdownUpdateRef.current = true;
       const nextAnchorCommentIds = addCommentIdsToAnchor(
         currentEditor,
@@ -1682,7 +1686,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
         measureLayout();
       });
     },
-    [measureLayout],
+    [measureLayout, allocateCriticComment],
   );
 
   const removeSuggestionComments = useCallback(
@@ -1752,14 +1756,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       const currentEditor = editorRef.current;
       if (!currentEditor) return;
 
-      const comment = createCriticComment(
-        {
-          parentCommentId: changeId,
-        },
-        {
-          existingComments: commentsRef.current.values(),
-        },
-      );
+      const comment = allocateCriticComment({ parentCommentId: changeId });
       suppressNextMarkdownUpdateRef.current = true;
       const didAddCommentId = addCommentIdsToCriticChange(
         currentEditor,
@@ -1786,7 +1783,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
         measureLayout();
       });
     },
-    [measureLayout, refreshCriticChanges],
+    [measureLayout, refreshCriticChanges, allocateCriticComment],
   );
 
   const deleteComment = useCallback(
