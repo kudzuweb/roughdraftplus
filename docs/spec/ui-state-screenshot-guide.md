@@ -60,23 +60,13 @@ Paragraph with **bold**, [link](https://example.com), `inline code`.
 ```
 ### Review Document
 ```markdown
-# Review document {==Select this sentence==}{>>Root comment<<}{#root} This sentence includes {++clearer wording++}{#s1}. Replace {~~old phrase~>new phrase~~}{#s2} and remove {--dead text--}{#s3}.
+# Review document {==Select this sentence==}{>>Root comment<<}{#root}{>>Nested reply<<}{id="child" by="AI" at="2026-04-28T12:01:00.000Z" re="root"}{>>Second reply<<}{id="child2" by="Nora" at="2026-04-28T12:06:00.000Z" re="root"} This sentence includes {++clearer wording++}{#s1}. Replace {~~old phrase~>new phrase~~}{#s2} and remove {--dead text--}{#s3}.
 
 ---
 comments:
   root:
     by: Nora
     at: "2026-04-28T12:00:00.000Z"
-  child:
-    body: Nested reply
-    by: AI
-    at: "2026-04-28T12:01:00.000Z"
-    re: root
-  child2:
-    body: Second reply
-    by: Nora
-    at: "2026-04-28T12:06:00.000Z"
-    re: root
   c1:
     body: Looks good.
     by: Nora
