@@ -170,6 +170,19 @@ export class ApiBackend implements StorageBackend {
     };
   }
 
+  async refreshServerInstance(): Promise<string | undefined> {
+    const res = await fetch("/api/status");
+    if (!res.ok) {
+      throw new Error(`Failed to read server status: ${res.status}`);
+    }
+
+    const payload = (await res.json()) as { instanceId?: unknown };
+    const serverInstanceId =
+      typeof payload.instanceId === "string" ? payload.instanceId : undefined;
+    this.info = { ...this.info, serverInstanceId };
+    return serverInstanceId;
+  }
+
   async saveAsset(file: File): Promise<StoredAsset> {
     const buffer = await file.arrayBuffer();
     let binary = "";

@@ -77,6 +77,7 @@ export interface StorageBackend {
     options?: CompleteReviewOptions,
   ): Promise<CompleteReviewResult>;
   getReviewWatchStatus?(relativePath: string): Promise<ReviewWatchStatus>;
+  refreshServerInstance?(): Promise<string | undefined>;
   saveAsset(file: File): Promise<StoredAsset>;
   resolveFileUrl(path: string): string | null;
   openProject(path: string): Promise<void>;

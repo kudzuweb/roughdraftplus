@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -1082,7 +1083,7 @@ describe("createApp", () => {
     expect(fs.statSync(filePath).mtimeMs).toBe(fixedTimestamp.getTime());
   });
 
-  it("rejects a markdown write from a tab that loaded against a different server instance", async () => {
+  it("refuses a write from a tab that has not adopted the replacement server, then accepts it once the tab adopts and the file version still matches", async () => {
     const filePath = path.join(projectDir, "draft.md");
     fs.writeFileSync(filePath, "# Draft\n");
     const { app } = createApp({
@@ -1090,38 +1091,47 @@ describe("createApp", () => {
       staticDirPath: projectDir,
     });
 
-    const statusResponse = await request(app).get("/api/status");
-    expect(statusResponse.body.instanceId).toEqual(expect.any(String));
+    // The tab still carries the version it recorded from the stopped server.
+    const readResponse = await request(app).get("/api/markdown-file").query({
+      projectPath: projectDir,
+      path: "draft.md",
+    });
 
-    const staleResponse = await request(app)
+    const beforeAdoption = await request(app)
       .put("/api/markdown-file")
       .query({ projectPath: projectDir, path: "draft.md" })
       .send({
-        content: "# Written by a stale tab\n",
+        content: "# Written before adoption\n",
+        expectedVersion: readResponse.body.version,
         serverInstanceId: "a-server-that-has-since-stopped",
       });
 
-    expect(staleResponse.status).toBe(410);
-    expect(staleResponse.body).toMatchObject({
+    expect(beforeAdoption.status).toBe(410);
+    expect(beforeAdoption.body).toMatchObject({
       error: expect.stringContaining("no longer running"),
     });
     expect(fs.readFileSync(filePath, "utf-8")).toBe("# Draft\n");
 
-    const liveResponse = await request(app)
+    // Adoption: the tab re-reads the status and keeps its recorded version.
+    const statusResponse = await request(app).get("/api/status");
+    expect(statusResponse.body.instanceId).toEqual(expect.any(String));
+
+    const afterAdoption = await request(app)
       .put("/api/markdown-file")
       .query({ projectPath: projectDir, path: "draft.md" })
       .send({
-        content: "# Written by a live tab\n",
+        content: "# Written after adoption\n",
+        expectedVersion: readResponse.body.version,
         serverInstanceId: statusResponse.body.instanceId,
       });
 
-    expect(liveResponse.status).toBe(200);
+    expect(afterAdoption.status).toBe(200);
     expect(fs.readFileSync(filePath, "utf-8")).toBe(
-      "# Written by a live tab\n",
+      "# Written after adoption\n",
     );
   });
 
-  it("rejects a review handoff comment from a tab that loaded against a different server instance", async () => {
+  it("refuses an adopted tab's write when the file changed while the server was away", async () => {
     const filePath = path.join(projectDir, "draft.md");
     fs.writeFileSync(filePath, "# Draft\n");
     const { app } = createApp({
@@ -1129,14 +1139,101 @@ describe("createApp", () => {
       staticDirPath: projectDir,
     });
 
-    const response = await request(app).post("/api/review-events").send({
+    const readResponse = await request(app).get("/api/markdown-file").query({
       projectPath: projectDir,
       path: "draft.md",
-      overallComment: "Written by a stale tab.",
+    });
+    const statusResponse = await request(app).get("/api/status");
+
+    fs.writeFileSync(filePath, "# Changed while the server was away\n");
+
+    const response = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "draft.md" })
+      .send({
+        content: "# Written after adoption\n",
+        expectedVersion: readResponse.body.version,
+        serverInstanceId: statusResponse.body.instanceId,
+      });
+
+    expect(response.status).toBe(409);
+    expect(fs.readFileSync(filePath, "utf-8")).toBe(
+      "# Changed while the server was away\n",
+    );
+  });
+
+  it("refuses a review handoff comment from a tab that has not adopted the replacement server, then persists it once the tab adopts", async () => {
+    const filePath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(filePath, "# Draft\n");
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const beforeAdoption = await request(app).post("/api/review-events").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      overallComment: "Written before adoption.",
       serverInstanceId: "a-server-that-has-since-stopped",
     });
 
-    expect(response.status).toBe(410);
+    expect(beforeAdoption.status).toBe(410);
     expect(fs.readFileSync(filePath, "utf-8")).toBe("# Draft\n");
+
+    const statusResponse = await request(app).get("/api/status");
+    const afterAdoption = await request(app).post("/api/review-events").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      overallComment: "Written after adoption.",
+      serverInstanceId: statusResponse.body.instanceId,
+    });
+
+    expect(afterAdoption.status).toBe(201);
+    expect(fs.readFileSync(filePath, "utf-8")).toContain(
+      "body: Written after adoption.",
+    );
+  });
+
+  it("stamps delivered open requests with the server's instance id so a tab can tell a restarted server apart", async () => {
+    const { app } = createApp({ homeDir, staticDirPath: projectDir });
+    const server = await new Promise<Server>((resolve) => {
+      const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
+    });
+    const port = (server.address() as AddressInfo).port;
+    const documentPath = path.join(projectDir, "draft.md");
+
+    try {
+      const statusResponse = await request(app).get("/api/status");
+      const stream = await fetch(
+        `http://127.0.0.1:${port}/api/open-requests?path=${encodeURIComponent(documentPath)}`,
+      );
+      const reader = stream.body?.getReader();
+      expect(reader).toBeDefined();
+      if (!reader) throw new Error("open-requests stream has no body");
+      // The first chunk is the stream's connected event; wait for it so the
+      // client is registered before the open request is posted.
+      await reader.read();
+
+      const deliverResponse = await request(app)
+        .post("/api/open-request")
+        .send({
+          path: documentPath,
+          url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(documentPath)}`,
+        });
+      expect(deliverResponse.body).toEqual({ delivered: true });
+
+      const { value } = await reader.read();
+      const event = new TextDecoder().decode(value);
+      expect(event).toContain("event: open-request");
+      const data = JSON.parse(event.split("data: ")[1]?.split("\n")[0] ?? "{}");
+      expect(data).toMatchObject({
+        path: documentPath,
+        instanceId: statusResponse.body.instanceId,
+      });
+      await reader.cancel();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

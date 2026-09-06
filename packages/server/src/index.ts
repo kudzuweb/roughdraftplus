@@ -907,6 +907,7 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       `event: open-request\ndata: ${JSON.stringify({
         path: targetPath,
         url: targetUrl,
+        instanceId,
       })}\n\n`,
     );
     res.json({ delivered: true });

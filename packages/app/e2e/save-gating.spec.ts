@@ -1,12 +1,14 @@
 import fs from "node:fs";
-import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { expect, type Page, test } from "@playwright/test";
 import { createApp } from "../../server/src/index";
 import {
   createMarkdownProject,
+  documentSaveStatus,
   fileConflictNotice,
   openMarkdownFile,
   readProjectFile,
@@ -52,6 +54,91 @@ function trackFileWrites(page: Page) {
     }
   });
   return writes;
+}
+
+const builtAppDir = path.resolve(
+  fileURLToPath(new URL("../dist", import.meta.url)),
+);
+
+interface ListeningApp {
+  port: number;
+  close: () => Promise<void>;
+}
+
+async function listenApp(
+  app: ReturnType<typeof createApp>["app"],
+  port: number,
+): Promise<ListeningApp> {
+  const server: Server = await new Promise((resolve, reject) => {
+    const listening = app.listen(port, "127.0.0.1", () => resolve(listening));
+    listening.on("error", reject);
+  });
+  return {
+    port: (server.address() as AddressInfo).port,
+    close: () =>
+      new Promise<void>((resolve) => {
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+async function startReplacementServer(projectDir: string) {
+  // A fresh instance on another port stands in for a stopped CLI and a later
+  // `roughdraft start`: same files, different instance id.
+  const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-home-"));
+  const { app } = createApp({ homeDir, staticDirPath: projectDir });
+  const listening = await listenApp(app, 0);
+  return {
+    port: listening.port,
+    close: async () => {
+      await listening.close();
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function builtAppIsCurrent() {
+  // The restart test runs the built bundle, so a dist older than the source
+  // it exercises would test yesterday's app.
+  const indexPath = path.join(builtAppDir, "index.html");
+  if (!fs.existsSync(indexPath)) return false;
+  const assetsDir = path.join(builtAppDir, "assets");
+  const newestBuild = Math.max(
+    fs.statSync(indexPath).mtimeMs,
+    ...(fs.existsSync(assetsDir)
+      ? fs
+          .readdirSync(assetsDir)
+          .map((name) => fs.statSync(path.join(assetsDir, name)).mtimeMs)
+      : []),
+  );
+  const sourceDir = fileURLToPath(new URL("../src", import.meta.url));
+  const newestSource = Math.max(
+    ...fs
+      .readdirSync(sourceDir)
+      .filter((name) => /\.tsx?$/.test(name))
+      .map((name) => fs.statSync(path.join(sourceDir, name)).mtimeMs),
+  );
+  return newestBuild >= newestSource;
+}
+
+async function listenBuiltApp(homeDir: string, port: number) {
+  const { app } = createApp({ homeDir, staticDirPath: builtAppDir });
+  return listenApp(app, port);
+}
+
+async function routeApiTo(page: Page, port: number) {
+  await page.route("**/api/**", async (route) => {
+    const original = new URL(route.request().url());
+    if (original.pathname === "/api/markdown-file/events") {
+      await route.abort();
+      return;
+    }
+    const response = await route.fetch({
+      url: `http://127.0.0.1:${port}${original.pathname}${original.search}`,
+    });
+    await route.fulfill({ response });
+  });
 }
 
 async function settleAutosave(page: Page) {
@@ -216,55 +303,211 @@ test.describe("save gating", () => {
     expect(snapshotFile(filePath)).toEqual(external);
   });
 
-  test("a tab whose server is gone does not write to the file", async ({
+  test("a tab whose server is replaced does not write until it adopts the replacement, then saves the kept edit", async ({
     page,
   }) => {
     const filePath = writeProjectFile(
       projectDir,
-      "server-gone.md",
+      "server-replaced.md",
       reflowingMarkdown,
     );
+    const putStatuses: number[] = [];
+    let fileAtRejection: string | null = null;
+    page.on("response", (response) => {
+      if (
+        response.request().method() !== "PUT" ||
+        !response.url().includes("/api/markdown-file")
+      ) {
+        return;
+      }
+      putStatuses.push(response.status());
+      if (response.status() === 410) {
+        fileAtRejection = fs.readFileSync(filePath, "utf8");
+      }
+    });
 
+    // A stopped server's file-change stream is dead during the outage, so
+    // the tab must not learn about the change from the old server.
+    await page.route("**/api/markdown-file/events**", (route) => route.abort());
     await openMarkdownFile(page, filePath);
     await expect(richTextEditor(page)).toContainText("hard-wrapped");
     await settleAutosave(page);
-    const before = snapshotFile(filePath);
 
-    // Replace the server the tab loaded against with a fresh instance on
-    // another port, the way a stopped CLI and a later `roughdraft open` do.
-    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-home-"));
-    const { app } = createApp({ homeDir, staticDirPath: projectDir });
-    const replacement: Server = await new Promise((resolve) => {
-      const server = app.listen(0, "127.0.0.1", () => resolve(server));
-    });
-    const replacementPort = (replacement.address() as AddressInfo).port;
-
+    const replacement = await startReplacementServer(projectDir);
     try {
-      await page.route("**/api/**", async (route) => {
-        const original = new URL(route.request().url());
-        const response = await route.fetch({
-          url: `http://127.0.0.1:${replacementPort}${original.pathname}${original.search}`,
-        });
-        await route.fulfill({ response });
-      });
-      await page.route("**/api/markdown-file/events**", (route) =>
-        route.abort(),
-      );
+      await routeApiTo(page, replacement.port);
 
       await richTextEditor(page).click();
       await page.keyboard.press("End");
-      await page.keyboard.type(" typed against a replaced server");
+      await page.keyboard.type(" typed across a restart");
       await expect(richTextEditor(page)).toContainText(
-        "typed against a replaced server",
+        "typed across a restart",
       );
+
+      // The replacement refuses the stale tab's write, the tab adopts the
+      // replacement, confirms the file is unchanged, and saves the kept edit.
+      await expect(page.getByTestId("server-restart-notice")).toContainText(
+        "Roughdraft server restarted",
+      );
+      await expect
+        .poll(() => readProjectFile(projectDir, "server-replaced.md"))
+        .toContain("typed across a restart");
+
+      expect(putStatuses).toEqual([410, 200]);
+      expect(fileAtRejection).not.toBeNull();
+      expect(fileAtRejection).not.toContain("typed across a restart");
+      await expect(documentSaveStatus(page)).toHaveAttribute(
+        "aria-label",
+        "Saved",
+      );
+    } finally {
+      await replacement.close();
+    }
+  });
+
+  test("a tab whose server is replaced while the file changed on disk shows the conflict banner and does not write", async ({
+    page,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "server-replaced-conflict.md",
+      reflowingMarkdown,
+    );
+    const putStatuses: number[] = [];
+    page.on("response", (response) => {
+      if (
+        response.request().method() === "PUT" &&
+        response.url().includes("/api/markdown-file")
+      ) {
+        putStatuses.push(response.status());
+      }
+    });
+
+    // A stopped server's file-change stream is dead during the outage, so
+    // the tab must not learn about the change from the old server.
+    await page.route("**/api/markdown-file/events**", (route) => route.abort());
+    await openMarkdownFile(page, filePath);
+    await expect(richTextEditor(page)).toContainText("hard-wrapped");
+    await settleAutosave(page);
+
+    const replacement = await startReplacementServer(projectDir);
+    try {
+      await routeApiTo(page, replacement.port);
+
+      const changedWhileAway =
+        "# Gated save\n\nChanged while the server was away.\n";
+      fs.writeFileSync(filePath, changedWhileAway);
+      const external = snapshotFile(filePath);
+
+      await richTextEditor(page).click();
+      await page.keyboard.press("End");
+      await page.keyboard.type(" typed across a restart");
+      await expect(richTextEditor(page)).toContainText(
+        "typed across a restart",
+      );
+
       await expect(fileConflictNotice(page)).toContainText(
-        "Roughdraft server stopped",
+        "File changed on disk",
       );
       await settleAutosave(page);
 
-      expect(snapshotFile(filePath)).toEqual(before);
+      expect(putStatuses).toEqual([410]);
+      expect(snapshotFile(filePath)).toEqual(external);
     } finally {
-      await new Promise<void>((resolve) => replacement.close(() => resolve()));
+      await replacement.close();
+    }
+  });
+
+  test("a clean tab adopts a restarted server from the agent's open request without reloading or writing", async ({
+    browser,
+    request,
+  }) => {
+    test.skip(
+      !builtAppIsCurrent(),
+      "needs a current build of the app in packages/app/dist (pnpm build)",
+    );
+
+    const filePath = writeProjectFile(
+      projectDir,
+      "server-restarted.md",
+      reflowingMarkdown,
+    );
+    const before = snapshotFile(filePath);
+    const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "roughdraft-home-"));
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    const writes = trackFileWrites(page);
+
+    // Serve the built app straight from a real server so the tab's event
+    // streams reconnect to whatever listens on the same port next, the way
+    // they do after `roughdraft stop` and `roughdraft start`.
+    const first = await listenBuiltApp(homeDir, 0);
+    const port = first.port;
+    let second: ListeningApp | null = null;
+    try {
+      const params = new URLSearchParams({ path: filePath });
+      await page.goto(`http://127.0.0.1:${port}/?${params.toString()}`);
+      await expect(richTextEditor(page)).toContainText("hard-wrapped");
+      await page.evaluate(() => {
+        (window as unknown as { __tabMarker?: string }).__tabMarker = "alive";
+      });
+      const firstStatus = await (
+        await page.request.get(`http://127.0.0.1:${port}/api/status`)
+      ).json();
+
+      await first.close();
+      second = await listenBuiltApp(homeDir, port);
+      const secondStatus = await (
+        await page.request.get(`http://127.0.0.1:${port}/api/status`)
+      ).json();
+      expect(secondStatus.instanceId).not.toBe(firstStatus.instanceId);
+
+      // The agent's `roughdraft open` reaches the tab once its open-request
+      // stream has reconnected to the restarted server.
+      await expect
+        .poll(
+          async () => {
+            const response = await page.request.post(
+              `http://127.0.0.1:${port}/api/open-request`,
+              { data: { path: filePath, url: page.url() } },
+            );
+            return (await response.json()).delivered;
+          },
+          { timeout: 15_000 },
+        )
+        .toBe(true);
+
+      // The tab adopts the restarted server in place: no reload, no write,
+      // and the handoff control comes back when the agent's watch registers.
+      pendingWatch = request.post(
+        `http://127.0.0.1:${port}/api/review-events/watch`,
+        {
+          data: {
+            projectPath: projectDir,
+            path: "server-restarted.md",
+            timeoutSeconds: 10,
+          },
+        },
+      );
+      await expect(page.getByTestId("review-handoff-button")).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => (window as unknown as { __tabMarker?: string }).__tabMarker,
+        ),
+      ).toBe("alive");
+      expect(writes).toEqual([]);
+      expect(snapshotFile(filePath)).toEqual(before);
+
+      await richTextEditor(page).click();
+      await page.keyboard.press("End");
+      await page.keyboard.type(" typed after the restart");
+      await expect
+        .poll(() => readProjectFile(projectDir, "server-restarted.md"))
+        .toContain("typed after the restart");
+      await expect(page.getByTestId("file-conflict-notice")).toBeHidden();
+    } finally {
+      await context.close();
+      await second?.close();
       fs.rmSync(homeDir, { recursive: true, force: true });
     }
   });
