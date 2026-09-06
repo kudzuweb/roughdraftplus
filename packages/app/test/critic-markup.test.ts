@@ -1391,6 +1391,62 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
     );
   });
 
+  // Parsing never puts a change mark inside a fence, so this state is only
+  // reachable by editing one there, and the editor commands are what build it.
+  // The two halves have to be adjacent for the serializer to pair them, which
+  // is why "old two" and "new one" share a line.
+  it("keeps both halves of a multi-line substitution inside a fenced block", () => {
+    const input = [
+      "```text",
+      "before",
+      "old one",
+      "old twonew one",
+      "new two",
+      "after",
+      "```",
+      "",
+    ].join("\n");
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    const editor = new Editor({
+      extensions: createEditorExtensions(""),
+      content: doc,
+    });
+
+    try {
+      const text = editor.state.doc.textBetween(
+        0,
+        editor.state.doc.content.size,
+        "\n",
+      );
+      const oldStart = text.indexOf("old one");
+      const boundary = text.indexOf("new one");
+      const newEnd = text.indexOf("\nafter");
+      const shared = {
+        changeId: "s1",
+        createdAt: "2026-01-01T00:00:00.000Z",
+        author: "user",
+      };
+
+      editor.commands.setTextSelection({
+        from: oldStart + 1,
+        to: boundary + 1,
+      });
+      editor.commands.setCriticChange(
+        createCriticChange("substitution-old", shared),
+      );
+      editor.commands.setTextSelection({ from: boundary + 1, to: newEnd + 1 });
+      editor.commands.setCriticChange(
+        createCriticChange("substitution-new", shared),
+      );
+
+      expect(editorStateToCriticMarkdown(editor.getJSON(), comments)).toContain(
+        "{~~old one\nold two~>new one\nnew two~~}",
+      );
+    } finally {
+      editor.destroy();
+    }
+  });
+
   it("allocates simple document-local ids", () => {
     expect(
       createNextCommentId([{ id: "c2" }, { id: "note-1" }, { id: "c7" }]),

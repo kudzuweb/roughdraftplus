@@ -1394,19 +1394,9 @@ function addCriticCommentRule(
       node.nodeName === "SPAN" &&
       (node as HTMLElement).hasAttribute("data-comment-ids"),
     replacement(content, node) {
-      const commentIdsText = (node as HTMLElement).getAttribute(
-        "data-comment-ids",
-      );
+      const commentIds = parseCommentIdsAttribute(node as HTMLElement);
 
-      if (!commentIdsText) return content;
-
-      let commentIds: string[] = [];
-
-      try {
-        commentIds = JSON.parse(commentIdsText) as string[];
-      } catch {
-        return content;
-      }
+      if (!commentIds) return content;
 
       const criticChangeElement = (node as HTMLElement).querySelector(
         "span[data-critic-change-kind]",
@@ -1435,7 +1425,115 @@ function addCriticCommentRule(
   });
 }
 
-function addCriticCodeBlockRule(service: TurndownService) {
+/**
+ * A fence's content is source text, so it cannot go back through
+ * `service.turndown`: turndown reads the code element as inline HTML and
+ * collapses every newline in a text node to a space, which saves a multi-line
+ * fence as one line. This walk reads the element's children directly instead,
+ * writing each text node byte for byte and each review mark back as its own
+ * marker, so the only bytes that change are the markers themselves.
+ */
+function serializeCriticCodeContent(
+  service: TurndownService,
+  codeElement: HTMLElement,
+  comments: Map<string, CriticComment>,
+  useEndmatter: boolean,
+): string {
+  let result = "";
+
+  for (const child of codeElement.childNodes) {
+    if (!(child instanceof HTMLElement)) {
+      result += child.textContent ?? "";
+      continue;
+    }
+
+    const text = child.textContent ?? "";
+    const commentIds = parseCommentIdsAttribute(child) ?? [];
+    const changeElement = child.hasAttribute("data-critic-change-kind")
+      ? child
+      : child.querySelector("span[data-critic-change-kind]");
+
+    if (changeElement instanceof HTMLElement) {
+      result += serializeCriticChangeElement(
+        service,
+        changeElement,
+        changeElement.textContent ?? "",
+        comments,
+        commentIds,
+        useEndmatter,
+        (paired) => paired.textContent ?? "",
+      );
+      continue;
+    }
+
+    // An anchor needs at least one character to parse, so a mark left covering
+    // none of them is written back as the nothing it covers. Writing `{====}`
+    // instead would put bytes on disk that the next read turns into prose.
+    if (commentIds.length > 0 && text) {
+      const commentBlocks = serializeCommentBlocks(
+        commentIds,
+        comments,
+        useEndmatter,
+      );
+      result += commentBlocks
+        ? `{==${escapeCriticMarkupText(text)}==}${commentBlocks}`
+        : text;
+      continue;
+    }
+
+    result += text;
+  }
+
+  return result;
+}
+
+/**
+ * The fence that can hold this content, which is three markers unless the
+ * content itself opens a fence: a block documenting a three-backtick example
+ * has to be written with four, or the example's opener closes the block and
+ * the prose after it is swallowed on the next save. Turndown's own fenced-code
+ * rule grows its fence exactly this way, and a fence carrying a review marker
+ * has to grow with it or the two disagree about the same document.
+ */
+function growFence(content: string, fenceOption: string): string {
+  const fenceChar = fenceOption.charAt(0);
+  const runsInContent = new RegExp(`^${fenceChar}{3,}`, "gm");
+  let fenceSize = 3;
+
+  for (const match of content.matchAll(runsInContent)) {
+    if (match[0].length >= fenceSize) {
+      fenceSize = match[0].length + 1;
+    }
+  }
+
+  return fenceChar.repeat(fenceSize);
+}
+
+/**
+ * The ids a comment anchor carries. Null means the element is not a comment
+ * anchor at all, which is the case the comment rule has to tell apart from an
+ * anchor carrying an empty list; every caller that does not care passes `?? []`.
+ */
+function parseCommentIdsAttribute(element: HTMLElement): string[] | null {
+  const commentIdsText = element.getAttribute("data-comment-ids");
+
+  if (!commentIdsText) return null;
+
+  try {
+    const parsed = JSON.parse(commentIdsText) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return null;
+  }
+}
+
+function addCriticCodeBlockRule(
+  service: TurndownService,
+  comments: Map<string, CriticComment>,
+  useEndmatter = false,
+) {
   service.addRule("criticCodeBlock", {
     filter: (node) => {
       if (node.nodeName !== "PRE") return false;
@@ -1449,7 +1547,7 @@ function addCriticCodeBlockRule(service: TurndownService) {
         )
       );
     },
-    replacement(_content, node) {
+    replacement(_content, node, options) {
       const codeElement = (node as HTMLElement)
         .firstElementChild as HTMLElement | null;
 
@@ -1459,9 +1557,18 @@ function addCriticCodeBlockRule(service: TurndownService) {
         [...codeElement.classList]
           .find((className) => className.startsWith("language-"))
           ?.slice("language-".length) ?? "";
-      const content = service.turndown(codeElement.innerHTML).trimEnd();
+      // Turndown's own fenced-code rule drops exactly one trailing newline, so
+      // this drops one too and a fence carrying a marker saves the same bytes
+      // as the plain fence beside it.
+      const content = serializeCriticCodeContent(
+        service,
+        codeElement,
+        comments,
+        useEndmatter,
+      ).replace(/\n$/, "");
+      const fence = growFence(content, options.fence ?? "```");
 
-      return `\n\n\`\`\`${language}\n${content}\n\`\`\`\n\n`;
+      return `\n\n${fence}${language}\n${content}\n${fence}\n\n`;
     },
   });
 }
@@ -1507,17 +1614,7 @@ function isPairedSubstitutionElement(
 }
 
 function getElementCommentIds(element: HTMLElement): string[] {
-  const commentIdsText = element.getAttribute("data-comment-ids");
-  if (!commentIdsText) return [];
-
-  try {
-    const parsed = JSON.parse(commentIdsText) as unknown;
-    return Array.isArray(parsed)
-      ? parsed.filter((id): id is string => typeof id === "string")
-      : [];
-  } catch {
-    return [];
-  }
+  return parseCommentIdsAttribute(element) ?? [];
 }
 
 function getChangeCommentBlocks(
@@ -1533,6 +1630,13 @@ function getChangeCommentBlocks(
   );
 }
 
+/**
+ * `readPairedText` reads the other half of a substitution. It defaults to the
+ * turndown pass a substitution in prose needs, and a fence passes the code
+ * element's own text instead: turndown would collapse the replacement half's
+ * newlines to spaces, which is the same flattening the fence walk exists to
+ * prevent, applied to one marker rather than the whole block.
+ */
 function serializeCriticChangeElement(
   service: TurndownService,
   element: HTMLElement,
@@ -1540,6 +1644,8 @@ function serializeCriticChangeElement(
   comments: Map<string, CriticComment>,
   extraCommentIds: string[] = [],
   useEndmatter = false,
+  readPairedText: (paired: HTMLElement) => string = (paired) =>
+    service.turndown(paired.innerHTML).trim(),
 ) {
   const change = getElementChangeAttrs(element);
 
@@ -1591,9 +1697,7 @@ function serializeCriticChangeElement(
       change.changeId,
     )
   ) {
-    const replacement = escapeCriticMarkupText(
-      service.turndown(nextElement.innerHTML).trim(),
-    );
+    const replacement = escapeCriticMarkupText(readPairedText(nextElement));
     return `{~~${markerText}~>${replacement}~~}${metadata}${commentBlocks}`;
   }
 
@@ -1905,7 +2009,7 @@ export function editorStateToCriticMarkdown(
   );
   addCriticCommentRule(service, comments, useEndmatter);
   addCriticChangeRule(service, comments, useEndmatter);
-  addCriticCodeBlockRule(service);
+  addCriticCodeBlockRule(service, comments, useEndmatter);
   const endmatter = serializeReviewEndmatter(
     sourceEndmatter,
     comments,

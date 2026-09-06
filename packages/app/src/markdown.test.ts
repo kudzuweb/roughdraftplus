@@ -33,6 +33,28 @@ function saveCriticMarkdown(markdown: string): string {
   return editorStateToCriticMarkdown(doc, comments);
 }
 
+// A one-time normalization and a compounding corruption look the same after a
+// single save, so every round is asserted, and each against the text the saves
+// are meant to settle on rather than against the round before it. Text already
+// at its fixed point cannot tell the two apart on its own, because round one
+// passing then forces the rest; the case that needs the distinction passes a
+// `settled` that differs from `markdown` and a `settlesBy` above one, so the
+// rounds after the drift stops are real assertions. Rounds before `settlesBy`
+// are left unasserted rather than required to differ, so that normalizing in
+// fewer rounds is an improvement rather than a failure.
+function expectSavesToSettleOn(
+  markdown: string,
+  settled: string,
+  { settlesBy = 1, rounds = 4 }: { settlesBy?: number; rounds?: number } = {},
+): void {
+  let saved = markdown;
+  for (let round = 1; round <= rounds; round += 1) {
+    saved = saveCriticMarkdown(saved);
+    if (round < settlesBy) continue;
+    expect(saved, `save ${round}`).toBe(settled);
+  }
+}
+
 function readMarkdownFixture(name: string): string {
   return fs.readFileSync(
     path.join(process.cwd(), "test", "fixtures", "markdown", name),
@@ -412,6 +434,128 @@ describe("reserialize fidelity", () => {
     );
   });
 
+  it("keeps a multi-line fenced block that holds an anchored comment", () => {
+    const markdown = [
+      "```text",
+      "first line",
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      "",
+      "last line",
+      "```",
+      "",
+    ].join("\n");
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  it("keeps the comment inside a fenced block on the review rail", () => {
+    const markdown = [
+      "```text",
+      "first line",
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      "",
+      "last line",
+      "```",
+      "",
+    ].join("\n");
+
+    const { comments } = criticMarkdownToEditorState(markdown);
+
+    expect(comments.get("c1")).toMatchObject({
+      id: "c1",
+      content: "Note",
+      authorId: "user",
+    });
+  });
+
+  // A guard, not a reproduction: a fence holding only suggestions has no
+  // marker span, so the critic fence rule never fires and this passes on main
+  // too. It is here to catch a later change that starts parsing these.
+  it("keeps a multi-line fenced block that holds a literal suggestion", () => {
+    const markdown = [
+      "```md",
+      "first line",
+      "{++inserted++}",
+      "{--deleted--}",
+      "{~~old~>new~~}",
+      "",
+      "last line",
+      "```",
+      "",
+    ].join("\n");
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  it("grows the fence around an example that opens a fence of its own", () => {
+    const markdown = [
+      "````md",
+      "Documenting a fence:",
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}',
+      "",
+      "```text",
+      "inner",
+      "```",
+      "````",
+      "",
+      "Prose after the fence.",
+      "",
+    ].join("\n");
+
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
+  // The one fence case whose input is not already at its fixed point, so it is
+  // the one that can tell a settling normalization from a corruption that
+  // compounds. Each save drops one of the fence's two trailing blank lines, so
+  // the drift spans two rounds and rounds three and four are what prove it
+  // stopped. A plain fence loses the same two lines, so this is general fence
+  // handling rather than anything markers do; it is here for the drift.
+  it("settles a fence's trailing blank lines over two saves and then holds", () => {
+    const anchored =
+      '{==anchor==}{>>Note<<}{id="c1" by="user" at="2026-01-01T00:00:00.000Z"}';
+    const markdown = [
+      "```text",
+      "code",
+      anchored,
+      "",
+      "",
+      "```",
+      "",
+      "Prose after.",
+      "",
+    ].join("\n");
+    const settled = [
+      "```text",
+      "code",
+      anchored,
+      "```",
+      "",
+      "Prose after.",
+      "",
+    ].join("\n");
+
+    expect(settled).not.toBe(markdown);
+    expectSavesToSettleOn(markdown, settled, { settlesBy: 2 });
+  });
+
+  it("keeps a fenced block whose comment metadata lives in the endmatter", () => {
+    const markdown = [
+      "```text",
+      "first line",
+      "{==anchor==}{>>Note<<}{#c1}",
+      "",
+      "last line",
+      "```",
+      "",
+      commentEndmatter,
+    ].join("\n");
+
+    expectSavesToSettleOn(markdown, markdown);
+  });
+
   it("round-trips the reflow fixture through the save path", () => {
     const markdown = readMarkdownFixture("reflow-roundtrip.md");
     const saved = saveCriticMarkdown(markdown);
@@ -419,7 +563,7 @@ describe("reserialize fidelity", () => {
     expect(saved).toBe(markdown);
     expect(saved).not.toMatch(/[ \t]+\n/);
     expect(saved).not.toContain("\u200b");
-    expect(saveCriticMarkdown(saved)).toBe(markdown);
+    expectSavesToSettleOn(markdown, markdown);
   });
 });
 
