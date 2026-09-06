@@ -116,16 +116,18 @@ const MAX_OVERALL_COMMENT_LENGTH = 4_000;
 let nextOpenRequestClientId = 1;
 
 // The review round a request belongs to, as minted by `roughdraft open`.
-// Returns null when the request names no round, and refuses one that names a
-// round it cannot read: a `reviewToken` sent twice reaches Express as an array,
-// and dropping it would quietly return the tab to counting every watcher on
-// the path, which is the behaviour the round exists to replace. Refusing says
-// so instead, and matches the route's treatment of an unreadable `path`.
+// Returns null when the request names no round — an absent key, or a JSON
+// `null`, which asks for the same tokenless answer — and refuses one that
+// names a round it cannot read: a `reviewToken` sent twice reaches Express as
+// an array, and dropping it would quietly return the tab to counting every
+// watcher on the path, which is the behaviour the round exists to replace.
+// Refusing says so instead, and matches the route's treatment of an
+// unreadable `path`.
 function readReviewToken(
   value: unknown,
   res: Response,
 ): { reviewToken: string | null } | null {
-  if (value === undefined) return { reviewToken: null };
+  if (value === undefined || value === null) return { reviewToken: null };
   if (typeof value !== "string") {
     res.status(400).json({ error: "reviewToken must be a single value" });
     return null;

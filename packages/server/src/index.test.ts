@@ -673,6 +673,13 @@ describe("createApp", () => {
         reviewToken: ["round-1", "round-2"],
         timeoutSeconds: 0,
       });
+    const opened = await request(app)
+      .post("/api/open-request")
+      .send({
+        path: path.join(projectDir, "draft.md"),
+        url: "http://localhost:3000/?path=draft.md",
+        reviewToken: ["round-1", "round-2"],
+      });
 
     expect(duplicated.status).toBe(400);
     expect(duplicated.body).toEqual({
@@ -682,6 +689,45 @@ describe("createApp", () => {
     expect(watched.body).toEqual({
       error: "reviewToken must be a single value",
     });
+    expect(opened.status).toBe(400);
+    expect(opened.body).toEqual({
+      error: "reviewToken must be a single value",
+    });
+  });
+
+  it("reads a null review token as naming no round at all", async () => {
+    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
+    const { app } = createApp({
+      staticDirPath: projectDir,
+    });
+
+    // A caller that sends the key as null, or as an empty value, asks for the
+    // same answer as one that leaves it out: the tokenless behaviour, not 400.
+    const status = await request(app)
+      .get("/api/review-events/status")
+      .query(
+        `projectPath=${encodeURIComponent(projectDir)}&path=draft.md&reviewToken=`,
+      );
+    const watched = await request(app).post("/api/review-events/watch").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      reviewToken: null,
+      timeoutSeconds: 0,
+      batchWindowSeconds: 0,
+    });
+    const opened = await request(app)
+      .post("/api/open-request")
+      .send({
+        path: path.join(projectDir, "draft.md"),
+        url: "http://localhost:3000/?path=draft.md",
+        reviewToken: null,
+      });
+
+    expect(status.status).toBe(200);
+    expect(status.body.watcherCountForReview).toBeUndefined();
+    expect(watched.status).toBe(200);
+    expect(opened.status).toBe(200);
+    expect(opened.body).toEqual({ delivered: false });
   });
 
   it("rejects page ids that resolve outside the project directory", async () => {
