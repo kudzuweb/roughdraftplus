@@ -31,6 +31,7 @@ import {
   prependYamlFrontmatter,
   protectRichTextRoundTripMarkdown,
   splitYamlDocumentMetadata,
+  strictStrikethroughTokenizer,
   type MarkdownOptions,
 } from "../markdown";
 
@@ -1438,6 +1439,7 @@ function createCriticMarked(
     gfm: true,
     async: false,
     renderer,
+    tokenizer: strictStrikethroughTokenizer,
   });
 
   parser.use({

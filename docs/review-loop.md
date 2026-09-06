@@ -115,7 +115,7 @@ save still rewrites applies to that file even if it was only ever edited in code
 - After a round, diff the file, and read it knowing what a save rewrites on its own. Kept as
   typed (#2, #3): wrapped lines, the blank line between blocks other than around a heading,
   fence interiors, table delimiter rows, `_em_`, `**strong**`, hard breaks, autolinks, images,
-  strikethrough. Still rewritten by a save, in four groups:
+  strikethrough, and a lone `~` in prose (#38). Still rewritten by a save, in four groups:
   1. Block spacing and shape: the blank line before a heading after a paragraph or list, and
      the blank line after a heading, are removed; table cells are padded to three characters;
      loose lists are tightened (#23); runs of blank lines collapse to one outside fences.
