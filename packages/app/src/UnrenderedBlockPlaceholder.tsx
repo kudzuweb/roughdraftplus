@@ -30,6 +30,7 @@ function isRawMarkdownBlockType(value: unknown): value is RawMarkdownBlockType {
 export function UnrenderedBlockPlaceholder({
   node,
   decorations,
+  selected,
 }: NodeViewProps) {
   const blockType = isRawMarkdownBlockType(node.attrs.blockType)
     ? node.attrs.blockType
@@ -46,6 +47,11 @@ export function UnrenderedBlockPlaceholder({
     <NodeViewWrapper
       data-testid="unrendered-block-placeholder"
       data-block-type={blockType}
+      // A click has to reach ProseMirror before the keystroke that follows it,
+      // and nothing else on this element says whether it has. The selected
+      // class goes on the react-renderer wrapper above, out of reach of a
+      // test id.
+      data-selected={selected ? "true" : undefined}
       contentEditable={false}
       className="my-4"
     >

@@ -46,6 +46,10 @@ async function chooseEditingMode(page: Page) {
 async function selectPlaceholder(page: Page) {
   await richTextEditor(page).click();
   await placeholder(page).click();
+  // Wait for the click to reach ProseMirror. Without this the keystroke that
+  // follows can act on whatever was selected before, which is what made the
+  // smoke test fail under load and nowhere else.
+  await expect(placeholder(page)).toHaveAttribute("data-selected", "true");
 }
 
 async function chooseMode(page: Page, mode: string, label: string) {
@@ -295,9 +299,32 @@ test.describe("selected unrendered-block placeholder", () => {
     // first, must still get the explanation rather than a dead editor.
     await page.keyboard.type("Z");
 
+    // The refused keystroke changes nothing, so nothing clears the note and it
+    // is still there a second later. A test that only polled for it could pass
+    // on a flash, which is not what a reader gets.
+    await expect(deletionRefusedNote(page)).toBeVisible();
+    await page.waitForTimeout(1_000);
     await expect(deletionRefusedNote(page)).toBeVisible();
     await expect(richTextEditor(page)).not.toContainText("Z");
     await expectFileUnchanged(page, projectDir);
+  });
+
+  test("shows the note for the refused keystroke only", async ({ page }) => {
+    await openMarkdownFile(page, writeProtectedFile(projectDir));
+    await expect(placeholder(page)).toBeVisible();
+    await chooseEditingMode(page);
+    await selectPlaceholder(page);
+
+    // The first character is refused and raises the note. The second lands,
+    // and that document change clears it. A reader typing a sentence sees the
+    // note once, so the guide must not promise more than that.
+    await page.keyboard.type("Y", { delay: 250 });
+    await expect(deletionRefusedNote(page)).toBeVisible();
+
+    await page.keyboard.type("Z", { delay: 250 });
+    await expect(deletionRefusedNote(page)).toBeHidden();
+    await expect(richTextEditor(page)).toContainText("Z");
+    await expect(placeholder(page)).toBeVisible();
   });
 
   test("lets the reader keep typing after a refusal", async ({ page }) => {
