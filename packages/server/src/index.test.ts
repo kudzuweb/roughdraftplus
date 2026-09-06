@@ -688,6 +688,7 @@ describe("createApp", () => {
       port: 4312,
       serverRoot,
       stateless: true,
+      documents: [],
       capabilities: {
         projectPathRequired: true,
         fileSystemBrowsing: true,
@@ -1395,10 +1396,17 @@ describe("createApp", () => {
       };
     }
 
-    async function subscribeTab(port: number, documentPath: string) {
-      const stream = await fetch(
-        `http://127.0.0.1:${port}/api/open-requests?path=${encodeURIComponent(documentPath)}`,
+    async function subscribeTab(
+      port: number,
+      documentPath: string,
+      sessionLabel?: string,
+    ) {
+      const subscribeUrl = new URL(
+        `http://127.0.0.1:${port}/api/open-requests`,
       );
+      subscribeUrl.searchParams.set("path", documentPath);
+      if (sessionLabel) subscribeUrl.searchParams.set("label", sessionLabel);
+      const stream = await fetch(subscribeUrl);
       const reader = stream.body?.getReader();
       if (!reader) throw new Error("open-requests stream has no body");
       // The first chunk is the connected event; the tab is registered once
@@ -1540,6 +1548,84 @@ describe("createApp", () => {
 
         await reviewingTab.cancel();
         await homeReader.cancel();
+      } finally {
+        await close();
+      }
+    });
+
+    it("lists each open document with its session label and timestamps on /api/status", async () => {
+      const { app } = createApp({ homeDir, staticDirPath: projectDir });
+      const { port, close } = await listen(app);
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+
+      try {
+        const before = Date.now();
+        const tab = await subscribeTab(port, documentPath, "build-16");
+        const homeTab = await subscribeTab(port, "");
+
+        const statusResponse = await request(app).get("/api/status");
+
+        expect(statusResponse.body.documents).toEqual([
+          {
+            path: documentPath,
+            sessionLabel: "build-16",
+            openedAt: expect.any(String),
+            lastSavedAt: null,
+          },
+        ]);
+        expect(
+          Date.parse(statusResponse.body.documents[0].openedAt),
+        ).toBeGreaterThanOrEqual(before - 1000);
+
+        await tab.cancel();
+        await homeTab.cancel();
+      } finally {
+        await close();
+      }
+    });
+
+    it("stamps the open document's last save when a tab saves it", async () => {
+      const { app } = createApp({ homeDir, staticDirPath: projectDir });
+      const { port, close } = await listen(app);
+      const documentPath = path.join(projectDir, "draft.md");
+      const otherPath = path.join(projectDir, "other.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      fs.writeFileSync(otherPath, "# Other\n");
+
+      try {
+        const tab = await subscribeTab(port, documentPath);
+        const otherTab = await subscribeTab(port, otherPath);
+        const readResponse = await request(app)
+          .get("/api/markdown-file")
+          .query({ projectPath: projectDir, path: "draft.md" });
+
+        const before = Date.now();
+        const saveResponse = await request(app)
+          .put("/api/markdown-file")
+          .query({ projectPath: projectDir, path: "draft.md" })
+          .send({
+            content: "# Saved\n",
+            expectedVersion: readResponse.body.version,
+          });
+        expect(saveResponse.status).toBe(200);
+
+        const statusResponse = await request(app).get("/api/status");
+        const documents = statusResponse.body.documents as Array<{
+          path: string;
+          lastSavedAt: string | null;
+        }>;
+        const saved = documents.find((entry) => entry.path === documentPath);
+        const untouched = documents.find((entry) => entry.path === otherPath);
+
+        expect(typeof saved?.lastSavedAt).toBe("string");
+        expect(Date.parse(saved?.lastSavedAt ?? "")).toBeGreaterThanOrEqual(
+          before - 1000,
+        );
+        expect(untouched?.lastSavedAt).toBeNull();
+
+        await tab.cancel();
+        await otherTab.cancel();
       } finally {
         await close();
       }

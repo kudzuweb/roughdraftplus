@@ -1,8 +1,9 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { createServer as createHttpServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateRoughdraftMarkdown } from "@roughdraft/rfm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -13,7 +14,10 @@ import {
   runCli,
 } from "./cli";
 import { createApp } from "./index";
-import { ROUGHDRAFT_DEFAULT_PORT } from "./network";
+import { ROUGHDRAFT_DEFAULT_PORT, ROUGHDRAFT_PUBLIC_HOST } from "./network";
+
+// tsx compiles the CLI on first import, which is slower than a unit test.
+const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
 
 interface StartedServer {
   close: () => Promise<void>;
@@ -1066,6 +1070,606 @@ describe("cli", () => {
       startedAt: result.server.startedAt,
       stateFile: getServerStateFilePath(test.deps.env),
       managed: true,
+      documents: [],
+    });
+  });
+
+  describe("status naming the document", () => {
+    const reviewedMarkdown = [
+      "# Draft",
+      "",
+      'Intro {>>Needs a source<<}{id="c1" by="user" at="2026-09-06T00:00:00Z"}',
+      '{>>Added one<<}{id="r1" by="AI" at="2026-09-06T00:01:00Z" re="c1"}',
+      'Old {>>Fixed<<}{id="c2" by="user" at="2026-09-06T00:00:00Z" status="resolved"}',
+      '{++new text++}{id="s1" by="user" at="2026-09-06T00:00:00Z"}',
+      "",
+    ].join("\n");
+
+    // The case that split `status <path>` from the `threads-cleared` done
+    // signal: the only comment is resolved, but its reply is not.
+    const resolvedRootWithOpenReply = [
+      "# Draft",
+      "",
+      'Intro {>>Needs a source<<}{id="c1" by="user" at="2026-09-06T00:00:00Z" status="resolved"}',
+      '{>>Still waiting<<}{id="r1" by="AI" at="2026-09-06T00:01:00Z" re="c1"}',
+      "",
+    ].join("\n");
+
+    // Binds a real port so a child process can reach the server; the CLI reads
+    // `serverRoot` from `/api/status`, not the port this app was created with.
+    async function startServerForSubprocess(): Promise<{
+      port: number;
+      close: () => Promise<void>;
+    }> {
+      const { app } = createApp({
+        projectDir,
+        serverRoot,
+        staticDirPath: projectDir,
+      });
+      const httpServer = createHttpServer(app);
+      await new Promise<void>((resolve, reject) => {
+        httpServer.once("error", reject);
+        httpServer.listen(0, "127.0.0.1", () => resolve());
+      });
+      const address = httpServer.address();
+      if (typeof address !== "object" || address === null) {
+        throw new Error("server did not report a port");
+      }
+
+      return {
+        port: address.port,
+        close: () =>
+          new Promise<void>((resolve, reject) => {
+            httpServer.closeAllConnections?.();
+            httpServer.close((error) => (error ? reject(error) : resolve()));
+          }),
+      };
+    }
+
+    // Runs the CLI the way `bin/roughdraft.mjs` does — `runCli` in its own
+    // process, exiting on its return code — over `src` through tsx, because
+    // `pnpm check` runs the tests before `dist` exists. Async on purpose: the
+    // server under test lives in this process, so a blocking spawn would
+    // deadlock it.
+    function runCliSubprocess(
+      args: string[],
+      env: NodeJS.ProcessEnv,
+    ): Promise<{ code: number; stdout: string; stderr: string }> {
+      const entryPath = path.join(tempDir, "cli-subprocess-entry.mts");
+      fs.writeFileSync(
+        entryPath,
+        [
+          `import { runCli } from ${JSON.stringify(
+            pathToFileURL(fileURLToPath(new URL("./cli.ts", import.meta.url)))
+              .href,
+          )};`,
+          "process.exit(await runCli(process.argv.slice(2)));",
+          "",
+        ].join("\n"),
+      );
+
+      return new Promise((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          ["--import", "tsx", entryPath, ...args],
+          { cwd: serverRoot, env, stdio: ["ignore", "pipe", "pipe"] },
+        );
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk: string) => {
+          stdout += chunk;
+        });
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk: string) => {
+          stderr += chunk;
+        });
+        child.once("error", reject);
+        child.once("close", (code) =>
+          resolve({ code: code ?? -1, stdout, stderr }),
+        );
+      });
+    }
+
+    // Stands in for a browser tab: the app subscribes to /api/open-requests
+    // with the path it has open and the label it was opened with.
+    async function subscribeTab(
+      port: number,
+      documentPath: string,
+      sessionLabel?: string,
+    ) {
+      const url = new URL(`http://127.0.0.1:${port}/api/open-requests`);
+      url.searchParams.set("path", documentPath);
+      if (sessionLabel) url.searchParams.set("label", sessionLabel);
+      const stream = await fetch(url);
+      const reader = stream.body?.getReader();
+      if (!reader) throw new Error("open-requests stream has no body");
+      await reader.read();
+      return { cancel: () => reader.cancel() };
+    }
+
+    async function saveThroughTab(
+      port: number,
+      documentPath: string,
+      content: string,
+    ) {
+      const query = new URLSearchParams({
+        projectPath: path.dirname(documentPath),
+        path: path.basename(documentPath),
+      });
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/markdown-file?${query}`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content }),
+        },
+      );
+      expect(response.status).toBe(200);
+    }
+
+    it("names each open document and its session, or says no label was given", async () => {
+      const test = createTestDependencies();
+      const labeledPath = path.join(projectDir, "labeled.md");
+      const unlabeledPath = path.join(projectDir, "unlabeled.md");
+      fs.writeFileSync(labeledPath, "# Labeled\n");
+      fs.writeFileSync(unlabeledPath, "# Unlabeled\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const labeledTab = await subscribeTab(
+        result.server.port,
+        labeledPath,
+        "build-16",
+      );
+      const unlabeledTab = await subscribeTab(
+        result.server.port,
+        unlabeledPath,
+      );
+
+      try {
+        const exitCode = await runCli(["status"], test.deps);
+
+        expect(exitCode).toBe(0);
+        expect(test.logs).toEqual([
+          `Roughdraft is running at ${result.server.url}`,
+          `PID: ${result.server.pid}`,
+          `Started: ${result.server.startedAt}`,
+          `State file: ${getServerStateFilePath(test.deps.env)}`,
+          `Document: ${labeledPath}`,
+          "Session: build-16",
+          `Document: ${unlabeledPath}`,
+          "Session: no label given",
+        ]);
+      } finally {
+        await labeledTab.cancel();
+        await unlabeledTab.cancel();
+      }
+    });
+
+    it("says no document is open when no tab has one", async () => {
+      const test = createTestDependencies();
+      await ensureServerRunning(test.deps, { projectDir });
+
+      const exitCode = await runCli(["status"], test.deps);
+
+      expect(exitCode).toBe(0);
+      expect(test.logs).toContain("Document: none open");
+      expect(test.logs.some((line) => line.startsWith("Session:"))).toBe(false);
+    });
+
+    it("carries the open documents in status --json", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        const exitCode = await runCli(["status", "--json"], test.deps);
+        const payload = parseOnlyJsonLog<{
+          running: boolean;
+          documents: unknown[];
+        }>(test.logs);
+
+        expect(exitCode).toBe(0);
+        expect(payload.running).toBe(true);
+        expect(payload.documents).toEqual([
+          {
+            path: documentPath,
+            sessionLabel: "build-16",
+            openedAt: expect.any(String),
+            lastSavedAt: null,
+          },
+        ]);
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("reports open threads and the last save for an open document", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        const before = Date.now();
+        await saveThroughTab(
+          result.server.port,
+          documentPath,
+          reviewedMarkdown,
+        );
+
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(0);
+        const lastSaveLine = test.logs.find((line) =>
+          line.startsWith("Last save: "),
+        );
+        expect(lastSaveLine).toBeDefined();
+        expect(
+          Date.parse(lastSaveLine?.slice("Last save: ".length) ?? ""),
+        ).toBeGreaterThanOrEqual(before - 1000);
+        expect(test.logs).toEqual([
+          `Roughdraft is running at ${result.server.url}`,
+          `PID: ${result.server.pid}`,
+          `Started: ${result.server.startedAt}`,
+          `State file: ${getServerStateFilePath(test.deps.env)}`,
+          `Document: ${documentPath}`,
+          "Session: build-16",
+          expect.stringMatching(/^Opened: \d{4}-/),
+          lastSaveLine,
+          "Open threads: 3 (c1, r1, s1)",
+        ]);
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("reports no save since the document was opened and zero open threads", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(result.server.port, documentPath);
+
+      try {
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(0);
+        expect(test.logs).toContain("Session: no label given");
+        expect(test.logs).toContain("Last save: none since opened");
+        expect(test.logs).toContain("Open threads: 0");
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("carries the document's threads and last save in status <path> --json", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        await saveThroughTab(
+          result.server.port,
+          documentPath,
+          reviewedMarkdown,
+        );
+
+        const exitCode = await runCli(
+          ["status", documentPath, "--json"],
+          test.deps,
+        );
+        const payload = parseOnlyJsonLog<{
+          running: boolean;
+          url: string;
+          document: Record<string, unknown>;
+        }>(test.logs);
+
+        expect(exitCode).toBe(0);
+        expect(payload).toMatchObject({
+          running: true,
+          url: result.server.url,
+          document: {
+            path: documentPath,
+            open: true,
+            sessionLabel: "build-16",
+            openedAt: expect.any(String),
+            lastSavedAt: expect.any(String),
+            tabs: [{ sessionLabel: "build-16", openedAt: expect.any(String) }],
+            openThreads: { count: 3, ids: ["c1", "r1", "s1"] },
+            threadsError: null,
+          },
+        });
+        expect(payload).not.toHaveProperty("documents");
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("says clearly when the path is not open", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      const otherPath = path.join(projectDir, "other.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      fs.writeFileSync(otherPath, "# Other\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(result.server.port, otherPath);
+
+      try {
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(1);
+        expect(test.logs).toContain(
+          `${documentPath} is not open in Roughdraft.`,
+        );
+        expect(test.logs.some((line) => line.startsWith("Open threads"))).toBe(
+          false,
+        );
+
+        test.logs.length = 0;
+        const jsonExitCode = await runCli(
+          ["status", documentPath, "--json"],
+          test.deps,
+        );
+        const payload = parseOnlyJsonLog<{
+          running: boolean;
+          document: Record<string, unknown>;
+        }>(test.logs);
+
+        expect(jsonExitCode).toBe(0);
+        expect(payload.running).toBe(true);
+        expect(payload.document).toEqual({ path: documentPath, open: false });
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("reports the path as not open when Roughdraft is not running", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+
+      const exitCode = await runCli(["status", documentPath], test.deps);
+      expect(exitCode).toBe(1);
+      expect(test.logs).toContain(
+        "Roughdraft is not running. Start it with `roughdraft start`.",
+      );
+
+      test.logs.length = 0;
+      const jsonExitCode = await runCli(
+        ["status", documentPath, "--json"],
+        test.deps,
+      );
+      const payload = parseOnlyJsonLog<Record<string, unknown>>(test.logs);
+
+      expect(jsonExitCode).toBe(0);
+      expect(payload).toEqual({
+        running: false,
+        stateFile: getServerStateFilePath(test.deps.env),
+        document: { path: documentPath, open: false },
+      });
+    });
+
+    it("counts an unresolved reply under a resolved comment, as the review loop does", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        await saveThroughTab(
+          result.server.port,
+          documentPath,
+          resolvedRootWithOpenReply,
+        );
+
+        const exitCode = await runCli(["status", documentPath], test.deps);
+        const query = new URLSearchParams({
+          projectPath: path.dirname(documentPath),
+          path: path.basename(documentPath),
+        });
+        const reviewIndexResponse = await fetch(
+          `http://127.0.0.1:${result.server.port}/api/review-index?${query}`,
+        );
+        const reviewIndex = (await reviewIndexResponse.json()) as {
+          summary: { unresolved: number };
+        };
+
+        expect(exitCode).toBe(0);
+        // The number `threads-cleared` reads, so the two must not disagree.
+        expect(reviewIndex.summary.unresolved).toBe(1);
+        expect(test.logs).toContain("Open threads: 1 (r1)");
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it("names every tab when several hold the same path", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const labeledTab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+      const plainTab = await subscribeTab(result.server.port, documentPath);
+
+      try {
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(0);
+        expect(test.logs).toContain("Session: no label given");
+        expect(
+          test.logs.some((line) =>
+            line.startsWith("Also open in: build-16 (opened "),
+          ),
+        ).toBe(true);
+
+        test.logs.length = 0;
+        const jsonExitCode = await runCli(
+          ["status", documentPath, "--json"],
+          test.deps,
+        );
+        const payload = parseOnlyJsonLog<{
+          document: { tabs: Array<{ sessionLabel: string | null }> };
+        }>(test.logs);
+
+        expect(jsonExitCode).toBe(0);
+        expect(payload.document.tabs.map((tab) => tab.sessionLabel)).toEqual([
+          "build-16",
+          null,
+        ]);
+      } finally {
+        await labeledTab.cancel();
+        await plainTab.cancel();
+      }
+    });
+
+    it("reports a review index it cannot read instead of crashing", async () => {
+      const test = createTestDependencies();
+      const documentPath = path.join(projectDir, "draft.md");
+      fs.writeFileSync(documentPath, "# Draft\n");
+      const result = await ensureServerRunning(test.deps, { projectDir });
+      const tab = await subscribeTab(
+        result.server.port,
+        documentPath,
+        "build-16",
+      );
+
+      try {
+        fs.renameSync(documentPath, path.join(projectDir, "renamed.md"));
+
+        const exitCode = await runCli(["status", documentPath], test.deps);
+
+        expect(exitCode).toBe(1);
+        expect(test.errors).toContain(
+          `Could not read the review index for ${documentPath}: the server answered 404`,
+        );
+        expect(test.logs.some((line) => line.startsWith("Open threads"))).toBe(
+          false,
+        );
+
+        test.logs.length = 0;
+        const jsonExitCode = await runCli(
+          ["status", documentPath, "--json"],
+          test.deps,
+        );
+        const payload = parseOnlyJsonLog<{
+          running: boolean;
+          document: Record<string, unknown>;
+        }>(test.logs);
+
+        expect(jsonExitCode).toBe(1);
+        expect(payload.running).toBe(true);
+        expect(payload.document).toMatchObject({
+          path: documentPath,
+          open: true,
+          sessionLabel: "build-16",
+          openThreads: null,
+          threadsError: "the server answered 404",
+        });
+      } finally {
+        await tab.cancel();
+      }
+    });
+
+    it(
+      "prints status and status <path> from the real CLI subprocess",
+      async () => {
+        const documentPath = path.join(projectDir, "draft.md");
+        fs.writeFileSync(documentPath, reviewedMarkdown);
+        const server = await startServerForSubprocess();
+        const stateEnv = {
+          ...process.env,
+          ROUGHDRAFT_STATE_DIR: stateDir,
+          ROUGHDRAFT_DEV_FRONTEND_STATE_FILE: devFrontendStateFile,
+        };
+        const stateFilePath = getServerStateFilePath(stateEnv);
+        fs.mkdirSync(path.dirname(stateFilePath), { recursive: true });
+        fs.writeFileSync(
+          stateFilePath,
+          `${JSON.stringify({
+            port: server.port,
+            // This process is running, which is what the CLI checks.
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+            url: `http://${ROUGHDRAFT_PUBLIC_HOST}:${server.port}`,
+          })}\n`,
+        );
+        const tab = await subscribeTab(
+          server.port,
+          documentPath,
+          "subprocess-probe",
+        );
+
+        try {
+          const status = await runCliSubprocess(["status"], stateEnv);
+
+          expect(status.stderr).toBe("");
+          expect(status.code).toBe(0);
+          expect(status.stdout.split("\n")).toEqual(
+            expect.arrayContaining([
+              `Roughdraft is running at http://${ROUGHDRAFT_PUBLIC_HOST}:${server.port}`,
+              `PID: ${process.pid}`,
+              `Document: ${documentPath}`,
+              "Session: subprocess-probe",
+            ]),
+          );
+
+          const documentStatus = await runCliSubprocess(
+            ["status", documentPath],
+            stateEnv,
+          );
+
+          expect(documentStatus.stderr).toBe("");
+          expect(documentStatus.code).toBe(0);
+          expect(documentStatus.stdout.split("\n")).toEqual(
+            expect.arrayContaining([
+              `Document: ${documentPath}`,
+              "Session: subprocess-probe",
+              "Last save: none since opened",
+              "Open threads: 3 (c1, r1, s1)",
+            ]),
+          );
+        } finally {
+          await tab.cancel();
+          await server.close();
+        }
+      },
+      SUBPROCESS_TEST_TIMEOUT_MS,
+    );
+
+    it("rejects more than one path", async () => {
+      const test = createTestDependencies();
+
+      const exitCode = await runCli(["status", "a.md", "b.md"], test.deps);
+
+      expect(exitCode).toBe(2);
+      expect(test.errors).toEqual([
+        "Usage: roughdraft status [<path>] [--json]",
+      ]);
     });
   });
 
