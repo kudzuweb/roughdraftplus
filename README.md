@@ -66,6 +66,8 @@ roughdraft status
 roughdraft stop
 ```
 
+`roughdraft status` also names each document that is open in a tab and the session label it was opened with (`Session: no label given` when `open` ran without `--label`). `roughdraft status <path>` reports that document's open threads (comments and suggestions not marked resolved, with their IDs) and the last time the server saved it while a tab had it open, or says the path is not open. Both forms carry the same facts under `documents` and `document` with `--json`.
+
 `roughdraft open` will reuse the running server and auto-start it if needed. You can also use `roughdraft ./path/to/file.md` as a shortcut when the input clearly looks like a path.
 
 Roughdraft does not edit `~/CLAUDE.md`, `~/AGENTS.md`, or other user-level agent files. The setup prompt asks your agent to update its own guidance.
@@ -195,6 +197,8 @@ roughdraft open <path> --no-watch
 roughdraft open <path> --label "<session name>"
 roughdraft start --port <port>
 roughdraft status --json
+roughdraft status ./draft.md
+roughdraft status ./draft.md --json
 roughdraft stop --all
 roughdraft watch ./draft.md --json
 roughdraft doctor --json
@@ -202,7 +206,7 @@ roughdraft doctor ./draft.md
 roughdraft doctor ./draft.md --json
 ```
 
-Usage errors return exit code `2`. Runtime failures return exit code `1`. `roughdraft status --json` returns exit code `0` even when the JSON says `"running": false`.
+Usage errors return exit code `2`. Runtime failures return exit code `1`. `roughdraft status --json` returns exit code `0` even when the JSON says `"running": false`, and `roughdraft status <path> --json` returns `0` even when `document.open` is `false`; without `--json`, a path that is not open exits `1` like a server that is not running.
 
 Supported environment variables:
 
