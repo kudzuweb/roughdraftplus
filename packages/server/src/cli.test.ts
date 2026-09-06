@@ -1,8 +1,9 @@
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { createServer as createHttpServer, type Server } from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { validateRoughdraftMarkdown } from "@roughdraft/rfm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
@@ -13,7 +14,10 @@ import {
   runCli,
 } from "./cli";
 import { createApp } from "./index";
-import { ROUGHDRAFT_DEFAULT_PORT } from "./network";
+import { ROUGHDRAFT_DEFAULT_PORT, ROUGHDRAFT_PUBLIC_HOST } from "./network";
+
+// tsx compiles the CLI on first import, which is slower than a unit test.
+const SUBPROCESS_TEST_TIMEOUT_MS = 60_000;
 
 interface StartedServer {
   close: () => Promise<void>;
@@ -1091,6 +1095,82 @@ describe("cli", () => {
       "",
     ].join("\n");
 
+    // Binds a real port so a child process can reach the server; the CLI reads
+    // `serverRoot` from `/api/status`, not the port this app was created with.
+    async function startServerForSubprocess(): Promise<{
+      port: number;
+      close: () => Promise<void>;
+    }> {
+      const { app } = createApp({
+        projectDir,
+        serverRoot,
+        staticDirPath: projectDir,
+      });
+      const httpServer = createHttpServer(app);
+      await new Promise<void>((resolve, reject) => {
+        httpServer.once("error", reject);
+        httpServer.listen(0, "127.0.0.1", () => resolve());
+      });
+      const address = httpServer.address();
+      if (typeof address !== "object" || address === null) {
+        throw new Error("server did not report a port");
+      }
+
+      return {
+        port: address.port,
+        close: () =>
+          new Promise<void>((resolve, reject) => {
+            httpServer.closeAllConnections?.();
+            httpServer.close((error) => (error ? reject(error) : resolve()));
+          }),
+      };
+    }
+
+    // Runs the CLI the way `bin/roughdraft.mjs` does — `runCli` in its own
+    // process, exiting on its return code — over `src` through tsx, because
+    // `pnpm check` runs the tests before `dist` exists. Async on purpose: the
+    // server under test lives in this process, so a blocking spawn would
+    // deadlock it.
+    function runCliSubprocess(
+      args: string[],
+      env: NodeJS.ProcessEnv,
+    ): Promise<{ code: number; stdout: string; stderr: string }> {
+      const entryPath = path.join(tempDir, "cli-subprocess-entry.mts");
+      fs.writeFileSync(
+        entryPath,
+        [
+          `import { runCli } from ${JSON.stringify(
+            pathToFileURL(fileURLToPath(new URL("./cli.ts", import.meta.url)))
+              .href,
+          )};`,
+          "process.exit(await runCli(process.argv.slice(2)));",
+          "",
+        ].join("\n"),
+      );
+
+      return new Promise((resolve, reject) => {
+        const child = spawn(
+          process.execPath,
+          ["--import", "tsx", entryPath, ...args],
+          { cwd: serverRoot, env, stdio: ["ignore", "pipe", "pipe"] },
+        );
+        let stdout = "";
+        let stderr = "";
+        child.stdout.setEncoding("utf8");
+        child.stdout.on("data", (chunk: string) => {
+          stdout += chunk;
+        });
+        child.stderr.setEncoding("utf8");
+        child.stderr.on("data", (chunk: string) => {
+          stderr += chunk;
+        });
+        child.once("error", reject);
+        child.once("close", (code) =>
+          resolve({ code: code ?? -1, stdout, stderr }),
+        );
+      });
+    }
+
     // Stands in for a browser tab: the app subscribes to /api/open-requests
     // with the path it has open and the label it was opened with.
     async function subscribeTab(
@@ -1514,6 +1594,72 @@ describe("cli", () => {
         await tab.cancel();
       }
     });
+
+    it(
+      "prints status and status <path> from the real CLI subprocess",
+      async () => {
+        const documentPath = path.join(projectDir, "draft.md");
+        fs.writeFileSync(documentPath, reviewedMarkdown);
+        const server = await startServerForSubprocess();
+        const stateEnv = {
+          ...process.env,
+          ROUGHDRAFT_STATE_DIR: stateDir,
+          ROUGHDRAFT_DEV_FRONTEND_STATE_FILE: devFrontendStateFile,
+        };
+        const stateFilePath = getServerStateFilePath(stateEnv);
+        fs.mkdirSync(path.dirname(stateFilePath), { recursive: true });
+        fs.writeFileSync(
+          stateFilePath,
+          `${JSON.stringify({
+            port: server.port,
+            // This process is running, which is what the CLI checks.
+            pid: process.pid,
+            startedAt: new Date().toISOString(),
+            url: `http://${ROUGHDRAFT_PUBLIC_HOST}:${server.port}`,
+          })}\n`,
+        );
+        const tab = await subscribeTab(
+          server.port,
+          documentPath,
+          "subprocess-probe",
+        );
+
+        try {
+          const status = await runCliSubprocess(["status"], stateEnv);
+
+          expect(status.stderr).toBe("");
+          expect(status.code).toBe(0);
+          expect(status.stdout.split("\n")).toEqual(
+            expect.arrayContaining([
+              `Roughdraft is running at http://${ROUGHDRAFT_PUBLIC_HOST}:${server.port}`,
+              `PID: ${process.pid}`,
+              `Document: ${documentPath}`,
+              "Session: subprocess-probe",
+            ]),
+          );
+
+          const documentStatus = await runCliSubprocess(
+            ["status", documentPath],
+            stateEnv,
+          );
+
+          expect(documentStatus.stderr).toBe("");
+          expect(documentStatus.code).toBe(0);
+          expect(documentStatus.stdout.split("\n")).toEqual(
+            expect.arrayContaining([
+              `Document: ${documentPath}`,
+              "Session: subprocess-probe",
+              "Last save: none since opened",
+              "Open threads: 3 (c1, r1, s1)",
+            ]),
+          );
+        } finally {
+          await tab.cancel();
+          await server.close();
+        }
+      },
+      SUBPROCESS_TEST_TIMEOUT_MS,
+    );
 
     it("rejects more than one path", async () => {
       const test = createTestDependencies();
