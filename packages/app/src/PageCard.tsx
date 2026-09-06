@@ -26,6 +26,7 @@ import {
   commentHighlightPluginKey,
   createEditorExtensions,
   criticChangeHighlightPluginKey,
+  isInlineAtomOrText,
   SUGGESTED_PARAGRAPH_SENTINEL,
 } from "./editor-extensions";
 import { cn } from "./lib/utils";
@@ -151,7 +152,7 @@ function getSelectionCommentIds(editor: Editor | null): string[] {
     }
   } else {
     editor.state.doc.nodesBetween(from, to, (node) => {
-      if (!node.isText) return;
+      if (!isInlineAtomOrText(node)) return;
 
       for (const mark of node.marks) {
         if (mark.type.name !== "commentRef") continue;
@@ -187,7 +188,7 @@ function getSelectionCriticChangeIds(editor: Editor | null): string[] {
     }
   } else {
     editor.state.doc.nodesBetween(from, to, (node) => {
-      if (!node.isText) return;
+      if (!isInlineAtomOrText(node)) return;
 
       for (const mark of node.marks) {
         if (mark.type.name !== "criticChange") continue;
@@ -299,7 +300,7 @@ function addCommentIdsToAnchor(
   const tr = editor.state.tr;
 
   editor.state.doc.descendants((node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const mark = node.marks.find(
       (candidate) =>
@@ -328,13 +329,13 @@ function addCommentIdsToAnchor(
   return nextCommentIds;
 }
 
-function getDocumentCriticChanges(
+export function getDocumentCriticChanges(
   editor: Editor,
 ): Array<Pick<CriticChangeAttrs, "changeId">> {
   const changes = new Map<string, Pick<CriticChangeAttrs, "changeId">>();
 
   editor.state.doc.descendants((node) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     for (const mark of node.marks) {
       if (mark.type.name !== "criticChange") continue;
@@ -438,7 +439,7 @@ function getDocumentCriticChangeRailItems(
   }
 
   editor.state.doc.descendants((node) => {
-    if (!node.isText || !node.text) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const changeMark = node.marks.find(
       (mark) =>
@@ -471,9 +472,9 @@ function getDocumentCriticChangeRailItems(
     existing.kind = kind;
 
     if (change.kind === "addition" || change.kind === "substitution-new") {
-      existing.newText += node.text;
+      existing.newText += node.textContent;
     } else {
-      existing.oldText += node.text;
+      existing.oldText += node.textContent;
     }
 
     for (const mark of node.marks) {
@@ -506,14 +507,14 @@ function getDocumentCriticChangeRailItems(
   );
 }
 
-function getCriticChangeRange(editor: Editor | null, changeId: string) {
+export function getCriticChangeRange(editor: Editor | null, changeId: string) {
   if (!editor) return null;
 
   let from: number | null = null;
   let to: number | null = null;
 
   editor.state.doc.descendants((node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const hasChange = node.marks.some(
       (mark) =>
@@ -544,7 +545,7 @@ function addCommentIdsToCriticChange(
   const tr = editor.state.tr;
 
   editor.state.doc.descendants((node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const hasChange = node.marks.some(
       (mark) =>
@@ -798,7 +799,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             };
             const segments: Segment[] = [];
             view.state.doc.nodesBetween(from, to, (node, pos) => {
-              if (!node.isText) return;
+              if (!isInlineAtomOrText(node)) return;
               const segFrom = Math.max(pos, from);
               const segTo = Math.min(pos + node.nodeSize, to);
               if (segFrom >= segTo) return;
@@ -910,7 +911,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             };
             const segments: Segment[] = [];
             view.state.doc.nodesBetween(from, to, (node, pos) => {
-              if (!node.isText) return;
+              if (!isInlineAtomOrText(node)) return;
               const segFrom = Math.max(pos, from);
               const segTo = Math.min(pos + node.nodeSize, to);
               if (segFrom >= segTo) return;
@@ -1067,7 +1068,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
             };
             const segments: Segment[] = [];
             view.state.doc.nodesBetween(from, to, (node, pos) => {
-              if (!node.isText) return;
+              if (!isInlineAtomOrText(node)) return;
               const segFrom = Math.max(pos, from);
               const segTo = Math.min(pos + node.nodeSize, to);
               if (segFrom >= segTo) return;
@@ -1173,7 +1174,7 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
           };
           const segments: Segment[] = [];
           view.state.doc.nodesBetween(from, to, (node, pos) => {
-            if (!node.isText) return;
+            if (!isInlineAtomOrText(node)) return;
             const segFrom = Math.max(pos, from);
             const segTo = Math.min(pos + node.nodeSize, to);
             if (segFrom >= segTo) return;

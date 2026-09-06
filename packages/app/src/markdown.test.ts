@@ -113,7 +113,7 @@ describe("toHtml", () => {
       '<a href="mailto:review@example.com" data-markdown-src="mailto:review@example.com">Mail</a>',
     );
     expect(html).toContain('<ul data-type="taskList">');
-    expect(html).toContain("<table>");
+    expect(html).toContain("<table");
     expect(html).toContain(
       '<img src="./images/sketch.png" alt="Sketch" title="Sketch title" data-markdown-src="./images/sketch.png">',
     );
@@ -191,6 +191,133 @@ describe("normalizeBlockSpacing", () => {
     const html = "<ul><li>Alpha</li><li>Beta</li></ul>";
 
     expect(toMarkdown(html)).toBe("- Alpha\n- Beta\n");
+  });
+
+  it("keeps a blank line inside a fenced code block before a heading-like line", () => {
+    const markdown = "```\nx\n\n# not a heading\n```\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps consecutive blank lines inside a fenced code block", () => {
+    const markdown = "```\nfirst\n\n\nsecond\n```\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps the blank line between a table and a following paragraph", () => {
+    const markdown = `${paddedTable}\n\nParagraph after the table.\n`;
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps the blank line between a fenced code block and a following paragraph", () => {
+    const markdown = `${fence}\n\nParagraph after the fence.\n`;
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+});
+
+describe("reserialize fidelity", () => {
+  it("keeps wrapped paragraph lines", () => {
+    const markdown =
+      "This paragraph wraps across\ntwo source lines.\n\nSecond paragraph,\nalso wrapped.\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps wrapped lines inside a blockquote", () => {
+    const markdown = "> A quoted paragraph that wraps\n> across two lines.\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps wrapped lines inside a list item", () => {
+    const markdown = "- item one\n  continues here\n- item two\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toContain(
+      "- item one\n  continues here\n",
+    );
+  });
+
+  it("keeps a comment anchored across a wrapped line", () => {
+    const markdown = `Review {==this line\ncontinues==}{>>Note<<}{#c1} here.\n\n${commentEndmatter}`;
+
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps a deletion across a wrapped line", () => {
+    const markdown =
+      'Review {--this line\ncontinues--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"} here.\n';
+    const saved = saveCriticMarkdown(markdown);
+
+    expect(saved).toBe(markdown);
+    expect(saved).not.toContain("\u200b");
+  });
+
+  it("keeps a deletion that covers only the wrap", () => {
+    const markdown =
+      'Review this line{--\n--}{id="s1" by="user" at="2026-01-01T00:00:00.000Z"}continues here.\n';
+    const saved = saveCriticMarkdown(markdown);
+
+    expect(saved).toBe(markdown);
+    expect(saved).not.toContain("\u200b");
+  });
+
+  it("writes a blank blockquote line as a bare marker", () => {
+    const markdown =
+      "> First quoted paragraph.\n>\n> Second quoted paragraph.\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("emits no trailing whitespace for list items on save", () => {
+    const saved = saveCriticMarkdown("- a\n  - nested\n- b\n");
+
+    expect(saved).not.toMatch(/[ \t]+\n/);
+    expect(saved).toBe("- a\n  - nested\n- b\n");
+  });
+
+  it("keeps the table separator row as typed", () => {
+    const markdown =
+      "| Item | Status |\n|------|--------|\n| First | Ready |\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("keeps an aligned table separator row as typed", () => {
+    const markdown = "| Left | Right |\n|:-----|------:|\n| First | Ready |\n";
+
+    expect(toMarkdown(toHtml(markdown))).toBe(markdown);
+    expect(saveCriticMarkdown(markdown)).toBe(markdown);
+  });
+
+  it("recomputes the separator when the column count no longer matches", () => {
+    const html =
+      '<table data-markdown-table-separator="|---|---|"><thead><tr><th>A</th><th>B</th><th>C</th></tr></thead><tbody><tr><td>1</td><td>2</td><td>3</td></tr></tbody></table>';
+
+    expect(toMarkdown(html)).toBe(
+      "| A   | B   | C   |\n| --- | --- | --- |\n| 1   | 2   | 3   |\n",
+    );
+  });
+
+  it("round-trips the reflow fixture through the save path", () => {
+    const markdown = readMarkdownFixture("reflow-roundtrip.md");
+    const saved = saveCriticMarkdown(markdown);
+
+    expect(saved).toBe(markdown);
+    expect(saved).not.toMatch(/[ \t]+\n/);
+    expect(saved).not.toContain("\u200b");
+    expect(saveCriticMarkdown(saved)).toBe(markdown);
   });
 });
 

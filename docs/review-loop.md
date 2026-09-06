@@ -61,14 +61,30 @@ confirm, records a pending approval, and applies it when the reviewer clicks Don
 
 - Review the file at its real path. If it is git-tracked, confirm it is committed before opening,
   so an unwanted rewrite is one checkout away.
-- After a round, diff the file: whitespace-only and joined-line changes are save reflow, not
-  reviewer edits (upstream issues 98 and 100; backlog items 1 and 2).
+- After a round, diff the file, and read it knowing what a save rewrites on its own. Kept as
+  typed (#2, #3): wrapped lines, the blank line between blocks other than around a heading,
+  fence interiors, table delimiter rows, `_em_`, `**strong**`, hard breaks, autolinks, images,
+  strikethrough. Still rewritten by a save, in four groups:
+  1. Block spacing and shape: the blank line before a heading after a paragraph or list, and
+     the blank line after a heading, are removed; table cells are padded to three characters;
+     loose lists are tightened (#23); runs of blank lines collapse to one outside fences.
+  2. Marker and delimiter style: `*` and `+` bullets become `-`; `1)` becomes `1.`; `*em*`
+     becomes `_em_` and `__strong__` becomes `**strong**`; a `---` rule becomes `* * *`.
+  3. Syntax-form normalization: setext headings become ATX and trailing `#`s on a heading
+     are dropped; indented code blocks become fenced; reference-style links become inline and
+     their definition lines are dropped; single-quoted link titles become double-quoted;
+     footnotes break; backslash escapes are dropped; HTML entities are decoded; inline HTML is
+     converted or unwrapped; tabs become spaces; continuation-line indentation collapses to
+     one space; a nested ordered list re-indents from three spaces to two; a nested blockquote
+     `> a\n>> b` gains a bare `>` line before `> > b`; a newline inside a code span becomes a
+     space and double-backtick code-span padding is trimmed. The list is not exhaustive: any
+     hunk that changes only how a construct is spelled belongs here.
+  4. Task lists are corrupted: `- [x] Done` splits across lines (#22).
+  A diff hunk outside those groups is a reviewer edit.
 - Close the tab (or stop the server) before restoring or editing a reviewed file outside the loop.
   An open tab's watcher can save its reflowed copy over external changes — including a `git
   checkout`, which is not final while Roughdraft still holds the file. Re-run the checkout after
   closing if in doubt.
-- Author documents destined for review defensively while the reflow bugs live: prefer prose and
-  bullets over tables and fenced blocks, and keep blank lines between blocks.
 
 ## Status
 

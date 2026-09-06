@@ -4,6 +4,23 @@ import TurndownService from "turndown";
 import { parse as parseYaml } from "yaml";
 
 export const rawMarkdownBlockAttribute = "data-markdown-raw-block";
+// A newline inside a paragraph, blockquote line, or list item. The span holds
+// a real space so the editor, find-in-page, and copied text read it as one;
+// it is written back as the newline the author typed.
+export const markdownSoftBreakAttribute = "data-markdown-softbreak";
+const markdownSoftBreakHtml = `<span ${markdownSoftBreakAttribute}=""> </span>`;
+const markdownSoftBreakWithSpace = new RegExp(
+  `(<span ${markdownSoftBreakAttribute}="">) (</span>)`,
+  "g",
+);
+// A soft break inside one of these must stay a space: a heading or table
+// cell cannot span lines in markdown.
+const singleLineBlockSelector = "h1, h2, h3, h4, h5, h6, th, td";
+// The table's delimiter row exactly as the author typed it, so a save does
+// not rewrite `|---|---|` as `| --- | --- |`.
+export const markdownTableSeparatorAttribute = "data-markdown-table-separator";
+const markdownTableSeparatorLine =
+  /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 
 export interface MarkdownOptions {
   resolveFileUrl?: (path: string) => string | null;
@@ -162,6 +179,26 @@ function markdownTableDividerForCell(cell: HTMLTableCellElement): string {
 function markdownTableDividerForRow(row: HTMLTableRowElement): string {
   const dividers = Array.from(row.cells).map(markdownTableDividerForCell);
   return `| ${dividers.join(" | ")} |`;
+}
+
+function markdownTableSeparatorColumnCount(separator: string): number {
+  return separator.trim().replace(/^\|/, "").replace(/\|$/, "").split("|")
+    .length;
+}
+
+function typedMarkdownTableSeparator(
+  table: HTMLTableElement,
+  headerRow: HTMLTableRowElement,
+): string | null {
+  const separator = table.getAttribute(markdownTableSeparatorAttribute);
+  if (!separator || !markdownTableSeparatorLine.test(separator)) return null;
+  return markdownTableSeparatorColumnCount(separator) === headerRow.cells.length
+    ? separator
+    : null;
+}
+
+function softBreakMarkdown(node: HTMLElement): string {
+  return node.closest(singleLineBlockSelector) ? " " : "\n";
 }
 
 function resolveRenderedUrl(
@@ -323,6 +360,23 @@ export function createMarkedRenderer(options?: MarkdownOptions) {
     return `<pre><code${classAttr}>${content}</code></pre>\n`;
   };
 
+  renderer.text = function (token) {
+    const html = baseRenderer.text.call(this, token);
+    if ("tokens" in token && token.tokens) return html;
+    if ("escaped" in token && token.escaped) return html;
+    return html.replaceAll("\n", markdownSoftBreakHtml);
+  };
+
+  renderer.table = function (token) {
+    const html = baseRenderer.table.call(this, token);
+    const separator = token.raw.split("\n")[1]?.trimEnd();
+    if (!separator) return html;
+    return html.replace(
+      "<table>",
+      `<table ${markdownTableSeparatorAttribute}="${escapeHtml(separator)}">`,
+    );
+  };
+
   renderer.link = function ({ href, title, tokens, raw }) {
     const rawHref = href || "";
     const renderedHref = resolveRenderedUrl(
@@ -382,6 +436,9 @@ export function createTurndownService(): TurndownService {
     codeBlockStyle: "fenced",
     bulletListMarker: "-",
     blankReplacement(_content, node) {
+      if (node.hasAttribute(markdownSoftBreakAttribute)) {
+        return softBreakMarkdown(node);
+      }
       if (node.hasAttribute(rawMarkdownBlockAttribute)) {
         return `\n\n${decodeRawMarkdownBlock(
           node.getAttribute(rawMarkdownBlockAttribute) ?? "",
@@ -397,13 +454,28 @@ export function createTurndownService(): TurndownService {
   service.use(tables as Parameters<TurndownService["use"]>[0]);
   service.use(taskListItems as Parameters<TurndownService["use"]>[0]);
 
+  // Turndown prefixes every line with "> ", which leaves a trailing space
+  // on the blank line between quoted paragraphs.
+  service.addRule("blockquoteWithoutTrailingSpace", {
+    filter: "blockquote",
+    replacement(content) {
+      const quoted = content
+        .replace(/^\n+|\n+$/g, "")
+        .replace(/^(.?)/gm, (_line, first: string) =>
+          first ? `> ${first}` : ">",
+        );
+      return `\n\n${quoted}\n\n`;
+    },
+  });
+
   service.addRule("compactListItem", {
     filter: "li",
     replacement(content, node, options) {
       const trimmed = content
         .replace(/^\n+/, "")
         .replace(/\n+$/, "\n")
-        .replace(/\n/gm, "\n  ");
+        .replace(/\n{2,}(?=(?:[-*+]|\d+[.)]) )/g, "\n")
+        .replace(/\n(?=[^\n])/g, "\n  ");
 
       let prefix = `${options.bulletListMarker} `;
       const parent = node.parentNode;
@@ -442,6 +514,8 @@ export function createTurndownService(): TurndownService {
       if (!isMarkdownTableDivider(lines[1])) {
         lines.splice(1, 0, markdownTableDividerForRow(headerRow));
       }
+      const typedSeparator = typedMarkdownTableSeparator(table, headerRow);
+      if (typedSeparator) lines[1] = typedSeparator;
 
       const captionContent = table.caption?.textContent || "";
       const caption = captionContent ? `${captionContent}\n\n` : "";
@@ -503,6 +577,15 @@ export function createTurndownService(): TurndownService {
     },
   });
 
+  service.addRule("markdownSoftBreak", {
+    filter: (node) =>
+      node.nodeName === "SPAN" &&
+      (node as HTMLElement).hasAttribute(markdownSoftBreakAttribute),
+    replacement(_content, node) {
+      return softBreakMarkdown(node as HTMLElement);
+    },
+  });
+
   service.addRule("markdownStrikethrough", {
     filter: (node) =>
       node.nodeName === "DEL" ||
@@ -533,10 +616,15 @@ const atxHeadingLine = /^#{1,6} /;
 // A table row, fence marker, or blockquote line. A heading must not be glued
 // to one of these: the blank line before the heading is what ends that block.
 const structuralBlockLine = /^ {0,3}(?:\||`{3}|~{3}|>)/;
+const fenceOpeningLine = /^ {0,3}(`{3,}|~{3,})/;
 
 function isRemovableHeadingGap(previous: string, next: string): boolean {
   if (atxHeadingLine.test(previous)) return true;
   return atxHeadingLine.test(next) && !structuralBlockLine.test(previous);
+}
+
+function fenceClosingLine(marker: string): RegExp {
+  return new RegExp(`^ {0,3}${marker[0]}{${marker.length},}[ \\t]*$`);
 }
 
 /**
@@ -548,28 +636,59 @@ function isRemovableHeadingGap(previous: string, next: string): boolean {
  * always removed, since a heading is a single-line block and whatever
  * follows starts fresh.  The blank line before a heading is removed only
  * when the line above is not a table row, fence marker, or blockquote
- * line.
+ * line.  Lines inside a fenced code block are code, so the walk copies
+ * them through untouched.
  */
 export function normalizeBlockSpacing(md: string): string {
-  const lines = md.replace(/\n{3,}/g, "\n\n").split("\n");
+  const lines = md.split("\n");
   const kept: string[] = [];
+  let closingFence: RegExp | null = null;
   for (let index = 0; index < lines.length; index++) {
     const line = lines[index];
-    if (
-      line === "" &&
-      index > 0 &&
-      index < lines.length - 1 &&
-      isRemovableHeadingGap(lines[index - 1], lines[index + 1])
-    ) {
+    if (closingFence) {
+      kept.push(line);
+      if (closingFence.test(line)) closingFence = null;
       continue;
+    }
+    const fence = line.match(fenceOpeningLine);
+    if (fence) {
+      kept.push(line);
+      closingFence = fenceClosingLine(fence[1]);
+      continue;
+    }
+    if (line === "") {
+      const previous = kept.at(-1);
+      if (previous === "") continue;
+      let nextIndex = index + 1;
+      while (nextIndex < lines.length && lines[nextIndex] === "") nextIndex++;
+      if (
+        previous !== undefined &&
+        nextIndex < lines.length &&
+        isRemovableHeadingGap(previous, lines[nextIndex])
+      ) {
+        continue;
+      }
     }
     kept.push(line);
   }
   return kept.join("\n");
 }
 
+/**
+ * Turndown lifts whitespace inside an inline element out as flanking text,
+ * so the space in a soft break span would land in the output next to the
+ * newline. Swap it for a zero-width placeholder before Turndown sees it: an
+ * emptied span would count as blank, and a change mark wrapping only a soft
+ * break would then be dropped instead of written as `{--\n--}`.
+ */
+export function placeholderSoftBreakSpans(html: string): string {
+  return html.replace(markdownSoftBreakWithSpace, "$1\u200b$2");
+}
+
 export function toMarkdown(html: string): string {
-  return normalizeBlockSpacing(`${turndown.turndown(html).trimEnd()}\n`);
+  return normalizeBlockSpacing(
+    `${turndown.turndown(placeholderSoftBreakSpans(html)).trimEnd()}\n`,
+  );
 }
 
 export function toHtml(markdown: string, options?: MarkdownOptions): string {
