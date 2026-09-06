@@ -53,12 +53,18 @@ export interface RfmReviewIndexSummary {
   unresolved: number;
 }
 
+export interface RfmIdCounters {
+  comments: number;
+  suggestions: number;
+}
+
 export interface RfmReviewIndex {
   format: "roughdraft-flavored-markdown";
   version: "0.2";
   items: RfmReviewItem[];
   diagnostics: RfmDiagnostic[];
   summary: RfmReviewIndexSummary;
+  counters: RfmIdCounters;
 }
 
 export interface AppendRoughdraftReplyOptions {
@@ -134,11 +140,6 @@ interface YamlMetadataEntry {
   status?: string;
   resolved?: string;
   [key: string]: unknown;
-}
-
-interface RfmIdCounters {
-  comments: number;
-  suggestions: number;
 }
 
 interface RoughdraftEndmatter {
@@ -600,6 +601,11 @@ export function extractRoughdraftReviewIndex(markdown: string): RfmReviewIndex {
       suggestions: items.filter((item) => item.kind === "suggestion").length,
       unresolved: items.filter((item) => item.status !== "resolved").length,
     },
+    counters: advanceIdCounters(endmatter.counters, [
+      ...endmatter.comments.keys(),
+      ...endmatter.suggestions.keys(),
+      ...items.map((item) => item.id),
+    ]),
   };
 }
 

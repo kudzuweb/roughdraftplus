@@ -448,6 +448,30 @@ describe("extractRoughdraftReviewIndex", () => {
     });
   });
 
+  it("reports the effective id counters raised to the ids present", () => {
+    const index = extractRoughdraftReviewIndex(
+      [
+        'Keep {==this==}{>>Needs proof<<}{#c1} and {++more++}{id="s5" by="AI" at="2026-04-28T12:01:00.000Z"}.',
+        "",
+        "---",
+        "comments:",
+        "  c1:",
+        "    by: user",
+        '    at: "2026-04-28T12:00:00.000Z"',
+        "counters:",
+        "  comments: 9",
+        "  suggestions: 2",
+        "",
+      ].join("\n"),
+    );
+
+    expect(index.counters).toEqual({ comments: 9, suggestions: 5 });
+    expect(
+      extractRoughdraftReviewIndex("Plain text with no review markup.\n")
+        .counters,
+    ).toEqual({ comments: 0, suggestions: 0 });
+  });
+
   it("uses only the final YAML block as Roughdraft endmatter", () => {
     const index = extractRoughdraftReviewIndex(
       [
