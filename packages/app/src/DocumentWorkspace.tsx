@@ -80,7 +80,7 @@ const reviewWatchLossCopy: Record<
   },
   "no-watcher": {
     title: "Agent disconnected",
-    body: "Run roughdraft open on this file again to reconnect it.",
+    body: "After a server restart the agent's command reconnects on its own within a minute. If it does not, run roughdraft open on this file again.",
   },
 };
 const reviewCompleteTitles = [
