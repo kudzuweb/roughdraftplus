@@ -1,7 +1,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { createServer as createHttpServer } from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -34,40 +33,10 @@ interface AssetPayload {
   dataBase64?: string;
 }
 
-interface DirectoryEntry {
-  name: string;
-  path: string;
-}
-
-interface DirectoryListing {
-  path: string;
-  parentPath: string | null;
-  directories: DirectoryEntry[];
-}
-
-interface FileSystemEntry {
-  name: string;
-  path: string;
-  kind: "directory" | "file";
-}
-
-interface FileSystemListing {
-  path: string;
-  displayPath: string;
-  parentPath: string | null;
-  directories: FileSystemEntry[];
-  files: FileSystemEntry[];
-}
-
-interface ProjectTreeListing {
-  paths: string[];
-}
-
 interface CreateAppOptions {
   port?: number;
   projectDir?: string;
   serverRoot?: string;
-  homeDir?: string;
   // The hosts the server was told to listen on. Any host outside loopback makes
   // every file-touching route reachable from another machine, so the token
   // guard switches on from this and never from a request header, which the
@@ -283,10 +252,6 @@ function nextAssetPath(projectDir: string, filename: string): string {
   }
 }
 
-function ensureDirectoryExists(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
 function isExistingDirectory(dir: string): boolean {
   try {
     return fs.statSync(dir).isDirectory();
@@ -295,135 +260,8 @@ function isExistingDirectory(dir: string): boolean {
   }
 }
 
-function listDirectories(dir: string): DirectoryListing {
-  const entries = fs
-    .readdirSync(dir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => ({
-      name: entry.name,
-      path: path.join(dir, entry.name),
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-  const parentPath = path.dirname(dir);
-
-  return {
-    path: dir,
-    parentPath: parentPath === dir ? null : parentPath,
-    directories: entries,
-  };
-}
-
-function formatDisplayPath(targetPath: string, homeDir: string): string {
-  const normalizedHome = path.resolve(homeDir);
-  const normalizedTarget = path.resolve(targetPath);
-
-  if (normalizedTarget === normalizedHome) {
-    return "~";
-  }
-
-  const relativeToHome = path.relative(normalizedHome, normalizedTarget);
-  if (!relativeToHome.startsWith("..") && !path.isAbsolute(relativeToHome)) {
-    return `~/${relativeToHome.split(path.sep).join("/")}`;
-  }
-
-  return normalizedTarget;
-}
-
-function listFileSystem(dir: string, homeDir: string): FileSystemListing {
-  const normalizedDir = path.resolve(dir);
-  const normalizedHome = path.resolve(homeDir);
-
-  let rawEntries: fs.Dirent[];
-  try {
-    rawEntries = fs.readdirSync(normalizedDir, { withFileTypes: true });
-  } catch (error) {
-    const errorCode = (error as NodeJS.ErrnoException).code;
-    if (errorCode === "EACCES" || errorCode === "EPERM") {
-      throw new Error("Directory is not readable.");
-    }
-    throw error;
-  }
-
-  const directories = rawEntries
-    .filter((entry) => entry.isDirectory())
-    .map<FileSystemEntry>((entry) => ({
-      name: entry.name,
-      path: path.join(normalizedDir, entry.name),
-      kind: "directory",
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-  const files = rawEntries
-    .filter(
-      (entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"),
-    )
-    .map<FileSystemEntry>((entry) => ({
-      name: entry.name,
-      path: path.join(normalizedDir, entry.name),
-      kind: "file",
-    }))
-    .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-
-  return {
-    path: normalizedDir,
-    displayPath: formatDisplayPath(normalizedDir, normalizedHome),
-    parentPath:
-      normalizedDir === normalizedHome ? null : path.dirname(normalizedDir),
-    directories,
-    files,
-  };
-}
-
-function toCanonicalRelativePath(
-  projectDir: string,
-  absolutePath: string,
-  isDirectory: boolean,
-): string {
-  const relativePath = path.relative(projectDir, absolutePath);
-  const canonicalPath = relativePath.split(path.sep).join("/");
-  return isDirectory ? `${canonicalPath}/` : canonicalPath;
-}
-
-function listProjectTree(projectDir: string): ProjectTreeListing {
-  const paths: string[] = [];
-
-  const visitDirectory = (dir: string) => {
-    const entries = fs
-      .readdirSync(dir, { withFileTypes: true })
-      .slice()
-      .sort((left, right) => {
-        if (left.isDirectory() !== right.isDirectory()) {
-          return left.isDirectory() ? -1 : 1;
-        }
-        return left.name.localeCompare(right.name, undefined, {
-          numeric: true,
-        });
-      });
-
-    for (const entry of entries) {
-      const absolutePath = path.join(dir, entry.name);
-
-      if (entry.isDirectory()) {
-        paths.push(toCanonicalRelativePath(projectDir, absolutePath, true));
-        visitDirectory(absolutePath);
-        continue;
-      }
-
-      if (entry.isFile()) {
-        paths.push(toCanonicalRelativePath(projectDir, absolutePath, false));
-      }
-    }
-  };
-
-  visitDirectory(projectDir);
-
-  return { paths };
-}
-
 export function createApp(options: CreateAppOptions = {}): CreateAppResult {
   const port = options.port ?? ROUGHDRAFT_DEFAULT_PORT;
-  const homeDir = options.homeDir ?? os.homedir();
   const serverRoot = path.resolve(options.serverRoot ?? defaultServerRoot);
   const staticDirPath = options.staticDirPath ?? staticDir;
   const fetchImpl = options.fetchImpl ?? fetch;
@@ -948,7 +786,6 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       documents: openDocuments(),
       capabilities: {
         projectPathRequired: true,
-        fileSystemBrowsing: true,
         remoteDocuments: true,
         remoteDocumentTokenRequired: remoteDocumentToken !== null,
       },
@@ -1254,93 +1091,6 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
       packageName: options.packageName,
     });
     res.json(updateStatus);
-  });
-
-  app.get("/api/directories", (req, res) => {
-    const requestedPath =
-      typeof req.query.path === "string" && req.query.path.trim().length > 0
-        ? path.resolve(req.query.path)
-        : homeDir;
-
-    if (!isExistingDirectory(requestedPath)) {
-      res.status(404).json({ error: "Directory not found" });
-      return;
-    }
-
-    res.json(listDirectories(requestedPath));
-  });
-
-  app.get("/api/fs/list", (req, res) => {
-    const requestedPath =
-      typeof req.query.path === "string" && req.query.path.trim().length > 0
-        ? path.resolve(req.query.path)
-        : homeDir;
-
-    if (!fs.existsSync(requestedPath)) {
-      res.status(404).json({ error: "Directory not found" });
-      return;
-    }
-
-    if (!isExistingDirectory(requestedPath)) {
-      res.status(400).json({ error: "Path is not a directory" });
-      return;
-    }
-
-    try {
-      res.json(listFileSystem(requestedPath, homeDir));
-    } catch (error) {
-      const message =
-        error instanceof Error
-          ? error.message
-          : "Failed to read directory listing";
-      res.status(500).json({ error: message });
-    }
-  });
-
-  app.get("/api/file-tree", (req, res) => {
-    const projectDir = projectDirFromRequest(req, res);
-    if (!projectDir) return;
-
-    res.json(listProjectTree(projectDir));
-  });
-
-  app.post("/api/project/open", (req, res) => {
-    const requestedPath =
-      typeof req.body?.path === "string" ? req.body.path.trim() : "";
-    if (!requestedPath) {
-      res.status(400).json({ error: "path is required" });
-      return;
-    }
-
-    const absolutePath = path.resolve(requestedPath);
-    if (!isExistingDirectory(absolutePath)) {
-      res.status(404).json({ error: "Directory not found" });
-      return;
-    }
-
-    res.json({
-      backend: "local-files",
-      projectDir: absolutePath,
-      port,
-    });
-  });
-
-  app.post("/api/project/create", (req, res) => {
-    const requestedPath =
-      typeof req.body?.path === "string" ? req.body.path.trim() : "";
-    if (!requestedPath) {
-      res.status(400).json({ error: "path is required" });
-      return;
-    }
-
-    const absolutePath = path.resolve(requestedPath);
-    ensureDirectoryExists(absolutePath);
-
-    res.status(201).json({
-      backend: "local-files",
-      projectDir: absolutePath,
-      port,
-    });
   });
 
   app.get("/api/files", (req, res) => {

@@ -3219,7 +3219,6 @@ describe("runCli open in remote mode", () => {
     close: () => Promise<void>;
   }> {
     const { app } = createApp({
-      homeDir: tempDir,
       remoteDocumentToken,
       staticDirPath: tempDir,
     });
