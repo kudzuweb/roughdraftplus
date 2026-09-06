@@ -612,12 +612,26 @@ describe("Homepage", () => {
       'This should go above "It\'s just Markdown."',
     );
     expect(storyboard.textContent).toContain("Nora");
-    expect(storyboard.textContent).toContain(
-      'Replace: "agent\'s plan" with "homepage plan"',
+
+    const reviewRail = getByTestId(storyboard, "homepage-workflow-review-rail");
+    const suggestionDeletedText = getByTestId(
+      reviewRail,
+      "suggestion-thread-nora-suggestion-deleted-text",
     );
-    expect(
-      getByTestId(storyboard, "homepage-workflow-review-rail").textContent,
-    ).not.toContain("AI");
+    const suggestionInsertedText = getByTestId(
+      reviewRail,
+      "suggestion-thread-nora-suggestion-inserted-text",
+    );
+    const reviewRailText = reviewRail.textContent ?? "";
+    expect(suggestionDeletedText.tagName).toBe("DEL");
+    expect(suggestionDeletedText.textContent).toBe("Review an agent's plan");
+    expect(suggestionInsertedText.tagName).toBe("INS");
+    expect(suggestionInsertedText.textContent).toBe("Review a homepage plan");
+    expect(reviewRailText.indexOf("Review an agent's plan")).toBeLessThan(
+      reviewRailText.indexOf("Review a homepage plan"),
+    );
+    expect(reviewRailText).not.toContain("Replace:");
+    expect(reviewRailText).not.toContain("AI");
     expect(
       getByTestId(storyboard, "homepage-workflow-agent-resume").getAttribute(
         "data-terminal-line-visible",

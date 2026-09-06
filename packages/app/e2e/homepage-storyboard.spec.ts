@@ -196,7 +196,21 @@ test.describe("homepage workflow storyboard", () => {
     ).not.toContainText("AI");
     await expect(
       roughdraftPopup.getByTestId("homepage-workflow-review-rail"),
-    ).toContainText('Replace: "agent\'s plan" with "homepage plan"');
+    ).not.toContainText("Replace:");
+    const suggestionDeletedText = roughdraftPopup.getByTestId(
+      "suggestion-thread-nora-suggestion-deleted-text",
+    );
+    const suggestionInsertedText = roughdraftPopup.getByTestId(
+      "suggestion-thread-nora-suggestion-inserted-text",
+    );
+    await expect(suggestionDeletedText).toHaveText("Review an agent's plan");
+    await expect(suggestionInsertedText).toHaveText("Review a homepage plan");
+    expect(
+      await suggestionDeletedText.evaluate((element) => element.tagName),
+    ).toBe("DEL");
+    expect(
+      await suggestionInsertedText.evaluate((element) => element.tagName),
+    ).toBe("INS");
     await expect
       .poll(async () =>
         storyboard.evaluate((element) => {
