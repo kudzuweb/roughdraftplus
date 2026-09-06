@@ -15,6 +15,7 @@ import {
   type MutableRefObject,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -705,6 +706,37 @@ function CommentThreadNode({
       isEditing,
       defaultActions: defaultVisibleActions,
     }) ?? defaultVisibleActions;
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const previousApprovalStateRef = useRef<CommentApprovalState>(approvalState);
+
+  useLayoutEffect(() => {
+    const previousApprovalState = previousApprovalStateRef.current;
+    previousApprovalStateRef.current = approvalState;
+
+    // Each step of the approve swap unmounts the control that was activated,
+    // which would drop keyboard focus to the body; hand it to the control
+    // that replaced it.
+    if (previousApprovalState === approvalState) return;
+
+    const focusActionKey =
+      approvalState === "confirming"
+        ? "approve-confirm"
+        : approvalState === "pending"
+          ? "unapprove"
+          : approvalState === "available" &&
+              (previousApprovalState === "confirming" ||
+                previousApprovalState === "pending")
+            ? "approve"
+            : null;
+    if (!focusActionKey) return;
+
+    nodeRef.current
+      ?.querySelector<HTMLElement>(
+        `[data-testid="comment-${variant}-${comment.id}-action-${focusActionKey}"]`,
+      )
+      ?.focus();
+  }, [approvalState, comment.id, variant]);
+
   const ancestorGuideOffsets = parentLines.reduce<number[]>(
     (offsets, showLine, guideIndex) => {
       if (showLine) {
@@ -717,6 +749,7 @@ function CommentThreadNode({
 
   return (
     <div
+      ref={nodeRef}
       data-testid={`comment-${variant}-${comment.id}`}
       data-comment-thread-root-id={isRootThread ? comment.id : undefined}
       tabIndex={interactive && isRootThread ? 0 : undefined}

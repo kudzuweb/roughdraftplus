@@ -1,4 +1,4 @@
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -371,5 +371,97 @@ describe("CommentEditorList approve action", () => {
     );
 
     expect(onApproveComment).toHaveBeenCalledWith("a1");
+  });
+});
+
+function ApprovalHarness({
+  onApproveComment,
+}: {
+  onApproveComment: (commentId: string) => void;
+}) {
+  const [pendingApprovalCommentIds, setPendingApprovalCommentIds] = useState<
+    string[]
+  >([]);
+
+  return (
+    <TooltipProvider>
+      <CommentEditorList
+        comments={createAgentThread()}
+        variant="rail"
+        pendingApprovalCommentIds={pendingApprovalCommentIds}
+        onApproveComment={(commentId) => {
+          setPendingApprovalCommentIds((current) => [...current, commentId]);
+          onApproveComment(commentId);
+        }}
+        onRevokeApproval={(commentId) => {
+          setPendingApprovalCommentIds((current) =>
+            current.filter((pendingId) => pendingId !== commentId),
+          );
+        }}
+        onDeleteComment={vi.fn()}
+        onUpdateComment={vi.fn()}
+        onReplyComment={vi.fn()}
+      />
+    </TooltipProvider>
+  );
+}
+
+describe("CommentEditorList approve focus", () => {
+  let container: HTMLDivElement;
+  let root: Root;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+  });
+
+  it("keeps keyboard focus on the approve controls through confirm, cancel, and undo", async () => {
+    const onApproveComment = vi.fn();
+    await act(async () => {
+      root.render(<ApprovalHarness onApproveComment={onApproveComment} />);
+    });
+
+    const approveButton = getByTestId(
+      container,
+      "comment-rail-a2-action-approve",
+    );
+    approveButton.focus();
+    await click(approveButton);
+
+    expect(document.activeElement).toBe(
+      getByTestId(container, "comment-rail-a2-action-approve-confirm"),
+    );
+
+    await click(
+      getByTestId(container, "comment-rail-a2-action-approve-cancel"),
+    );
+
+    expect(document.activeElement).toBe(
+      getByTestId(container, "comment-rail-a2-action-approve"),
+    );
+
+    await click(getByTestId(container, "comment-rail-a2-action-approve"));
+    await click(
+      getByTestId(container, "comment-rail-a2-action-approve-confirm"),
+    );
+
+    expect(onApproveComment).toHaveBeenCalledWith("a2");
+    expect(document.activeElement).toBe(
+      getByTestId(container, "comment-rail-a2-action-unapprove"),
+    );
+
+    await click(getByTestId(container, "comment-rail-a2-action-unapprove"));
+
+    expect(document.activeElement).toBe(
+      getByTestId(container, "comment-rail-a2-action-approve"),
+    );
   });
 });
