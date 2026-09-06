@@ -80,6 +80,16 @@ The highlighted text is the visible anchor. Implementations SHOULD attach all im
 
 A standalone highlight is valid CriticMarkup. Roughdraft 0.1 reserves it as review syntax, but standalone highlights are not required to produce a review-thread item unless an implementation explicitly supports highlight-only annotations.
 
+### Disposable Anchors
+
+A comment must anchor on some text, so when nothing in the document is a natural anchor a writer may add a sentence written only to carry the thread. The comment marks that sentence as filler with `anchor="disposable"`:
+
+```markdown
+{==Placeholder for the pricing decision.==}{>>Which tier ships first?<<}{id="c1" by="AI" at="2026-04-28T12:00:00.000Z" anchor="disposable"}
+```
+
+When a comment carrying `anchor="disposable"` is removed and no comment remains on its anchor, an implementation MUST remove the anchor text with it. While any comment still references the anchor, including a reply to the flagged comment, the anchor text stays. Removing a comment without the flag leaves its anchor text in place as plain prose. A writer SHOULD put the flag on the root comment of the thread, and MUST NOT put it on a comment whose anchor is real document text.
+
 ## Suggestions
 
 Suggestions represent pending edits. Implementations MUST NOT silently collapse suggestions into normal prose while reading or writing Roughdraft Flavored Markdown.
@@ -144,6 +154,7 @@ Known metadata attributes:
 | `by` | Comments and suggestions | Yes | Author or agent label. `AI` identifies an agent author. |
 | `at` | Comments and suggestions | Yes | ISO 8601 timestamp. |
 | `re` | Comments | No | Parent comment or suggestion id for threaded replies. |
+| `anchor` | Comments | No | `disposable` marks the anchor text as filler written only to carry the thread, removed with the last comment on it. See [Disposable Anchors](#disposable-anchors). |
 | `status` | Comments and suggestions | No | Review state. Roughdraft currently writes `resolved` when an item has been addressed. |
 | `resolved` | Comments and suggestions | No | Optional short resolution summary for an item whose `status` is `resolved`. |
 
