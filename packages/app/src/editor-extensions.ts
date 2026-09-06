@@ -14,9 +14,8 @@ import type {
   Mark as ProseMirrorMark,
   Node as ProseMirrorNode,
 } from "@tiptap/pm/model";
-import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import type { Transaction } from "@tiptap/pm/state";
-import type { EditorView } from "@tiptap/pm/view";
 import type { Transform } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ReactNodeViewRenderer } from "@tiptap/react";
@@ -976,31 +975,6 @@ function firstDroppedProtectedBlockPos(
 }
 
 /**
- * Marks the refusal on the placeholder and moves the caret clear of it.
- *
- * Refusing the deletion is not enough on its own. The selection that spanned
- * the block is still there afterwards, so the next character the reader types
- * is another replacement of that same range, refused in turn, and so is the one
- * after it: everything they write disappears while the note explains only the
- * table. Collapsing to a caret just past the block turns the refusal into a
- * single event the reader can type straight through.
- */
-function releaseSelection(view: EditorView, refusedPos: number): void {
-  const tr = view.state.tr.setMeta(rawMarkdownBlockGuardPluginKey, {
-    refusedPos,
-  });
-  const node = view.state.doc.nodeAt(refusedPos);
-
-  if (node) {
-    tr.setSelection(
-      TextSelection.near(view.state.doc.resolve(refusedPos + node.nodeSize), 1),
-    );
-  }
-
-  view.dispatch(tr);
-}
-
-/**
  * Keeps a protected block from leaving the document through rich text. The
  * placeholder is clickable, so a selected atom would take its Markdown with it
  * on Backspace, Delete, the next character typed, a cut or a paste, and
@@ -1065,7 +1039,11 @@ const RawMarkdownBlockGuard = Extension.create({
           // the block in the document that stays. Both of these have to wait
           // until this dispatch has finished.
           queueMicrotask(() => {
-            releaseSelection(editor.view, refusedPos);
+            editor.view.dispatch(
+              editor.state.tr.setMeta(rawMarkdownBlockGuardPluginKey, {
+                refusedPos,
+              }),
+            );
           });
           return false;
         },
