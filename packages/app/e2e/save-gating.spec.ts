@@ -7,6 +7,7 @@ import { expect, type Page, test } from "@playwright/test";
 import { createApp } from "../../server/src/index";
 import {
   createMarkdownProject,
+  fileConflictNotice,
   openMarkdownFile,
   readProjectFile,
   removeMarkdownProject,
@@ -255,6 +256,9 @@ test.describe("save gating", () => {
       await page.keyboard.type(" typed against a replaced server");
       await expect(richTextEditor(page)).toContainText(
         "typed against a replaced server",
+      );
+      await expect(fileConflictNotice(page)).toContainText(
+        "Roughdraft server stopped",
       );
       await settleAutosave(page);
 
