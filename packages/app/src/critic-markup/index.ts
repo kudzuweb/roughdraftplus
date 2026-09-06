@@ -427,6 +427,13 @@ function commentTextLivesInEndmatter(
   parsed: ParsedEndmatter,
 ): boolean {
   if (comment.scope === "document") return true;
+  // Only a document-level comment and a reply get a `body` from
+  // endmatterEntryForComment. Anything else would leave an entry holding
+  // neither text nor a reference, and splitYamlDocumentMetadata rejects a
+  // comments map that no `{#id}` in the body names, so the block would come
+  // back as a horizontal rule and literal YAML. The metadata is written inline
+  // in that case, so dropping the entry loses nothing.
+  if (!comment.parentCommentId) return false;
   const entry = parsed.comments.get(comment.id);
   return entry !== undefined && !isCompactReferenceEntry(entry);
 }

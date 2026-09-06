@@ -298,6 +298,37 @@ describe("CriticMarkup comments", () => {
     expect(output).not.toContain("{#c1}");
   });
 
+  it("drops a textless endmatter entry rather than writing a block the reader rejects", () => {
+    // Malformed input no writer produces: the entry carries a body while the
+    // body still references it compactly. Saving it moves the metadata inline,
+    // which leaves the entry with neither text nor a reference to point at, and
+    // splitYamlDocumentMetadata rejects a comments map no `{#id}` names.
+    const bodyAndReferenceMarkdown = [
+      "Please revisit {==this claim==}{>>Needs a source.<<}{#c1}.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      "    body: Needs a source.",
+      "    by: user",
+      '    at: "2026-04-28T12:00:00.000Z"',
+      "",
+    ].join("\n");
+    const { doc, comments } = criticMarkdownToEditorState(
+      bodyAndReferenceMarkdown,
+    );
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain(
+      '{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}',
+    );
+    expect(output).not.toContain("comments:");
+    expect(
+      criticMarkdownToEditorState(output).comments.get("c1"),
+    ).toMatchObject({ id: "c1", content: "Needs a source." });
+  });
+
   it("leaves inline attributes inline when the endmatter holds a document-level comment", () => {
     const { doc, comments } = criticMarkdownToEditorState(
       inlineAttributeOverallCommentMarkdown,
