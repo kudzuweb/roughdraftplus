@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { Editor } from "@tiptap/core";
 import {
   createCriticChange,
+  createCriticComment,
   createNextChangeId,
   createNextCommentId,
   criticMarkdownHasReviewRail,
@@ -790,6 +791,86 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
         { changeId: "s7" },
       ]),
     ).toBe("s8");
+  });
+
+  it("never reuses a comment id after every thread has been cleared", () => {
+    const commentEntries = Array.from({ length: 9 }, (_, index) => [
+      `  c${index + 1}:`,
+      `    body: Thread ${index + 1}.`,
+      "    by: user",
+      `    at: "2026-05-24T10:0${index}:00.000Z"`,
+    ]).flat();
+    const input = [
+      "# Draft",
+      "",
+      "Body text.",
+      "",
+      "---",
+      "comments:",
+      ...commentEntries,
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    expect([...loaded.comments.keys()]).toEqual([
+      "c1",
+      "c2",
+      "c3",
+      "c4",
+      "c5",
+      "c6",
+      "c7",
+      "c8",
+      "c9",
+    ]);
+
+    const cleared = editorStateToCriticMarkdown(loaded.doc, new Map(), {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(cleared);
+    expect(reloaded.comments.size).toBe(0);
+
+    const comment = createCriticComment(undefined, {
+      existingComments: reloaded.comments.values(),
+      idCounters: reloaded.idCounters,
+    });
+
+    expect(comment.id).toBe("c10");
+  });
+
+  it("never reuses a suggestion id after every suggestion has been cleared", () => {
+    const input = [
+      "Add {++one++}{#s1}, {++two++}{#s2}, and {++three++}{#s3}.",
+      "",
+      "---",
+      "suggestions:",
+      "  s1:",
+      "    by: AI",
+      '    at: "2026-05-24T10:00:00.000Z"',
+      "  s2:",
+      "    by: AI",
+      '    at: "2026-05-24T10:01:00.000Z"',
+      "  s3:",
+      "    by: AI",
+      '    at: "2026-05-24T10:02:00.000Z"',
+      "",
+    ].join("\n");
+
+    const loaded = criticMarkdownToEditorState(input);
+    const plain = criticMarkdownToEditorState("Add.\n");
+    const cleared = editorStateToCriticMarkdown(plain.doc, new Map(), {
+      endmatter: loaded.endmatter,
+      idCounters: loaded.idCounters,
+    });
+    const reloaded = criticMarkdownToEditorState(cleared);
+
+    const change = createCriticChange("addition", undefined, {
+      existingChanges: [],
+      idCounters: reloaded.idCounters,
+    });
+
+    expect(change.changeId).toBe("s4");
   });
 
   it("round-trips an insertion suggestion with metadata", () => {
