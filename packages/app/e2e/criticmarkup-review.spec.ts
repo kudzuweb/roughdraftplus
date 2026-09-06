@@ -403,6 +403,7 @@ test.describe("CriticMarkup review flows", () => {
     expect(readProjectFile(projectDir, relativePath)).toContain("{++");
     expect(readProjectFile(projectDir, relativePath)).toContain("{~~");
 
+    await expect(page.getByTestId("review-handoff-button")).toBeVisible();
     await page.getByTestId("review-handoff-button").click();
     await expect(page.getByTestId("review-handoff-status")).toContainText(
       "Your agent is now working",
