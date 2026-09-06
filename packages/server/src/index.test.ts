@@ -1323,9 +1323,7 @@ describe("createApp", () => {
   describe("open-document registry", () => {
     async function listen(app: ReturnType<typeof createApp>["app"]) {
       const server = await new Promise<Server>((resolve) => {
-        const listening = app.listen(0, "127.0.0.1", () =>
-          resolve(listening),
-        );
+        const listening = app.listen(0, "127.0.0.1", () => resolve(listening));
       });
       return {
         port: (server.address() as AddressInfo).port,
@@ -1368,11 +1366,13 @@ describe("createApp", () => {
 
       try {
         const tab = await subscribeTab(port, documentPath);
-        const response = await request(app).post("/api/open-request").send({
-          path: documentPath,
-          url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(documentPath)}&label=build-15`,
-          label: "build-15",
-        });
+        const response = await request(app)
+          .post("/api/open-request")
+          .send({
+            path: documentPath,
+            url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(documentPath)}&label=build-15`,
+            label: "build-15",
+          });
         expect(response.body).toEqual({ delivered: true });
 
         const event = await tab.nextEvent();
@@ -1394,11 +1394,13 @@ describe("createApp", () => {
 
       try {
         const tab = await subscribeTab(port, documentPath);
-        await request(app).post("/api/open-request").send({
-          path: documentPath,
-          url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(documentPath)}`,
-          label: "   ",
-        });
+        await request(app)
+          .post("/api/open-request")
+          .send({
+            path: documentPath,
+            url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(documentPath)}`,
+            label: "   ",
+          });
 
         const event = await tab.nextEvent();
         expect(event.data).toMatchObject({ path: documentPath, label: null });
@@ -1454,17 +1456,21 @@ describe("createApp", () => {
         await homeReader.read();
         const reviewingTab = await subscribeTab(port, reviewingPath);
 
-        await request(app).post("/api/open-request").send({
-          path: otherPath,
-          url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(otherPath)}`,
-        });
+        await request(app)
+          .post("/api/open-request")
+          .send({
+            path: otherPath,
+            url: `http://127.0.0.1:${port}/?path=${encodeURIComponent(otherPath)}`,
+          });
 
         const event = await reviewingTab.nextEvent();
         expect(event.data).toMatchObject({ path: otherPath, label: null });
 
         // The homepage tab gets nothing before the next keep-alive comment.
         const homeNext = await Promise.race([
-          homeReader.read().then(({ value }) => new TextDecoder().decode(value)),
+          homeReader
+            .read()
+            .then(({ value }) => new TextDecoder().decode(value)),
           new Promise<string>((resolve) =>
             setTimeout(() => resolve("<nothing>"), 200),
           ),
