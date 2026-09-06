@@ -82,12 +82,68 @@ interface CriticChangeToken {
 }
 
 const extensions = createEditorExtensions("");
-const criticCommentAnchorPattern = /^\{==([\s\S]+?)==\}/;
-const criticCommentBlockPattern =
-  /^\{>>([\s\S]*?)<<\}(?:(\{@([\s\S]+?)@\})|(\{(?:\s*[A-Za-z][A-Za-z0-9_-]*="(?:\\[\s\S]|[^"\\])*")+\s*\})|(\{#[A-Za-z][A-Za-z0-9_-]*\}))?/;
-const criticAdditionPattern = /^\{\+\+([\s\S]+?)\+\+\}/;
-const criticDeletionPattern = /^\{--([\s\S]+?)--\}/;
-const criticSubstitutionPattern = /^\{~~([\s\S]+?)~>([\s\S]+?)~~\}/;
+// Text written between review delimiters would otherwise reopen or close the
+// marker holding it, so every delimiter is written with a leading backslash and
+// read back without it. A comment body is a plain string and unescapes through
+// `unescapeCriticMarkupText`. Marker text is Markdown and stays escaped through
+// the lexer, which both consumes the escapes and keeps a typed delimiter from
+// becoming a marker. The lexer consumes those escapes, but not all of them:
+// `unescapeInertMarkerTokens` strips the ones that survive it, without which
+// the next save escaped them again and the backslashes doubled on every save.
+const criticDelimiterEscapePattern =
+  /\\|\{==|==\}|\{>>|<<\}|\{\+\+|\+\+\}|\{--|--\}|\{~~|~~\}|~>/g;
+const criticDelimiterUnescapePattern =
+  /\\(\\|\{==|==\}|\{>>|<<\}|\{\+\+|\+\+\}|\{--|--\}|\{~~|~~\}|~>)/g;
+// Scanning for a marker's closing delimiter treats a backslash as covering the
+// character after it, which is what makes an escaped delimiter literal. A
+// document written before escaping existed can end a marker's text with a bare
+// backslash, and that scan reads it as escaping the close. Each marker
+// therefore has a legacy form as well, which reads every backslash as ordinary
+// text, tried when the escape-aware form does not match. Both forms come from
+// one shape so they cannot drift.
+//
+// What bounds the escape-aware form is that a marker's text cannot contain an
+// unescaped opening delimiter: an unescaped opener is another marker starting,
+// so the text ended before it. Without that bound the scan ran on to a later
+// marker's closing delimiter and the first marker swallowed everything between,
+// taking the marker in between with it. The bound never fires on a document
+// this format wrote, because every opener in its marker text is escaped.
+const markerOpenerAlternatives = String.raw`\{==|\{>>|\{\+\+|\{--|\{~~`;
+const markerTextAtom = String.raw`(?:\\[\s\S]|(?!${markerOpenerAlternatives})[^\\])`;
+const legacyMarkerTextAtom = String.raw`[\s\S]`;
+
+interface MarkerPattern {
+  escaped: RegExp;
+  legacy: RegExp;
+}
+
+function markerPattern(build: (textAtom: string) => string): MarkerPattern {
+  return {
+    escaped: new RegExp(build(markerTextAtom)),
+    legacy: new RegExp(build(legacyMarkerTextAtom)),
+  };
+}
+
+function matchMarker(src: string, pattern: MarkerPattern) {
+  return src.match(pattern.escaped) ?? src.match(pattern.legacy);
+}
+
+const criticCommentAnchorPattern = markerPattern(
+  (text) => String.raw`^\{==(${text}+?)==\}`,
+);
+const criticCommentBlockPattern = markerPattern(
+  (text) =>
+    String.raw`^\{>>(${text}*?)<<\}(?:(\{@([\s\S]+?)@\})|(\{(?:\s*[A-Za-z][A-Za-z0-9_-]*="(?:\\[\s\S]|[^"\\])*")+\s*\})|(\{#[A-Za-z][A-Za-z0-9_-]*\}))?`,
+);
+const criticAdditionPattern = markerPattern(
+  (text) => String.raw`^\{\+\+(${text}+?)\+\+\}`,
+);
+const criticDeletionPattern = markerPattern(
+  (text) => String.raw`^\{--(${text}+?)--\}`,
+);
+const criticSubstitutionPattern = markerPattern(
+  (text) => String.raw`^\{~~(${text}+?)~>(${text}+?)~~\}`,
+);
 const attributeMetadataBlockPattern =
   /^\{(?:\s*[A-Za-z][A-Za-z0-9_-]*="(?:\\[\s\S]|[^"\\])*")+\s*\}/;
 const metadataAttributePattern =
@@ -100,6 +156,94 @@ interface ParsedEndmatter {
   suggestions: Map<string, Record<string, unknown>>;
   counters: ReviewIdCounters;
   data: Record<string, unknown> | null;
+}
+
+export function escapeCriticMarkupText(text: string): string {
+  return text.replace(criticDelimiterEscapePattern, "\\$&");
+}
+
+export function unescapeCriticMarkupText(text: string): string {
+  return text.replace(criticDelimiterUnescapePattern, "$1");
+}
+
+function isAutolinkToken(token: Tokens.Link): boolean {
+  return token.raw.startsWith("<") && token.raw.endsWith(">");
+}
+
+// Marker text is lexed while still escaped, which is what keeps a delimiter the
+// reviewer typed from becoming a marker, and the lexer consumes the escapes as
+// it goes. It does not consume all of them, and the ones that survive have two
+// separate causes, so a reader that enumerates only the first misses the rest:
+//
+//  - Markdown leaves a backslash alone in a code span, an autolink and raw
+//    HTML, so text taken from those still carries this format's escapes.
+//  - `createTurndownService` escapes backslashes itself when it writes a quoted
+//    link or image title, and this format's escape then escapes that. Reading
+//    peels the serializer's layer and leaves this one.
+//
+// Either way a backslash survives into the next save, which escapes it again
+// and doubles it. Both are stripped here. Every other token has already had its
+// escapes consumed, and unescaping it a second time would eat a backslash the
+// reviewer typed.
+//
+// Two of the branches below cannot be covered by a test today, for opposite
+// reasons, and the difference is why one is absent and one is present:
+//
+//  - Raw HTML is on the first list and has no branch. Its content is destroyed
+//    before it ever reaches the writer, so unescaping it could not change a
+//    byte of any output, under this editor or a later one.
+//  - An image title has a branch that no test can reach. An image title is
+//    written back intact on every save; only the image's position changes,
+//    because the editor lifts an inline image out of its paragraph and so
+//    carries it out of the marker, and marker text is the only input this walk
+//    ever sees. Fix that and an image title behaves exactly like a link title,
+//    which does double without this branch. Deleting it as dead code would
+//    reintroduce that doubling through a change that looks unrelated.
+function unescapeInertMarkerTokens(tokens: Token[]): Token[] {
+  for (const token of tokens) {
+    if (token.type === "codespan") {
+      token.text = unescapeCriticMarkupText(token.text);
+      continue;
+    }
+
+    if (token.type === "image") {
+      const image = token as Tokens.Image;
+      if (image.title) {
+        image.title = unescapeCriticMarkupText(image.title);
+      }
+      continue;
+    }
+
+    if (token.type === "link") {
+      const link = token as Tokens.Link;
+
+      if (isAutolinkToken(link)) {
+        link.href = unescapeCriticMarkupText(link.href);
+        link.text = unescapeCriticMarkupText(link.text);
+        for (const child of link.tokens ?? []) {
+          if (child.type === "text") {
+            child.text = unescapeCriticMarkupText(child.text);
+          }
+        }
+        continue;
+      }
+
+      if (link.title) {
+        link.title = unescapeCriticMarkupText(link.title);
+      }
+    }
+
+    const childTokens = (token as Tokens.Generic).tokens;
+    if (Array.isArray(childTokens)) {
+      unescapeInertMarkerTokens(childTokens);
+    }
+  }
+
+  return tokens;
+}
+
+function lexMarkerText(lexer: TokenizerThis["lexer"], text: string): Token[] {
+  return unescapeInertMarkerTokens(lexer.inlineTokens(text));
 }
 
 function escapeHtml(value: string): string {
@@ -809,7 +953,7 @@ function serializeCommentBlocks(
   let result = "";
 
   for (const comment of orderedComments) {
-    result += `{>>${comment.content}<<}${
+    result += `{>>${escapeCriticMarkupText(comment.content)}<<}${
       useEndmatter ? `{#${comment.id}}` : serializeMetadata(comment)
     }`;
   }
@@ -869,7 +1013,7 @@ function tokenizeCriticCommentAnchor(
       comments: CriticComment[];
     }
   | undefined {
-  const anchorMatch = src.match(criticCommentAnchorPattern);
+  const anchorMatch = matchMarker(src, criticCommentAnchorPattern);
 
   if (!anchorMatch) return undefined;
 
@@ -879,7 +1023,7 @@ function tokenizeCriticCommentAnchor(
   const parsedComments: CriticComment[] = [];
 
   while (offset < src.length) {
-    const nextMatch = src.slice(offset).match(criticCommentBlockPattern);
+    const nextMatch = matchMarker(src.slice(offset), criticCommentBlockPattern);
     if (!nextMatch) break;
 
     const [
@@ -899,7 +1043,7 @@ function tokenizeCriticCommentAnchor(
           endmatter,
           "comment",
         ),
-        content: commentText,
+        content: unescapeCriticMarkupText(commentText),
       },
       [...existingComments, ...parsedComments],
     );
@@ -915,7 +1059,7 @@ function tokenizeCriticCommentAnchor(
       type: "criticCommentAnchor",
       raw,
       commentIds: parsedComments.map((comment) => comment.id),
-      tokens: lexer.inlineTokens(anchor),
+      tokens: lexMarkerText(lexer, anchor),
     },
     comments: parsedComments,
   };
@@ -956,7 +1100,10 @@ function tokenizeCriticCommentBlocks(
   const parsedComments: CriticComment[] = [];
 
   while (nextOffset < src.length) {
-    const nextMatch = src.slice(nextOffset).match(criticCommentBlockPattern);
+    const nextMatch = matchMarker(
+      src.slice(nextOffset),
+      criticCommentBlockPattern,
+    );
     if (!nextMatch) break;
 
     const [
@@ -976,7 +1123,7 @@ function tokenizeCriticCommentBlocks(
           endmatter,
           "comment",
         ),
-        content: commentText,
+        content: unescapeCriticMarkupText(commentText),
       },
       [...existingComments, ...parsedComments],
     );
@@ -1032,7 +1179,7 @@ function tokenizeCriticChange(
       comments: CriticComment[];
     }
   | undefined {
-  const additionMatch = src.match(criticAdditionPattern);
+  const additionMatch = matchMarker(src, criticAdditionPattern);
 
   if (additionMatch) {
     const [, text] = additionMatch;
@@ -1055,13 +1202,13 @@ function tokenizeCriticChange(
         raw: additionMatch[0] + metadata.raw + trailingComments.raw,
         change,
         commentIds: trailingComments.comments.map((comment) => comment.id),
-        tokens: lexer.inlineTokens(text),
+        tokens: lexMarkerText(lexer, text),
       },
       comments: trailingComments.comments,
     };
   }
 
-  const deletionMatch = src.match(criticDeletionPattern);
+  const deletionMatch = matchMarker(src, criticDeletionPattern);
 
   if (deletionMatch) {
     const [, text] = deletionMatch;
@@ -1084,13 +1231,13 @@ function tokenizeCriticChange(
         raw: deletionMatch[0] + metadata.raw + trailingComments.raw,
         change,
         commentIds: trailingComments.comments.map((comment) => comment.id),
-        tokens: lexer.inlineTokens(text),
+        tokens: lexMarkerText(lexer, text),
       },
       comments: trailingComments.comments,
     };
   }
 
-  const substitutionMatch = src.match(criticSubstitutionPattern);
+  const substitutionMatch = matchMarker(src, criticSubstitutionPattern);
 
   if (substitutionMatch) {
     const [, oldText, newText] = substitutionMatch;
@@ -1116,8 +1263,8 @@ function tokenizeCriticChange(
         raw: substitutionMatch[0] + metadata.raw + trailingComments.raw,
         change,
         commentIds: trailingComments.comments.map((comment) => comment.id),
-        oldTokens: lexer.inlineTokens(oldText),
-        newTokens: lexer.inlineTokens(newText),
+        oldTokens: lexMarkerText(lexer, oldText),
+        newTokens: lexMarkerText(lexer, newText),
       },
       comments: trailingComments.comments,
     };
@@ -1157,7 +1304,10 @@ function renderCriticCodeText(
   let offset = 0;
 
   while (offset < text.length) {
-    const anchorMatch = text.slice(offset).match(criticCommentAnchorPattern);
+    const anchorMatch = matchMarker(
+      text.slice(offset),
+      criticCommentAnchorPattern,
+    );
 
     if (!anchorMatch || anchorMatch.index !== 0) {
       result += escapeHtml(text[offset] ?? "");
@@ -1170,9 +1320,10 @@ function renderCriticCodeText(
     const parsedComments: CriticComment[] = [];
 
     while (nextOffset < text.length) {
-      const commentMatch = text
-        .slice(nextOffset)
-        .match(criticCommentBlockPattern);
+      const commentMatch = matchMarker(
+        text.slice(nextOffset),
+        criticCommentBlockPattern,
+      );
       if (!commentMatch) break;
 
       const [
@@ -1192,7 +1343,7 @@ function renderCriticCodeText(
             endmatter,
             "comment",
           ),
-          content: commentText,
+          content: unescapeCriticMarkupText(commentText),
         },
         [...comments.values(), ...parsedComments],
       );
@@ -1212,7 +1363,7 @@ function renderCriticCodeText(
 
     result += `<span data-comment-ids="${escapeHtml(
       JSON.stringify(parsedComments.map((comment) => comment.id)),
-    )}">${escapeHtml(anchor)}</span>`;
+    )}">${escapeHtml(unescapeCriticMarkupText(anchor))}</span>`;
     offset = nextOffset;
   }
 
@@ -1279,7 +1430,7 @@ function addCriticCommentRule(
       if (!commentBlocks) return content;
       if (content === unanchoredCommentSentinel) return commentBlocks;
 
-      return `{==${content}==}${commentBlocks}`;
+      return `{==${escapeCriticMarkupText(content)}==}${commentBlocks}`;
     },
   });
 }
@@ -1394,6 +1545,7 @@ function serializeCriticChangeElement(
 
   if (!change) return content;
 
+  const markerText = escapeCriticMarkupText(content);
   const commentBlocks = getChangeCommentBlocks(
     element,
     comments,
@@ -1405,11 +1557,11 @@ function serializeCriticChangeElement(
     : serializeChangeMetadata(change);
 
   if (change.kind === "addition") {
-    return `{++${content}++}${metadata}${commentBlocks}`;
+    return `{++${markerText}++}${metadata}${commentBlocks}`;
   }
 
   if (change.kind === "deletion") {
-    return `{--${content}--}${metadata}${commentBlocks}`;
+    return `{--${markerText}--}${metadata}${commentBlocks}`;
   }
 
   if (change.kind === "substitution-new") {
@@ -1419,7 +1571,7 @@ function serializeCriticChangeElement(
       change.changeId,
     )
       ? ""
-      : `{++${content}++}${
+      : `{++${markerText}++}${
           useEndmatter
             ? `{#${change.changeId}}`
             : serializeChangeMetadata({
@@ -1439,11 +1591,13 @@ function serializeCriticChangeElement(
       change.changeId,
     )
   ) {
-    const replacement = service.turndown(nextElement.innerHTML).trim();
-    return `{~~${content}~>${replacement}~~}${metadata}${commentBlocks}`;
+    const replacement = escapeCriticMarkupText(
+      service.turndown(nextElement.innerHTML).trim(),
+    );
+    return `{~~${markerText}~>${replacement}~~}${metadata}${commentBlocks}`;
   }
 
-  return `{--${content}--}${
+  return `{--${markerText}--}${
     useEndmatter
       ? `{#${change.changeId}}`
       : serializeChangeMetadata({

@@ -1179,6 +1179,9 @@ function printCriticMarkupHelp(log: (message: string) => void) {
   log(
     "  Never reuse an id the document has used; a `counters` map in final YAML endmatter records removed ids.",
   );
+  log(
+    "  Escape a delimiter the text itself contains with a backslash, so it stays literal: {>>Write \\{>>a note\\<<} to reply.<<}.",
+  );
   log("");
   log("Anchored comment with id:");
   log(
