@@ -1052,4 +1052,90 @@ describe("createApp", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
+
+  it("leaves a markdown file untouched when the saved content is unchanged", async () => {
+    const filePath = path.join(projectDir, "draft.md");
+    const fixedTimestamp = new Date("2026-01-01T00:00:00.000Z");
+    fs.writeFileSync(filePath, "# Draft\n\nUnchanged body.\n");
+    fs.utimesSync(filePath, fixedTimestamp, fixedTimestamp);
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const readResponse = await request(app).get("/api/markdown-file").query({
+      projectPath: projectDir,
+      path: "draft.md",
+    });
+
+    const saveResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "draft.md" })
+      .send({
+        content: "# Draft\n\nUnchanged body.\n",
+        expectedVersion: readResponse.body.version,
+      });
+
+    expect(saveResponse.status).toBe(200);
+    expect(saveResponse.body.version).toBe(readResponse.body.version);
+    expect(fs.statSync(filePath).mtimeMs).toBe(fixedTimestamp.getTime());
+  });
+
+  it("rejects a markdown write from a tab that loaded against a different server instance", async () => {
+    const filePath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(filePath, "# Draft\n");
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const statusResponse = await request(app).get("/api/status");
+    expect(statusResponse.body.instanceId).toEqual(expect.any(String));
+
+    const staleResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "draft.md" })
+      .send({
+        content: "# Written by a stale tab\n",
+        serverInstanceId: "a-server-that-has-since-stopped",
+      });
+
+    expect(staleResponse.status).toBe(410);
+    expect(staleResponse.body).toMatchObject({
+      error: expect.stringContaining("no longer running"),
+    });
+    expect(fs.readFileSync(filePath, "utf-8")).toBe("# Draft\n");
+
+    const liveResponse = await request(app)
+      .put("/api/markdown-file")
+      .query({ projectPath: projectDir, path: "draft.md" })
+      .send({
+        content: "# Written by a live tab\n",
+        serverInstanceId: statusResponse.body.instanceId,
+      });
+
+    expect(liveResponse.status).toBe(200);
+    expect(fs.readFileSync(filePath, "utf-8")).toBe(
+      "# Written by a live tab\n",
+    );
+  });
+
+  it("rejects a review handoff comment from a tab that loaded against a different server instance", async () => {
+    const filePath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(filePath, "# Draft\n");
+    const { app } = createApp({
+      homeDir,
+      staticDirPath: projectDir,
+    });
+
+    const response = await request(app).post("/api/review-events").send({
+      projectPath: projectDir,
+      path: "draft.md",
+      overallComment: "Written by a stale tab.",
+      serverInstanceId: "a-server-that-has-since-stopped",
+    });
+
+    expect(response.status).toBe(410);
+    expect(fs.readFileSync(filePath, "utf-8")).toBe("# Draft\n");
+  });
 });
