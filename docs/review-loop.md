@@ -122,7 +122,12 @@ save still rewrites applies to that file even if it was only ever edited in code
   Done Reviewing the tab does not write until a new review starts. If the server is restarted, the
   tab adopts the replacement and checks the file version first: unsaved edits are kept and saved
   only when the file did not change while the server was away; otherwise the tab shows "File
-  changed on disk" and stops saving until the reviewer decides.
+  changed on disk" and stops saving until the reviewer decides. The blocking `open` survives
+  the same restart: it waits up to `ROUGHDRAFT_WATCH_RECONNECT_SECONDS` (default 60) for the
+  server to answer again on the same port, registers a fresh watch, and Done Reviewing in the
+  tab completes it. If the server does not come back the command exits 1 and names the reopen
+  command; the tab keeps the Done Reviewing button and shows an amber notice under it saying
+  the agent is disconnected and to run `roughdraft open` on the file again.
 
 ## Status
 

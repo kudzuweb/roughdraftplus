@@ -2140,6 +2140,7 @@ export function App() {
         onDismissServerRestartNotice={handleDismissServerRestartNotice}
         documentOpenedElsewhere={documentOpenedElsewhere}
         onDismissDocumentOpenedElsewhere={handleDismissDocumentOpenedElsewhere}
+        onServerInstanceChanged={adoptReplacementServer}
         onCompleteReview={handleCompleteReview}
         backend={backend}
       />

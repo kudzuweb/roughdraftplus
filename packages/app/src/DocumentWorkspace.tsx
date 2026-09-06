@@ -62,8 +62,27 @@ type ReviewHandoffState =
   | "notified"
   | "undelivered"
   | "error";
+type ReviewWatchLoss = "none" | "unreachable" | "no-watcher";
 type FileCopyAction = "path" | "filename" | "markdown" | "rich-text";
 const FILE_COPY_PREVIEW_MAX_LENGTH = 34;
+const REVIEW_WATCH_STATUS_INTERVAL_MS = 1500;
+// A server restart drops the watcher for the few seconds the agent's command
+// takes to reconnect; the notice waits out that gap before naming a loss.
+const REVIEW_WATCH_LOSS_POLLS = 4;
+
+const reviewWatchLossCopy: Record<
+  Exclude<ReviewWatchLoss, "none">,
+  { title: string; body: string }
+> = {
+  unreachable: {
+    title: "Roughdraft server unreachable",
+    body: "This tab reconnects on its own once the server is back.",
+  },
+  "no-watcher": {
+    title: "Agent disconnected",
+    body: "Run roughdraft open on this file again to reconnect it.",
+  },
+};
 const reviewCompleteTitles = [
   "Great work!",
   "Nice one!",
@@ -437,6 +456,7 @@ interface DocumentWorkspaceProps {
   onDismissServerRestartNotice?: () => void;
   documentOpenedElsewhere?: DocumentOpenedElsewhere | null;
   onDismissDocumentOpenedElsewhere?: () => void;
+  onServerInstanceChanged?: () => void;
   onCompleteReview: (
     options?: CompleteReviewOptions,
   ) => Promise<{ delivered: boolean }>;
@@ -465,6 +485,7 @@ export function DocumentWorkspace({
   onDismissServerRestartNotice,
   documentOpenedElsewhere = null,
   onDismissDocumentOpenedElsewhere,
+  onServerInstanceChanged,
   onCompleteReview,
   backend,
 }: DocumentWorkspaceProps) {
@@ -474,6 +495,9 @@ export function DocumentWorkspace({
   const [reviewHandoffState, setReviewHandoffState] =
     useState<ReviewHandoffState>("idle");
   const [reviewWatcherCount, setReviewWatcherCount] = useState(0);
+  const [reviewWatcherSeen, setReviewWatcherSeen] = useState(false);
+  const [reviewWatchLoss, setReviewWatchLoss] =
+    useState<ReviewWatchLoss>("none");
   const [reviewHandoffPopoverOpen, setReviewHandoffPopoverOpen] =
     useState(false);
   const [reviewCompleteTitle, setReviewCompleteTitle] = useState(() =>
@@ -519,6 +543,8 @@ export function DocumentWorkspace({
     documentChangeTrackingReadyRef.current = false;
     setReviewHandoffState("idle");
     setReviewHandoffPopoverOpen(false);
+    setReviewWatcherSeen(false);
+    setReviewWatchLoss("none");
     setDocumentChangedSinceOpen(false);
     const readyTimer = window.setTimeout(() => {
       documentChangeTrackingReadyRef.current = true;
@@ -533,26 +559,53 @@ export function DocumentWorkspace({
     }
 
     let cancelled = false;
+    let lostPolls = 0;
+    const recordLoss = (loss: Exclude<ReviewWatchLoss, "none">) => {
+      lostPolls += 1;
+      if (lostPolls >= REVIEW_WATCH_LOSS_POLLS) {
+        setReviewWatchLoss(loss);
+      }
+    };
     const refreshWatchStatus = async () => {
       try {
         const status = await backend.getReviewWatchStatus?.(activeDocumentPath);
-        if (!cancelled) {
-          setReviewWatcherCount(status?.watcherCount ?? 0);
+        if (cancelled) return;
+        const watcherCount = status?.watcherCount ?? 0;
+        setReviewWatcherCount(watcherCount);
+        if (watcherCount > 0) {
+          lostPolls = 0;
+          setReviewWatcherSeen(true);
+          setReviewWatchLoss("none");
+        } else {
+          recordLoss("no-watcher");
+        }
+        // A tab with nothing to write never hits the 410 that announces a
+        // replacement server, so the poll's answering instance stands in.
+        const knownInstanceId = backend.info.serverInstanceId;
+        if (
+          status?.instanceId &&
+          knownInstanceId &&
+          status.instanceId !== knownInstanceId
+        ) {
+          onServerInstanceChanged?.();
         }
       } catch {
-        if (!cancelled) {
-          setReviewWatcherCount(0);
-        }
+        if (cancelled) return;
+        setReviewWatcherCount(0);
+        recordLoss("unreachable");
       }
     };
 
     void refreshWatchStatus();
-    const interval = window.setInterval(refreshWatchStatus, 1500);
+    const interval = window.setInterval(
+      refreshWatchStatus,
+      REVIEW_WATCH_STATUS_INTERVAL_MS,
+    );
     return () => {
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeDocumentPath, backend]);
+  }, [activeDocumentPath, backend, onServerInstanceChanged]);
 
   useEffect(() => {
     if (reviewHandoffState === "undelivered" && reviewWatcherCount > 0) {
@@ -739,9 +792,21 @@ export function DocumentWorkspace({
     !!documentOpenedElsewhere && !conflictNotice && !showServerRestartNotice;
   const hasTopNotice =
     !!conflictNotice || showServerRestartNotice || showDocumentOpenedElsewhere;
+  // Once an agent has watched this document the button stays through a
+  // watcher drop (a server restart, a reconnecting command); a click with no
+  // watcher lands in the undelivered state, which says what to do.
   const showReviewHandoffButton =
     !!activeDocumentPath &&
-    (reviewWatcherCount > 0 || reviewHandoffState !== "idle");
+    (reviewWatcherCount > 0 ||
+      reviewWatcherSeen ||
+      reviewHandoffState !== "idle");
+  const reviewWatchLossNotice =
+    reviewHandoffState === "idle" &&
+    reviewWatcherSeen &&
+    reviewWatcherCount === 0 &&
+    reviewWatchLoss !== "none"
+      ? reviewWatchLossCopy[reviewWatchLoss]
+      : null;
   const reviewHandoffButtonLabel = getReviewHandoffButtonLabel({
     reviewHandoffState,
     documentChangedSinceOpen,
@@ -760,7 +825,7 @@ export function DocumentWorkspace({
         : reviewCompleteTitle;
   const reviewHandoffStatusBody =
     reviewHandoffState === "undelivered"
-      ? "The handoff was not delivered because the watcher is no longer connected."
+      ? "No agent command is waiting on this document. After a server restart the command reconnects on its own within a minute; otherwise run roughdraft open on this file again, then send the handoff once more."
       : reviewHandoffState === "error"
         ? "Roughdraft could not send the handoff. Check that the local server is still running."
         : null;
@@ -981,6 +1046,19 @@ export function DocumentWorkspace({
             </Popover>
           ) : null}
         </div>
+        {reviewWatchLossNotice ? (
+          <div
+            data-testid="review-watcher-notice"
+            role="status"
+            aria-label={reviewWatchLossNotice.title}
+            className="max-w-full rounded-[7px] border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-right text-xs leading-4 text-amber-950 shadow-[0_10px_28px_rgba(0,0,0,0.12)] dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100"
+          >
+            <div className="font-semibold">{reviewWatchLossNotice.title}</div>
+            <div className="mt-0.5 text-amber-900 dark:text-amber-200">
+              {reviewWatchLossNotice.body}
+            </div>
+          </div>
+        ) : null}
       </div>
       {showServerRestartNotice ? (
         <div

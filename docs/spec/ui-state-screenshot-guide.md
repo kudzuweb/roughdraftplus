@@ -140,7 +140,9 @@ A table whose cell holds a pipe inside a code span cannot be rendered in rich te
 | Document | Review handoff comment popover | Open a local file while a watcher is connected, then click the handoff dropdown trigger | `review-handoff-comment-trigger`, `review-handoff-comment-popover`, `review-handoff-overall-comment` | Capture the split handoff control and textarea with `Overall comment` placeholder before submission. |
 | Document | Review handoff sending | Click handoff button while watcher is connected | `review-handoff-button` | Button label: `Sending`. |
 | Document | Review handoff sent | Successful handoff | `review-handoff-status`, `review-handoff-robots-toy`, `review-handoff-close-window`, `review-handoff-copy-message` | Capture the random completion title, robot toy, primary close button, and fallback copy hint below it. |
-| Document | Review handoff undelivered | Watcher disconnects before handoff | `review-handoff-status` | Popover title: `No agent is watching now`. |
+| Document | Review handoff undelivered | Watcher disconnects before handoff | `review-handoff-status` | Popover title: `No agent is watching now`; the body says the command reconnects on its own after a server restart and otherwise to run `roughdraft open` again. |
+| Document | Review watcher unreachable | Open a local file while a watcher is connected, then stop the CLI (or abort `/api/review-events/status`) and wait about six seconds | `review-watcher-notice`, `review-handoff-button` | Amber notice under the still-visible handoff button, title `Roughdraft server unreachable`; the copy says the tab reconnects on its own. |
+| Document | Review watcher disconnected | Open a local file while a watcher is connected, then point the tab at a server with no watcher for it (restart the CLI without reopening) and wait about six seconds | `review-watcher-notice`, `review-handoff-button` | Amber notice under the still-visible handoff button, title `Agent disconnected`; the copy says to run `roughdraft open` on the file again. Clears as soon as a watcher registers. |
 | Document | Review handoff error | Force handoff API error | `review-handoff-status` | Popover title: `Could not notify agent`. |
 | Remote | Connected banner | Open with `?session=<id>&token=<token>` and remote capability enabled | `role=status`, `aria-label="Remote session connected"` | Requires remote backend support in `/api/status`. |
 | Remote | Disconnected banner | Drop remote session connection | `role=alert`, `aria-label="Remote session disconnected"` | Best captured with backend mocking. |
@@ -194,6 +196,8 @@ These are real product states, but they are awkward to capture deterministically
 - Disk conflict, autosave paused, server stopped, and server restarted
   
 - Review handoff undelivered/error
+  
+- Review watcher unreachable/disconnected
   
 - Remote connected/disconnected banners
   
