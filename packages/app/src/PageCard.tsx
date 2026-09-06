@@ -3,7 +3,16 @@ import type { Mark as ProseMirrorMark } from "@tiptap/pm/model";
 import { TextSelection } from "@tiptap/pm/state";
 import type { Editor } from "@tiptap/react";
 import { EditorContent, useEditor, useEditorState } from "@tiptap/react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type Dispatch,
+  memo,
+  type SetStateAction,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 import { CommentEditorList } from "./CommentEditorList";
 import {
@@ -17,6 +26,7 @@ import {
   criticMarkdownToEditorState,
   editorStateToCriticMarkdown,
   getCommentDescendantIds,
+  removeCommentsFromCriticMarkdown,
   type ReviewIdCounters,
 } from "./critic-markup";
 import {
@@ -49,6 +59,7 @@ export type ManualSaveResult =
 
 export interface DocumentSaveController {
   flushSave: () => Promise<ManualSaveResult>;
+  applyPendingApprovals: () => void;
 }
 
 type EditorViewMode = "rich-text" | "code";
@@ -106,6 +117,9 @@ interface RichTextEditorSurfaceProps {
   backend: StorageBackend;
   onEditorReady?: (editor: Editor | null) => void;
   onCommentRailPresenceChange?: (hasCommentRailSpace: boolean) => void;
+  pendingApprovalCommentIds: string[];
+  onPendingApprovalCommentIdsChange: Dispatch<SetStateAction<string[]>>;
+  onApplyPendingApprovalsChange: (apply: (() => void) | null) => void;
 }
 
 interface CodeEditorSurfaceProps {
@@ -605,6 +619,9 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   backend,
   onEditorReady,
   onCommentRailPresenceChange,
+  pendingApprovalCommentIds,
+  onPendingApprovalCommentIdsChange,
+  onApplyPendingApprovalsChange,
 }: RichTextEditorSurfaceProps) {
   const editorRef = useRef<Editor | null>(null);
   const criticChangeFrameRef = useRef<number | null>(null);
@@ -662,6 +679,13 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
   useEffect(() => {
     commentsRef.current = comments;
   }, [comments]);
+
+  useEffect(() => {
+    onPendingApprovalCommentIdsChange((current) => {
+      const next = current.filter((commentId) => comments.has(commentId));
+      return next.length === current.length ? current : next;
+    });
+  }, [comments, onPendingApprovalCommentIdsChange]);
 
   useEffect(() => {
     interactionModeRef.current = interactionMode;
@@ -1832,6 +1856,78 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
     [emitMarkdownChange, measureLayout],
   );
 
+  const approveComment = useCallback(
+    (commentId: string) => {
+      onPendingApprovalCommentIdsChange((current) =>
+        current.includes(commentId) ? current : [...current, commentId],
+      );
+    },
+    [onPendingApprovalCommentIdsChange],
+  );
+
+  const revokeApproval = useCallback(
+    (commentId: string) => {
+      onPendingApprovalCommentIdsChange((current) =>
+        current.filter((pendingCommentId) => pendingCommentId !== commentId),
+      );
+    },
+    [onPendingApprovalCommentIdsChange],
+  );
+
+  const applyPendingApprovals = useCallback(() => {
+    const currentEditor = editorRef.current;
+    if (!currentEditor) return;
+
+    const approvedIds = pendingApprovalCommentIds.filter((commentId) =>
+      commentsRef.current.has(commentId),
+    );
+    if (approvedIds.length === 0) return;
+
+    const approvedIdSet = new Set(approvedIds);
+    const nextComments = new Map(commentsRef.current);
+    for (const id of approvedIds) {
+      nextComments.delete(id);
+    }
+    commentsRef.current = nextComments;
+    setComments(nextComments);
+
+    const chain = currentEditor.chain();
+    for (const id of approvedIds) {
+      chain.removeCommentId(id);
+    }
+    chain.run();
+
+    setSelectedCommentId((current) =>
+      current && approvedIdSet.has(current) ? null : current,
+    );
+    setHoveredCommentId((current) =>
+      current && approvedIdSet.has(current) ? null : current,
+    );
+    setPendingFocusCommentId((current) =>
+      current && approvedIdSet.has(current) ? null : current,
+    );
+    setNewCommentDraftIds((current) =>
+      current.filter((commentId) => !approvedIdSet.has(commentId)),
+    );
+    onPendingApprovalCommentIdsChange((current) =>
+      current.filter((commentId) => !approvedIdSet.has(commentId)),
+    );
+    emitMarkdownChange(currentEditor.getJSON(), nextComments);
+    requestAnimationFrame(() => {
+      measureLayout();
+    });
+  }, [
+    emitMarkdownChange,
+    measureLayout,
+    onPendingApprovalCommentIdsChange,
+    pendingApprovalCommentIds,
+  ]);
+
+  useEffect(() => {
+    onApplyPendingApprovalsChange(applyPendingApprovals);
+    return () => onApplyPendingApprovalsChange(null);
+  }, [applyPendingApprovals, onApplyPendingApprovalsChange]);
+
   const selectComment = useCallback((commentId: string) => {
     setSelectedCommentId(commentId);
   }, []);
@@ -1952,6 +2048,9 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
                   current === commentId ? null : current,
                 );
               }}
+              pendingApprovalCommentIds={pendingApprovalCommentIds}
+              onApproveComment={approveComment}
+              onRevokeApproval={revokeApproval}
             />
           ) : null}
           <div className={contentInsetClass}>
@@ -2025,6 +2124,9 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
               current === commentId ? null : current,
             );
           }}
+          pendingApprovalCommentIds={pendingApprovalCommentIds}
+          onApproveComment={approveComment}
+          onRevokeApproval={revokeApproval}
           draftSuggestion={draftSuggestion}
           onDraftSuggestionTextChange={(text) => {
             setDraftSuggestion((current) =>
@@ -2140,7 +2242,16 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     page.content,
   );
   const [richTextSourceVersion, setRichTextSourceVersion] = useState(0);
-
+  const [pendingApprovalCommentIds, setPendingApprovalCommentIds] = useState<
+    string[]
+  >([]);
+  const applyPendingApprovalsRef = useRef<(() => void) | null>(null);
+  const handleApplyPendingApprovalsChange = useCallback(
+    (apply: (() => void) | null) => {
+      applyPendingApprovalsRef.current = apply;
+    },
+    [],
+  );
   const reportDirtyState = useCallback(
     (isDirty: boolean) => {
       if (localDirtyRef.current === isDirty) return;
@@ -2265,11 +2376,6 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     return await performSave(pendingMarkdownRef.current);
   }, [onSaveStateChange, performSave]);
 
-  useEffect(() => {
-    onSaveControllerChange?.({ flushSave });
-    return () => onSaveControllerChange?.(null);
-  }, [flushSave, onSaveControllerChange]);
-
   const handleMarkdownChange = useCallback(
     (nextMarkdown: string) => {
       pendingMarkdownRef.current = nextMarkdown;
@@ -2280,6 +2386,33 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
     },
     [onLocalContentChange, reportDirtyState, scheduleSave],
   );
+
+  const applyPendingApprovals = useCallback(() => {
+    // The rich editor applies approvals through its own commands while it is
+    // mounted. In code view it is not, so resolve them on the Markdown
+    // itself; the code editor picks the result up through its value prop.
+    if (applyPendingApprovalsRef.current) {
+      applyPendingApprovalsRef.current();
+      return;
+    }
+
+    if (pendingApprovalCommentIds.length === 0) return;
+
+    const currentMarkdown = pendingMarkdownRef.current;
+    const nextMarkdown = removeCommentsFromCriticMarkdown(
+      currentMarkdown,
+      pendingApprovalCommentIds,
+    );
+    setPendingApprovalCommentIds([]);
+    if (nextMarkdown === currentMarkdown) return;
+
+    handleMarkdownChange(nextMarkdown);
+  }, [handleMarkdownChange, pendingApprovalCommentIds]);
+
+  useEffect(() => {
+    onSaveControllerChange?.({ flushSave, applyPendingApprovals });
+    return () => onSaveControllerChange?.(null);
+  }, [applyPendingApprovals, flushSave, onSaveControllerChange]);
 
   useEffect(() => {
     const forceResetChanged = forceResetKeyRef.current !== forceResetKey;
@@ -2387,6 +2520,9 @@ const PageCardEditorSurface = memo(function PageCardEditorSurface({
       onCommentRailPresenceChange={onCommentRailPresenceChange}
       backend={backend}
       onEditorReady={onEditorReady}
+      pendingApprovalCommentIds={pendingApprovalCommentIds}
+      onPendingApprovalCommentIdsChange={setPendingApprovalCommentIds}
+      onApplyPendingApprovalsChange={handleApplyPendingApprovalsChange}
     />
   );
 });

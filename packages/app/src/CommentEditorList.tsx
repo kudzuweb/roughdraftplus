@@ -15,6 +15,7 @@ import {
   type MutableRefObject,
   type ReactNode,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -54,6 +55,9 @@ interface CommentEditorListProps {
   pendingFocusCommentId?: string | null;
   newCommentDraftIds?: string[];
   onAutoFocusComment?: (commentId: string) => void;
+  pendingApprovalCommentIds?: string[];
+  onApproveComment?: (commentId: string) => void;
+  onRevokeApproval?: (commentId: string) => void;
   renderCommentContent?: (context: CommentContentRenderContext) => ReactNode;
   getCommentActions?: (
     context: CommentActionsRenderContext,
@@ -63,12 +67,15 @@ interface CommentEditorListProps {
 export interface CommentActionDefinition {
   key: string;
   label: string;
-  tone?: "neutral" | "danger";
+  tone?: "neutral" | "danger" | "success";
   presentation?: "default" | "popover";
   icon: ReactNode;
   compact?: boolean;
+  active?: boolean;
   onClick: (event: MouseEvent) => void;
 }
+
+type CommentApprovalState = "none" | "available" | "confirming" | "pending";
 
 export interface CommentContentRenderContext {
   comment: CriticComment;
@@ -132,6 +139,9 @@ export function CommentEditorList({
   pendingFocusCommentId = null,
   newCommentDraftIds = [],
   onAutoFocusComment,
+  pendingApprovalCommentIds = [],
+  onApproveComment,
+  onRevokeApproval,
   renderCommentContent,
   getCommentActions,
 }: CommentEditorListProps) {
@@ -139,6 +149,8 @@ export function CommentEditorList({
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [editingCommentIds, setEditingCommentIds] = useState<string[]>([]);
   const [expandedThreadIds, setExpandedThreadIds] = useState<string[]>([]);
+  const [confirmingApprovalCommentId, setConfirmingApprovalCommentId] =
+    useState<string | null>(null);
   const threads = useMemo(() => buildCommentThreads(comments), [comments]);
   const threadViews = useMemo<CommentThreadView[]>(
     () =>
@@ -220,6 +232,9 @@ export function CommentEditorList({
     );
     setExpandedThreadIds((current) =>
       current.filter((commentId) => validCommentIds.has(commentId)),
+    );
+    setConfirmingApprovalCommentId((current) =>
+      current && validCommentIds.has(current) ? current : null,
     );
   }, [comments]);
 
@@ -368,6 +383,11 @@ export function CommentEditorList({
           onStartEditingComment={startEditingComment}
           onSubmitEditingComment={submitEditingComment}
           onCancelEditingComment={cancelEditingComment}
+          pendingApprovalCommentIds={pendingApprovalCommentIds}
+          confirmingApprovalCommentId={confirmingApprovalCommentId}
+          onConfirmingApprovalChange={setConfirmingApprovalCommentId}
+          onApproveComment={onApproveComment}
+          onRevokeApproval={onRevokeApproval}
           renderCommentContent={renderCommentContent}
           getCommentActions={getCommentActions}
           onChangeDraft={(commentId, nextContent) => {
@@ -407,6 +427,11 @@ interface CommentThreadNodeProps {
   onStartEditingComment: (commentId: string) => void;
   onSubmitEditingComment: (commentId: string) => void;
   onCancelEditingComment: (commentId: string) => void;
+  pendingApprovalCommentIds: string[];
+  confirmingApprovalCommentId: string | null;
+  onConfirmingApprovalChange: (commentId: string | null) => void;
+  onApproveComment?: (commentId: string) => void;
+  onRevokeApproval?: (commentId: string) => void;
   renderCommentContent?: (context: CommentContentRenderContext) => ReactNode;
   getCommentActions?: (
     context: CommentActionsRenderContext,
@@ -427,16 +452,18 @@ function CommentActionButton({
   presentation = "default",
   icon,
   compact = false,
+  active,
   ariaExpanded,
   className,
   onClick,
 }: {
   label: string;
   testId?: string;
-  tone?: "neutral" | "danger";
+  tone?: "neutral" | "danger" | "success";
   presentation?: "default" | "popover";
   icon: ReactNode;
   compact?: boolean;
+  active?: boolean;
   ariaExpanded?: boolean;
   className?: string;
   onClick: (event: MouseEvent) => void;
@@ -446,6 +473,7 @@ function CommentActionButton({
       type="button"
       aria-label={compact ? label : undefined}
       aria-expanded={ariaExpanded}
+      aria-pressed={active}
       data-testid={testId}
       variant="ghost"
       size={compact ? "icon-xs" : "sm"}
@@ -459,7 +487,11 @@ function CommentActionButton({
           ? ""
           : tone === "danger"
             ? "text-stone-400 hover:bg-rose-100 hover:text-rose-700 dark:text-stone-500 dark:hover:bg-rose-900/40 dark:hover:text-rose-400"
-            : "text-stone-400 hover:bg-[#DED8CE]/45 hover:text-stone-600 dark:text-stone-500 dark:hover:bg-slate-700 dark:hover:text-stone-300",
+            : tone === "success"
+              ? active
+                ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200 hover:text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400 dark:hover:bg-emerald-900/60 dark:hover:text-emerald-300"
+                : "text-stone-400 hover:bg-emerald-100 hover:text-emerald-700 dark:text-stone-500 dark:hover:bg-emerald-900/40 dark:hover:text-emerald-400"
+              : "text-stone-400 hover:bg-[#DED8CE]/45 hover:text-stone-600 dark:text-stone-500 dark:hover:bg-slate-700 dark:hover:text-stone-300",
         className,
       )}
       onPointerDown={(event) => event.stopPropagation()}
@@ -505,6 +537,11 @@ function CommentThreadNode({
   onStartEditingComment,
   onSubmitEditingComment,
   onCancelEditingComment,
+  pendingApprovalCommentIds,
+  confirmingApprovalCommentId,
+  onConfirmingApprovalChange,
+  onApproveComment,
+  onRevokeApproval,
   renderCommentContent,
   getCommentActions,
   onChangeDraft,
@@ -564,6 +601,45 @@ function CommentThreadNode({
       isEditing,
       defaultContent,
     }) ?? defaultContent;
+  const approvalState: CommentApprovalState =
+    depth === 0 || !isAiAuthor || !onApproveComment
+      ? "none"
+      : pendingApprovalCommentIds.includes(comment.id)
+        ? "pending"
+        : confirmingApprovalCommentId === comment.id
+          ? "confirming"
+          : "available";
+  const approvalActions: CommentActionDefinition[] =
+    approvalState === "available"
+      ? [
+          {
+            key: "approve",
+            label: "Approve",
+            tone: "success",
+            icon: <Check className="size-3.5" />,
+            compact: true,
+            onClick: (event) => {
+              event.stopPropagation();
+              onConfirmingApprovalChange(comment.id);
+            },
+          },
+        ]
+      : approvalState === "pending"
+        ? [
+            {
+              key: "unapprove",
+              label: "Undo approval",
+              tone: "success",
+              active: true,
+              icon: <Check className="size-3.5" />,
+              compact: true,
+              onClick: (event) => {
+                event.stopPropagation();
+                onRevokeApproval?.(comment.id);
+              },
+            },
+          ]
+        : [];
   const defaultActions: CommentActionDefinition[] = isEditing
     ? [
         {
@@ -587,6 +663,7 @@ function CommentThreadNode({
         },
       ]
     : [
+        ...approvalActions,
         {
           key: "reply",
           label: "Reply",
@@ -629,6 +706,37 @@ function CommentThreadNode({
       isEditing,
       defaultActions: defaultVisibleActions,
     }) ?? defaultVisibleActions;
+  const nodeRef = useRef<HTMLDivElement>(null);
+  const previousApprovalStateRef = useRef<CommentApprovalState>(approvalState);
+
+  useLayoutEffect(() => {
+    const previousApprovalState = previousApprovalStateRef.current;
+    previousApprovalStateRef.current = approvalState;
+
+    // Each step of the approve swap unmounts the control that was activated,
+    // which would drop keyboard focus to the body; hand it to the control
+    // that replaced it.
+    if (previousApprovalState === approvalState) return;
+
+    const focusActionKey =
+      approvalState === "confirming"
+        ? "approve-confirm"
+        : approvalState === "pending"
+          ? "unapprove"
+          : approvalState === "available" &&
+              (previousApprovalState === "confirming" ||
+                previousApprovalState === "pending")
+            ? "approve"
+            : null;
+    if (!focusActionKey) return;
+
+    nodeRef.current
+      ?.querySelector<HTMLElement>(
+        `[data-testid="comment-${variant}-${comment.id}-action-${focusActionKey}"]`,
+      )
+      ?.focus();
+  }, [approvalState, comment.id, variant]);
+
   const ancestorGuideOffsets = parentLines.reduce<number[]>(
     (offsets, showLine, guideIndex) => {
       if (showLine) {
@@ -641,6 +749,7 @@ function CommentThreadNode({
 
   return (
     <div
+      ref={nodeRef}
       data-testid={`comment-${variant}-${comment.id}`}
       data-comment-thread-root-id={isRootThread ? comment.id : undefined}
       tabIndex={interactive && isRootThread ? 0 : undefined}
@@ -767,8 +876,19 @@ function CommentThreadNode({
                 bodyTone,
               )}
             >
-              <div className="truncate text-xs font-semibold text-slate-900 dark:text-slate-100">
-                {authorLabel}
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-xs font-semibold text-slate-900 dark:text-slate-100">
+                  {authorLabel}
+                </span>
+                {approvalState === "pending" ? (
+                  <span
+                    data-testid={`comment-${variant}-${comment.id}-approval-pending`}
+                    title="Resolves when you finish reviewing"
+                    className="shrink-0 rounded-full bg-emerald-100 px-1.5 py-px text-[10px] font-semibold tracking-[0.08em] text-emerald-700 uppercase dark:bg-emerald-900/40 dark:text-emerald-400"
+                  >
+                    Approved
+                  </span>
+                ) : null}
               </div>
               <div
                 className={cn(
@@ -835,6 +955,36 @@ function CommentThreadNode({
                 />
               ) : null}
               <div className="mt-2 flex flex-wrap items-center gap-1">
+                {approvalState === "confirming" ? (
+                  <span
+                    data-testid={`comment-${variant}-${comment.id}-approve-confirm`}
+                    className="inline-flex items-center gap-0.5 rounded-full border border-emerald-200 bg-emerald-50 py-px pr-0.5 pl-2 text-[11px] font-medium tracking-[0.08em] text-emerald-700 uppercase dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-400"
+                  >
+                    Approve
+                    <CommentActionButton
+                      label="Confirm approval"
+                      testId={`comment-${variant}-${comment.id}-action-approve-confirm`}
+                      tone="success"
+                      icon={<Check className="size-3.5" />}
+                      compact
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onConfirmingApprovalChange(null);
+                        onApproveComment?.(comment.id);
+                      }}
+                    />
+                    <CommentActionButton
+                      label="Cancel approval"
+                      testId={`comment-${variant}-${comment.id}-action-approve-cancel`}
+                      icon={<X className="size-3.5" />}
+                      compact
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onConfirmingApprovalChange(null);
+                      }}
+                    />
+                  </span>
+                ) : null}
                 {actions.map((action) => (
                   <CommentActionButton
                     key={action.key}
@@ -844,6 +994,7 @@ function CommentThreadNode({
                     presentation={action.presentation}
                     icon={action.icon}
                     compact={action.compact}
+                    active={action.active}
                     onClick={action.onClick}
                   />
                 ))}
@@ -918,6 +1069,11 @@ function CommentThreadNode({
               onStartEditingComment={onStartEditingComment}
               onSubmitEditingComment={onSubmitEditingComment}
               onCancelEditingComment={onCancelEditingComment}
+              pendingApprovalCommentIds={pendingApprovalCommentIds}
+              confirmingApprovalCommentId={confirmingApprovalCommentId}
+              onConfirmingApprovalChange={onConfirmingApprovalChange}
+              onApproveComment={onApproveComment}
+              onRevokeApproval={onRevokeApproval}
               renderCommentContent={renderCommentContent}
               getCommentActions={getCommentActions}
               onChangeDraft={onChangeDraft}

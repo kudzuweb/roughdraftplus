@@ -13,6 +13,7 @@ import {
   criticMarkdownToRenderedHtml,
   editorStateToCriticMarkdown,
   getCommentDescendantIds,
+  removeCommentsFromCriticMarkdown,
 } from "../src/critic-markup";
 import { createEditorExtensions } from "../src/editor-extensions";
 
@@ -710,6 +711,38 @@ const command = "{==roughdraft open==}{>>test<<}{id="c1" by="user" at="2026-04-2
       authorType: "ai",
     });
     expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("resolves one approved reply in a stacked thread and leaves the anchor and the rest of the stack untouched", () => {
+    const input =
+      'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>I can add one from the intro.<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n';
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    const editor = new Editor({
+      extensions: createEditorExtensions(""),
+      content: doc,
+    });
+
+    try {
+      editor.commands.removeCommentId("c2");
+      const nextComments = new Map(comments);
+      nextComments.delete("c2");
+
+      expect(editorStateToCriticMarkdown(editor.getJSON(), nextComments)).toBe(
+        'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n',
+      );
+    } finally {
+      editor.destroy();
+    }
+  });
+
+  it("removes approved comments from a Markdown string without an editor, leaving the anchor and the rest of the stack", () => {
+    const input =
+      'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>I can add one from the intro.<<}{id="c2" by="AI" at="2024-01-15T10:31:00.000Z" re="c1"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n';
+
+    expect(removeCommentsFromCriticMarkdown(input, ["c2"])).toBe(
+      'Please revisit {==this sentence==}{>>Needs a source<<}{id="c1" by="user" at="2024-01-15T10:30:00.000Z"}{>>The market report covers it too.<<}{id="c3" by="AI" at="2024-01-15T10:32:00.000Z" re="c1"}.\n',
+    );
+    expect(removeCommentsFromCriticMarkdown(input, ["missing"])).toBe(input);
   });
 
   it("round-trips nested replies in preorder", () => {

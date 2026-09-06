@@ -73,6 +73,9 @@ interface DocumentReviewRailProps {
   pendingFocusCommentId?: string | null;
   newCommentDraftIds?: string[];
   onAutoFocusComment?: (commentId: string) => void;
+  pendingApprovalCommentIds?: string[];
+  onApproveComment?: (commentId: string) => void;
+  onRevokeApproval?: (commentId: string) => void;
   draftSuggestion?: DraftSuggestionState | null;
   onDraftSuggestionTextChange?: (text: string) => void;
   onApplyDraftSuggestion?: () => void;
@@ -241,6 +244,9 @@ export function DocumentReviewRail({
   pendingFocusCommentId = null,
   newCommentDraftIds = [],
   onAutoFocusComment,
+  pendingApprovalCommentIds = [],
+  onApproveComment,
+  onRevokeApproval,
   draftSuggestion = null,
   onDraftSuggestionTextChange,
   onApplyDraftSuggestion,
@@ -516,6 +522,9 @@ export function DocumentReviewRail({
                   pendingFocusCommentId={pendingFocusCommentId}
                   newCommentDraftIds={newCommentDraftIds}
                   onAutoFocusComment={onAutoFocusComment}
+                  pendingApprovalCommentIds={pendingApprovalCommentIds}
+                  onApproveComment={onApproveComment}
+                  onRevokeApproval={onRevokeApproval}
                 />
               </div>
             );
@@ -745,6 +754,9 @@ export function DocumentReviewRail({
                 pendingFocusCommentId={pendingFocusCommentId}
                 newCommentDraftIds={newCommentDraftIds}
                 onAutoFocusComment={onAutoFocusComment}
+                pendingApprovalCommentIds={pendingApprovalCommentIds}
+                onApproveComment={onApproveComment}
+                onRevokeApproval={onRevokeApproval}
                 renderCommentContent={renderCommentContent}
                 getCommentActions={getCommentActions}
               />
