@@ -1,6 +1,6 @@
 import { Editor } from "@tiptap/core";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
-import { AllSelection, NodeSelection, TextSelection } from "@tiptap/pm/state";
+import { AllSelection, NodeSelection } from "@tiptap/pm/state";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   criticMarkdownToEditorState,
@@ -21,6 +21,23 @@ const protectedTableMarkdown = [
   "Trailing paragraph.",
   "",
   "Another paragraph.",
+  "",
+].join("\n");
+
+const twinTablesMarkdown = [
+  "First.",
+  "",
+  "| Flag | Meaning |",
+  "| --- | --- |",
+  "| `a \\| b` | either |",
+  "",
+  "Between.",
+  "",
+  "| Flag | Meaning |",
+  "| --- | --- |",
+  "| `a \\| b` | either |",
+  "",
+  "Last.",
   "",
 ].join("\n");
 
@@ -79,6 +96,30 @@ function blockRange(editor: Editor): { from: number; to: number } {
   const node = editor.state.doc.nodeAt(from);
   if (!node) throw new Error("Expected a rawMarkdownBlock at that position");
   return { from, to: from + node.nodeSize };
+}
+
+function allRawMarkdownBlockPositions(editor: Editor): number[] {
+  const positions: number[] = [];
+  editor.state.doc.descendants((node: ProseMirrorNode, pos: number) => {
+    if (node.type.name === "rawMarkdownBlock") positions.push(pos);
+    return true;
+  });
+  return positions;
+}
+
+/** The block's own range, plus the ranges of the nodes touching each side. */
+function neighbourRanges(editor: Editor) {
+  const { from, to } = blockRange(editor);
+  const $before = editor.state.doc.resolve(from);
+  const nodeBefore = $before.nodeBefore;
+  const nodeAfter = editor.state.doc.resolve(to).nodeAfter;
+  if (!nodeBefore || !nodeAfter) {
+    throw new Error("Expected prose on both sides of the placeholder");
+  }
+  return {
+    before: { from: from - nodeBefore.nodeSize, to: from },
+    after: { from: to, to: to + nodeAfter.nodeSize },
+  };
 }
 
 function selectPlaceholder(editor: Editor): void {
@@ -241,19 +282,126 @@ describe("a transaction that keeps every protected block", () => {
     expect(editor.state.doc.textContent).toContain("First paragraph.");
   });
 
-  it("goes through when undo restores a document without the block", () => {
-    const editor = createEditorWithProtectedTable();
-    const blocksBefore = countRawMarkdownBlocks(editor);
+  it("goes through when undo removes a block that was just added", () => {
+    const editor = createEditor(plainMarkdown);
+    const { state } = editor.view;
+    const blockType = state.schema.nodes.rawMarkdownBlock;
 
     editor.view.dispatch(
-      editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1)),
+      state.tr.insert(
+        0,
+        blockType.create({
+          rawMarkdown: "%7C%20a%20%7C%0A",
+          blockType: "table",
+        }),
+      ),
     );
-    editor.view.dispatch(editor.state.tr.insertText("x", 1, 1));
-    expect(editor.state.doc.textContent).toContain("xFlags in use:");
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
 
     editor.commands.undo();
 
-    expect(countRawMarkdownBlocks(editor)).toBe(blocksBefore);
-    expect(editor.state.doc.textContent).not.toContain("xFlags in use:");
+    // Undo is the second of the two exemptions. Without it the guard would
+    // refuse this, and a reader could never take back an inserted block.
+    expect(countRawMarkdownBlocks(editor)).toBe(0);
+  });
+
+  it("goes through when a deletion ends exactly at the block's start", () => {
+    const editor = createEditorWithProtectedTable();
+    const { before } = neighbourRanges(editor);
+
+    editor.view.dispatch(editor.state.tr.delete(before.from, before.to));
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(editor.state.doc.textContent).not.toContain("Flags in use:");
+    expect(refusedPos(editor)).toBe(null);
+  });
+
+  it("goes through when a deletion starts exactly at the block's end", () => {
+    const editor = createEditorWithProtectedTable();
+    const { after } = neighbourRanges(editor);
+
+    editor.view.dispatch(editor.state.tr.delete(after.from, after.to));
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(editor.state.doc.textContent).not.toContain("Trailing paragraph.");
+    expect(refusedPos(editor)).toBe(null);
+  });
+
+  it("goes through when both neighbours go and the block stays", () => {
+    const editor = createEditorWithProtectedTable();
+    const { before, after } = neighbourRanges(editor);
+
+    editor.view.dispatch(
+      editor.state.tr
+        .delete(after.from, after.to)
+        .delete(before.from, before.to),
+    );
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(editor.state.doc.textContent).not.toContain("Flags in use:");
+    expect(editor.state.doc.textContent).not.toContain("Trailing paragraph.");
+    expect(refusedPos(editor)).toBe(null);
+  });
+
+  it("goes through when text replaces a range ending at the block's start", () => {
+    const editor = createEditorWithProtectedTable();
+    const { before } = neighbourRanges(editor);
+
+    editor.view.dispatch(
+      editor.state.tr.insertText("replaced", before.from + 1, before.to - 1),
+    );
+
+    expect(countRawMarkdownBlocks(editor)).toBe(1);
+    expect(editor.state.doc.textContent).toContain("replaced");
+    expect(refusedPos(editor)).toBe(null);
+  });
+});
+
+describe("the note the refusal leaves", () => {
+  it("lands on the first of two identical blocks when that one goes", async () => {
+    const editor = createEditor(twinTablesMarkdown);
+    const [first, second] = allRawMarkdownBlockPositions(editor);
+    expect(second).toBeGreaterThan(first);
+
+    editor.view.dispatch(editor.state.tr.delete(first, first + 1));
+    await Promise.resolve();
+
+    expect(refusedPos(editor)).toBe(first);
+  });
+
+  it("lands on the second of two identical blocks when that one goes", async () => {
+    const editor = createEditor(twinTablesMarkdown);
+    const [, second] = allRawMarkdownBlockPositions(editor);
+
+    editor.view.dispatch(editor.state.tr.delete(second, second + 1));
+    await Promise.resolve();
+
+    expect(refusedPos(editor)).toBe(second);
+  });
+
+  it("still refuses when one block is dropped and another added", () => {
+    const editor = createEditor(twinTablesMarkdown);
+    const [first] = allRawMarkdownBlockPositions(editor);
+    const blockType = editor.state.schema.nodes.rawMarkdownBlock;
+    const twinMarkdown = String(
+      editor.state.doc.nodeAt(first)?.attrs.rawMarkdown,
+    );
+
+    // The block count is even across this transaction, so counting blocks
+    // would wave it through while one of the reader's tables went missing.
+    editor.view.dispatch(
+      editor.state.tr.delete(first, first + 1).insert(
+        0,
+        blockType.create({
+          rawMarkdown: "%7C%20other%20%7C%0A",
+          blockType: "table",
+        }),
+      ),
+    );
+
+    const surviving = allRawMarkdownBlockPositions(editor).map((pos) =>
+      String(editor.state.doc.nodeAt(pos)?.attrs.rawMarkdown),
+    );
+    expect(surviving).toEqual([twinMarkdown, twinMarkdown]);
   });
 });

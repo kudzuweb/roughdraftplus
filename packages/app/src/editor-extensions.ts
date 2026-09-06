@@ -15,6 +15,7 @@ import type {
   Node as ProseMirrorNode,
 } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
+import type { Transaction } from "@tiptap/pm/state";
 import type { Transform } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import { ReactNodeViewRenderer } from "@tiptap/react";
@@ -927,55 +928,43 @@ export const rawMarkdownBlockGuardPluginKey =
   new PluginKey<RawMarkdownBlockGuardState>("rawMarkdownBlockGuard");
 
 /**
- * Every protected block in the document, with the position and the Markdown
- * each one carries. Textblocks are not descended into, so the walk stays cheap
- * enough to run on every transaction.
- */
-function protectedBlocks(
-  doc: ProseMirrorNode,
-): Array<{ pos: number; rawMarkdown: string }> {
-  const blocks: Array<{ pos: number; rawMarkdown: string }> = [];
-
-  doc.descendants((node, pos) => {
-    if (node.type.name === "rawMarkdownBlock") {
-      blocks.push({ pos, rawMarkdown: String(node.attrs.rawMarkdown ?? "") });
-      return false;
-    }
-    return !node.isTextblock;
-  });
-
-  return blocks;
-}
-
-/**
  * Position of the first protected block this transaction would drop, or null
- * when it would drop none.
+ * when it would drop none. Textblocks are not descended into, so the walk stays
+ * cheap enough to run on every transaction.
  *
- * The test compares what the document holds before and after, rather than
- * mapping each block's position through the transaction. A mapped position
- * reports as deleted whenever the replaced range merely touches the block's
- * boundary, so a reader deleting their own paragraph next to a placeholder was
- * refused as if the placeholder itself were going.
+ * Each block is judged on its own extent: both ends are mapped inward, so a
+ * deletion beside the block leaves them a whole node apart while a deletion of
+ * the block collapses them onto each other. Judging each block by position is
+ * what tells two identical blocks apart, so the note lands on the one that was
+ * going, and it is why a transaction that drops one block and adds another is
+ * still refused. Counting blocks, or matching the Markdown they carry, gets
+ * both of those wrong.
  */
 function firstDroppedProtectedBlockPos(
-  before: Array<{ pos: number; rawMarkdown: string }>,
-  after: Array<{ pos: number; rawMarkdown: string }>,
+  tr: Transaction,
+  doc: ProseMirrorNode,
 ): number | null {
-  const surviving = new Map<string, number>();
-  for (const block of after) {
-    surviving.set(
-      block.rawMarkdown,
-      (surviving.get(block.rawMarkdown) ?? 0) + 1,
-    );
-  }
+  let dropped: number | null = null;
 
-  for (const block of before) {
-    const count = surviving.get(block.rawMarkdown) ?? 0;
-    if (count === 0) return block.pos;
-    surviving.set(block.rawMarkdown, count - 1);
-  }
+  doc.descendants((node, pos) => {
+    if (dropped !== null) return false;
+    if (node.type.name !== "rawMarkdownBlock") return !node.isTextblock;
 
-  return null;
+    const start = tr.mapping.map(pos, 1);
+    const end = tr.mapping.map(pos + node.nodeSize, -1);
+    const survivor = tr.doc.nodeAt(start);
+
+    if (
+      end - start !== node.nodeSize ||
+      survivor?.type.name !== "rawMarkdownBlock"
+    ) {
+      dropped = pos;
+    }
+
+    return false;
+  });
+
+  return dropped;
 }
 
 /**
@@ -991,9 +980,11 @@ function firstDroppedProtectedBlockPos(
  * would drop a protected block is rejected, whatever produced it. Input
  * handlers were tried first and removed. They have to read
  * `view.state.selection`, which lags the browser's own selection after a
- * shift-arrow sweep, so they both miss deletions the reader can see and refuse
- * ones the reader never asked for. A transaction carries the change that is
- * actually about to happen, so it is the only thing worth judging.
+ * shift-arrow sweep, so they miss deletions the reader can see. A transaction
+ * carries the change that is actually about to happen, so it is the only thing
+ * worth judging, and judging it catches gestures nobody has enumerated: Alt and
+ * Backspace at the start of the paragraph after a placeholder was found already
+ * refused, before anyone named it.
  *
  * Two exemptions cover the ways a protected block may legitimately leave:
  * `preventUpdate` marks tiptap's `setContent`, which is how a document is
@@ -1034,13 +1025,7 @@ const RawMarkdownBlockGuard = Extension.create({
           if (tr.getMeta("history$")) return true;
           if (tr.getMeta("preventUpdate") !== undefined) return true;
 
-          const before = protectedBlocks(state.doc);
-          if (before.length === 0) return true;
-
-          const after = protectedBlocks(tr.doc);
-          if (after.length >= before.length) return true;
-
-          const refusedPos = firstDroppedProtectedBlockPos(before, after);
+          const refusedPos = firstDroppedProtectedBlockPos(tr, state.doc);
           if (refusedPos === null) return true;
 
           // The transaction is being rejected, so the position still points at
