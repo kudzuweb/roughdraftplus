@@ -205,12 +205,12 @@ export function getReviewTokenFromLocation(): string | null {
   return searchParams.get("reviewToken")?.trim() || null;
 }
 
-export function syncReviewTokenInUrl(reviewToken: string | null) {
+function syncSearchParamInUrl(name: string, value: string | null) {
   const url = new URL(window.location.href);
-  if (reviewToken) {
-    url.searchParams.set("reviewToken", reviewToken);
+  if (value) {
+    url.searchParams.set(name, value);
   } else {
-    url.searchParams.delete("reviewToken");
+    url.searchParams.delete(name);
   }
 
   const nextLocation = `${url.pathname}${url.search}${url.hash}`;
@@ -221,18 +221,11 @@ export function syncReviewTokenInUrl(reviewToken: string | null) {
 }
 
 export function syncSessionLabelInUrl(sessionLabel: string | null) {
-  const url = new URL(window.location.href);
-  if (sessionLabel) {
-    url.searchParams.set("label", sessionLabel);
-  } else {
-    url.searchParams.delete("label");
-  }
+  syncSearchParamInUrl("label", sessionLabel);
+}
 
-  const nextLocation = `${url.pathname}${url.search}${url.hash}`;
-  const currentLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;
-  if (nextLocation !== currentLocation) {
-    window.history.replaceState(null, "", nextLocation);
-  }
+export function syncReviewTokenInUrl(reviewToken: string | null) {
+  syncSearchParamInUrl("reviewToken", reviewToken);
 }
 
 export function syncRequestedPathInUrl(path?: string | null) {

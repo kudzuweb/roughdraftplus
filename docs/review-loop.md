@@ -136,7 +136,8 @@ save still rewrites applies to that file even if it was only ever edited in code
   reviewed file outside the loop is safe while the tab has no unsaved edits: a `git checkout` is
   final, and the tab reloads the new content without writing. A tab with unsaved edits shows
   "File changed on disk" and stops saving until the reviewer picks reload or overwrite. After
-  Done Reviewing the tab does not write until a new review starts. If the server is restarted, the
+  Done Reviewing the tab does not write until the agent reopens the document for the next
+  round; another session's watch on the same file does not resume it. If the server is restarted, the
   tab adopts the replacement and checks the file version first: unsaved edits are kept and saved
   only when the file did not change while the server was away; otherwise the tab shows "File
   changed on disk" and stops saving until the reviewer decides. The blocking `open` survives

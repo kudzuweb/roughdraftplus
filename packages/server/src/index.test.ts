@@ -652,6 +652,38 @@ describe("createApp", () => {
     await watchingPromise;
   });
 
+  it("refuses a review token it cannot read rather than answering unscoped", async () => {
+    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
+    const { app } = createApp({
+      staticDirPath: projectDir,
+    });
+
+    // Sent twice, a query parameter reaches the route as an array. Answering
+    // without the round would put the tab back on the path-wide count.
+    const duplicated = await request(app)
+      .get("/api/review-events/status")
+      .query(
+        `projectPath=${encodeURIComponent(projectDir)}&path=draft.md&reviewToken=round-1&reviewToken=round-2`,
+      );
+    const watched = await request(app)
+      .post("/api/review-events/watch")
+      .send({
+        projectPath: projectDir,
+        path: "draft.md",
+        reviewToken: ["round-1", "round-2"],
+        timeoutSeconds: 0,
+      });
+
+    expect(duplicated.status).toBe(400);
+    expect(duplicated.body).toEqual({
+      error: "reviewToken must be a single value",
+    });
+    expect(watched.status).toBe(400);
+    expect(watched.body).toEqual({
+      error: "reviewToken must be a single value",
+    });
+  });
+
   it("rejects page ids that resolve outside the project directory", async () => {
     const outsideName = `${path.basename(projectDir)}-secret`;
     const outsideFilePath = path.join(

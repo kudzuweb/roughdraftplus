@@ -116,10 +116,23 @@ const MAX_OVERALL_COMMENT_LENGTH = 4_000;
 let nextOpenRequestClientId = 1;
 
 // The review round a request belongs to, as minted by `roughdraft open`.
-function normalizeReviewToken(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0
-    ? value.trim()
-    : null;
+// Returns null when the request names no round, and refuses one that names a
+// round it cannot read: a `reviewToken` sent twice reaches Express as an array,
+// and dropping it would quietly return the tab to counting every watcher on
+// the path, which is the behaviour the round exists to replace. Refusing says
+// so instead, and matches the route's treatment of an unreadable `path`.
+function readReviewToken(
+  value: unknown,
+  res: Response,
+): { reviewToken: string | null } | null {
+  if (value === undefined) return { reviewToken: null };
+  if (typeof value !== "string") {
+    res.status(400).json({ error: "reviewToken must be a single value" });
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return { reviewToken: trimmed.length > 0 ? trimmed : null };
 }
 
 function remoteSessionVersion(content: string): string {
@@ -638,7 +651,9 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
         : 0.25;
     const afterSequence =
       typeof req.body?.afterSequence === "number" ? req.body.afterSequence : 0;
-    const reviewToken = normalizeReviewToken(req.body?.reviewToken);
+    const watchToken = readReviewToken(req.body?.reviewToken, res);
+    if (!watchToken) return;
+    const reviewToken = watchToken.reviewToken;
 
     const result = await reviewEvents.wait({
       documentPath: target.absolutePath,
@@ -663,9 +678,13 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     );
     // A tab that was opened for one review round asks about that round, so it
     // hears only about the watch its own agent registered.
-    const reviewToken = normalizeReviewToken(req.query.reviewToken);
-    const watcherCountForReview = reviewToken
-      ? reviewEvents.waiterCountForReview(target.absolutePath, reviewToken)
+    const statusToken = readReviewToken(req.query.reviewToken, res);
+    if (!statusToken) return;
+    const watcherCountForReview = statusToken.reviewToken
+      ? reviewEvents.waiterCountForReview(
+          target.absolutePath,
+          statusToken.reviewToken,
+        )
       : undefined;
     // The tab polls this while a document is open, so the answering instance
     // is how it learns the server was replaced while it had nothing to write.
@@ -888,7 +907,9 @@ export function createApp(options: CreateAppOptions = {}): CreateAppResult {
     const sessionLabel = normalizeSessionLabel(payload.label);
     // The tab keeps this token until the next open replaces it, and lets only
     // the watch that carries it end the block a delivered handoff put on it.
-    const reviewToken = normalizeReviewToken(payload.reviewToken);
+    const openToken = readReviewToken(payload.reviewToken, res);
+    if (!openToken) return;
+    const reviewToken = openToken.reviewToken;
     const event = {
       path: targetPath,
       url: targetUrl,
