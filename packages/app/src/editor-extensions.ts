@@ -17,7 +17,11 @@ import type {
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
-import { rawMarkdownBlockAttribute } from "./markdown";
+import {
+  markdownSoftBreakAttribute,
+  markdownTableSeparatorAttribute,
+  rawMarkdownBlockAttribute,
+} from "./markdown";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -110,7 +114,7 @@ const CommentRef = Mark.create({
           let found = false;
 
           state.doc.descendants((node, pos) => {
-            if (!node.isText) return;
+            if (!isInlineAtomOrText(node)) return;
 
             const mark = node.marks.find(
               (candidate) =>
@@ -180,6 +184,12 @@ function readCriticChangeAttrs(element: HTMLElement): CriticChangeAttrs | null {
   };
 }
 
+// Text and inline atoms such as the soft break can carry a change mark, so a
+// suggestion covers a wrap point instead of skipping it. Block nodes never can.
+export function isInlineAtomOrText(node: ProseMirrorNode): boolean {
+  return node.isInline && node.isAtom;
+}
+
 function collectCriticChangeRanges(doc: ProseMirrorNode, changeId: string) {
   const markType = doc.type.schema.marks.criticChange;
   const ranges: Array<{
@@ -192,7 +202,7 @@ function collectCriticChangeRanges(doc: ProseMirrorNode, changeId: string) {
   if (!markType) return ranges;
 
   doc.descendants((node, pos) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const mark = node.marks.find(
       (candidate) =>
@@ -460,7 +470,7 @@ function createCommentHighlightDecorations(
   }
 
   doc.descendants((node: ProseMirrorNode, pos: number) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const commentIds = [
       ...new Set(
@@ -576,7 +586,7 @@ function createCriticChangeHighlightDecorations(
   }
 
   doc.descendants((node: ProseMirrorNode, pos: number) => {
-    if (!node.isText) return;
+    if (!isInlineAtomOrText(node)) return;
 
     const changeIds = [
       ...new Set(
@@ -767,6 +777,54 @@ const RawMarkdownBlock = Node.create({
   },
 });
 
+const MarkdownTable = Table.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      markdownSeparator: {
+        default: null,
+        parseHTML: (element) =>
+          element.getAttribute(markdownTableSeparatorAttribute),
+        renderHTML: (attributes) =>
+          attributes.markdownSeparator
+            ? {
+                [markdownTableSeparatorAttribute]: attributes.markdownSeparator,
+              }
+            : {},
+      },
+    };
+  },
+});
+
+// A newline inside a paragraph, blockquote, or list item in the source.
+// Rendered as a space so the editor reflows prose, and written back as the
+// newline the author typed so a save does not join wrapped lines.
+const MarkdownSoftBreak = Node.create({
+  name: "markdownSoftBreak",
+  group: "inline",
+  inline: true,
+  atom: true,
+  selectable: false,
+
+  parseHTML() {
+    return [{ tag: `span[${markdownSoftBreakAttribute}]` }];
+  },
+
+  renderHTML() {
+    return ["span", { [markdownSoftBreakAttribute]: "" }, " "];
+  },
+
+  renderText() {
+    return " ";
+  },
+
+  extendNodeSchema(extension) {
+    return extension.name === "markdownSoftBreak"
+      ? { leafText: () => " " }
+      : {};
+  },
+});
+
 export function createEditorExtensions(placeholder: string) {
   return [
     StarterKit.configure({
@@ -786,7 +844,7 @@ export function createEditorExtensions(placeholder: string) {
       linkOnPaste: true,
     }),
     MarkdownCode,
-    Table.configure({
+    MarkdownTable.configure({
       resizable: true,
     }),
     TableRow,
@@ -799,6 +857,7 @@ export function createEditorExtensions(placeholder: string) {
     CommentRef,
     CriticChange,
     RawMarkdownBlock,
+    MarkdownSoftBreak,
     MarkdownCodeBlock,
     CommentHighlight,
     CriticChangeHighlight,
