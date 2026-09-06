@@ -909,9 +909,13 @@ function printCommandHelp(
     log(
       "reports whether the reviewer signaled done: an overall comment that says",
     );
-    log('the review is done ("done", "lgtm", "looks good", "approved" and');
+    log('the review is done ("done", "finished", "lgtm", "looks good" and the');
     log(
-      "the like, as the whole comment) or a submission with every thread cleared.",
+      "like, as the whole comment; docs/review-loop.md lists every phrase) or a",
+    );
+    log('submission with every thread cleared. An overall "approved" is not a');
+    log(
+      "done-signal: approval resolves one comment, it never ends the review.",
     );
     log("Anything else means act on the feedback and reopen the document. The");
     log('--json output carries `done` and `doneReason` ("overall-comment",');

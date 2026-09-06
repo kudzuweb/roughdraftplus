@@ -26,10 +26,17 @@ the loop.
 `roughdraft open --loop` reports that decision after each round, in human and `--json` output
 (`done`, and `doneReason` as `overall-comment`, `threads-cleared`, or null), so the agent reopens
 on the CLI's answer instead of inferring it from the file. The server decides on the Done Reviewing
-event: an overall comment counts as done when its whole text, ignoring case and punctuation, is a
-phrase such as "done", "lgtm", "looks good" or "approved"; every thread is cleared when the document
-has no unresolved comment, reply or suggestion. An overall comment that is not a done-signal is new
-feedback, so it continues the loop even when the threads are otherwise clear.
+event. An overall comment counts as done when its whole text is one of these phrases, ignoring
+case and punctuation, an optional leading "ok", "okay", "yes" or "the", and an optional trailing
+"thanks", "thank you" or "ty": "done", "all done", "I'm done", "we're done", "done reviewing",
+"review done", "review complete", "review completed", "review is done", "review is complete",
+"finished", "finished reviewing", "lgtm", "looks good", "looks good to me", "no further comments",
+"no more comments", "nothing further". A trailing question mark ("Done?") is a question, not a
+signal. "Approved" and "ship it" are deliberately not on the list: per Approvals below, an approval
+resolves the one comment it answers and nothing else is read as approval, so an overall "approved"
+with open threads continues the loop. Every thread is cleared when the document has no unresolved
+comment, reply or suggestion. An overall comment that is not a done-signal is new feedback, so it
+continues the loop even when the threads are otherwise clear.
 
 ## Replies
 

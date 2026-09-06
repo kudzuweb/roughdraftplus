@@ -202,8 +202,6 @@ describe("isDoneSignalComment", () => {
     "lgtm",
     "looks good",
     "Looks good to me",
-    "ship it",
-    "approved",
     "no further comments",
     "no more comments",
     "nothing further",
@@ -233,6 +231,10 @@ describe("isDoneSignalComment", () => {
     "lgtm?",
     "looks good but tighten the intro",
     "undone",
+    "approved",
+    "Approved!",
+    "ship it",
+    "okay approved",
   ])("reads %j as feedback that continues the loop", (text) => {
     expect(isDoneSignalComment(text)).toBe(false);
   });

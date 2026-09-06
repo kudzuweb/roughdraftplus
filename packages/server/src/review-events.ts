@@ -211,8 +211,6 @@ const DONE_SIGNAL_PHRASES = new Set([
   "lgtm",
   "looks good",
   "looks good to me",
-  "ship it",
-  "approved",
   "no further comments",
   "no more comments",
   "nothing further",
@@ -224,6 +222,9 @@ const DONE_SIGNAL_TRAILING_WORDS = /\s+(?:thanks|thank you|ty)$/;
 // A done-signal is the whole overall comment, not a phrase inside it: a false
 // positive ends the loop and strands the reviewer's request, while a false
 // negative costs one extra round that the threads-cleared rule then ends.
+// Approval wording ("approved", "ship it") is deliberately absent: an approval
+// resolves the one comment it answers and nothing else is read as approval
+// (docs/review-loop.md, Approvals), so it cannot also end the review.
 // A question ("Done?") is asking, not signaling, so it is checked before the
 // punctuation is stripped.
 export function isDoneSignalComment(text: string): boolean {
