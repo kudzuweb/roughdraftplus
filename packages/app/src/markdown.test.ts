@@ -113,7 +113,7 @@ describe("toHtml", () => {
       '<a href="mailto:review@example.com" data-markdown-src="mailto:review@example.com">Mail</a>',
     );
     expect(html).toContain('<ul data-type="taskList">');
-    expect(html).toContain("<table>");
+    expect(html).toContain("<table");
     expect(html).toContain(
       '<img src="./images/sketch.png" alt="Sketch" title="Sketch title" data-markdown-src="./images/sketch.png">',
     );

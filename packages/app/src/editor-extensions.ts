@@ -19,6 +19,7 @@ import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
 import {
   markdownSoftBreakAttribute,
+  markdownTableSeparatorAttribute,
   rawMarkdownBlockAttribute,
 } from "./markdown";
 
@@ -770,6 +771,25 @@ const RawMarkdownBlock = Node.create({
   },
 });
 
+const MarkdownTable = Table.extend({
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      markdownSeparator: {
+        default: null,
+        parseHTML: (element) =>
+          element.getAttribute(markdownTableSeparatorAttribute),
+        renderHTML: (attributes) =>
+          attributes.markdownSeparator
+            ? {
+                [markdownTableSeparatorAttribute]: attributes.markdownSeparator,
+              }
+            : {},
+      },
+    };
+  },
+});
+
 // A newline inside a paragraph, blockquote, or list item in the source.
 // Rendered as a space so the editor reflows prose, and written back as the
 // newline the author typed so a save does not join wrapped lines.
@@ -818,7 +838,7 @@ export function createEditorExtensions(placeholder: string) {
       linkOnPaste: true,
     }),
     MarkdownCode,
-    Table.configure({
+    MarkdownTable.configure({
       resizable: true,
     }),
     TableRow,

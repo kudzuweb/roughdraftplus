@@ -13,6 +13,11 @@ const markdownSoftBreakHtml = `<span ${markdownSoftBreakAttribute}=""></span>`;
 // A soft break inside one of these must stay a space: a heading or table
 // cell cannot span lines in markdown.
 const singleLineBlockSelector = "h1, h2, h3, h4, h5, h6, th, td";
+// The table's delimiter row exactly as the author typed it, so a save does
+// not rewrite `|---|---|` as `| --- | --- |`.
+export const markdownTableSeparatorAttribute = "data-markdown-table-separator";
+const markdownTableSeparatorLine =
+  /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
 
 export interface MarkdownOptions {
   resolveFileUrl?: (path: string) => string | null;
@@ -171,6 +176,22 @@ function markdownTableDividerForCell(cell: HTMLTableCellElement): string {
 function markdownTableDividerForRow(row: HTMLTableRowElement): string {
   const dividers = Array.from(row.cells).map(markdownTableDividerForCell);
   return `| ${dividers.join(" | ")} |`;
+}
+
+function markdownTableSeparatorColumnCount(separator: string): number {
+  return separator.trim().replace(/^\|/, "").replace(/\|$/, "").split("|")
+    .length;
+}
+
+function typedMarkdownTableSeparator(
+  table: HTMLTableElement,
+  headerRow: HTMLTableRowElement,
+): string | null {
+  const separator = table.getAttribute(markdownTableSeparatorAttribute);
+  if (!separator || !markdownTableSeparatorLine.test(separator)) return null;
+  return markdownTableSeparatorColumnCount(separator) === headerRow.cells.length
+    ? separator
+    : null;
 }
 
 function softBreakMarkdown(node: HTMLElement): string {
@@ -343,6 +364,16 @@ export function createMarkedRenderer(options?: MarkdownOptions) {
     return html.replaceAll("\n", markdownSoftBreakHtml);
   };
 
+  renderer.table = function (token) {
+    const html = baseRenderer.table.call(this, token);
+    const separator = token.raw.split("\n")[1]?.trimEnd();
+    if (!separator) return html;
+    return html.replace(
+      "<table>",
+      `<table ${markdownTableSeparatorAttribute}="${escapeHtml(separator)}">`,
+    );
+  };
+
   renderer.link = function ({ href, title, tokens, raw }) {
     const rawHref = href || "";
     const renderedHref = resolveRenderedUrl(
@@ -480,6 +511,8 @@ export function createTurndownService(): TurndownService {
       if (!isMarkdownTableDivider(lines[1])) {
         lines.splice(1, 0, markdownTableDividerForRow(headerRow));
       }
+      const typedSeparator = typedMarkdownTableSeparator(table, headerRow);
+      if (typedSeparator) lines[1] = typedSeparator;
 
       const captionContent = table.caption?.textContent || "";
       const caption = captionContent ? `${captionContent}\n\n` : "";
