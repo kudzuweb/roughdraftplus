@@ -111,6 +111,14 @@ describe("cli", () => {
     return url.toString();
   }
 
+  // A watching `open` mints a review token, which the tests about the rest of
+  // the URL do not name.
+  function withoutReviewToken(openedUrl: string | null): string {
+    const url = new URL(String(openedUrl));
+    url.searchParams.delete("reviewToken");
+    return url.toString();
+  }
+
   function parseOnlyJsonLog<T>(logs: string[]): T {
     expect(logs).toHaveLength(1);
     return JSON.parse(logs[0] ?? "{}") as T;
@@ -409,6 +417,104 @@ describe("cli", () => {
       ),
     });
     expect(lastOpenedUrl).toBeNull();
+  });
+
+  it("names the review round on the document URL, the open request and the watch it registers", async () => {
+    const documentPath = path.join(projectDir, "draft.md");
+    fs.writeFileSync(documentPath, "# Draft\n");
+
+    let postedOpenRequest: Record<string, unknown> | null = null;
+    let postedWatch: Record<string, unknown> | null = null;
+    let lastOpenedUrl: string | null = null;
+    const deps = createCliDependencies({
+      env: {
+        ...process.env,
+        ROUGHDRAFT_STATE_DIR: stateDir,
+      },
+      cwd: projectDir,
+      fetchImpl: async (input, init) => {
+        const url =
+          input instanceof URL
+            ? input
+            : new URL(
+                typeof input === "string" ? input : input.url,
+                "http://localhost",
+              );
+
+        if (
+          url.pathname === "/api/status" &&
+          url.port === String(ROUGHDRAFT_DEFAULT_PORT)
+        ) {
+          return new Response(
+            JSON.stringify({
+              backend: "local-files",
+              port: ROUGHDRAFT_DEFAULT_PORT,
+              projectDir,
+              serverRoot,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        if (url.pathname === "/api/open-request" && init?.method === "POST") {
+          postedOpenRequest = JSON.parse(String(init.body));
+          return new Response(JSON.stringify({ delivered: false }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+
+        if (url.pathname === "/api/review-events/watch") {
+          postedWatch = JSON.parse(String(init?.body));
+          return new Response(
+            JSON.stringify({
+              events: [{ documentPath, type: "review.completed" }],
+              timedOut: false,
+              nextSequence: 2,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+        }
+
+        throw new Error("connect ECONNREFUSED");
+      },
+      isProcessRunning: () => false,
+      stopProcess: async () => {},
+      spawnServerProcess: async () => {
+        throw new Error("should not spawn");
+      },
+      openUrl: (url) => {
+        lastOpenedUrl = url;
+        return "browser";
+      },
+      log: () => {},
+      error: () => {},
+      resolveUpdateStatus: noUpdateStatus,
+    });
+
+    const exitCode = await runCli(
+      ["open", documentPath, "--batch-window", "0"],
+      deps,
+    );
+
+    expect(exitCode).toBe(0);
+    const reviewToken = new URL(String(lastOpenedUrl)).searchParams.get(
+      "reviewToken",
+    );
+    // The tab, the window that already has the document and the watch this
+    // open registers all name the same round.
+    expect(reviewToken).toEqual(expect.any(String));
+    expect(postedOpenRequest).toMatchObject({
+      path: documentPath,
+      reviewToken,
+    });
+    expect(postedWatch).toMatchObject({ path: "draft.md", reviewToken });
   });
 
   it("passes the session label to the existing window and puts it in the document URL", async () => {
@@ -892,7 +998,7 @@ describe("cli", () => {
 
     expect(exitCode).toBe(0);
     expect(spawnCount).toBe(0);
-    expect(lastOpenedUrl).toBe(
+    expect(withoutReviewToken(lastOpenedUrl)).toBe(
       expectedOpenUrl("http://localhost:5173", documentPath),
     );
     expect(watchUrl).toBe("http://localhost:3000/api/review-events/watch");

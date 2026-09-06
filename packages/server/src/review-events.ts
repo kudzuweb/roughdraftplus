@@ -30,6 +30,10 @@ export interface WaitForReviewEventsOptions {
   afterSequence?: number;
   timeoutMs?: number;
   batchWindowMs?: number;
+  // Names the review round this watcher belongs to: `roughdraft open` mints
+  // one, hands it to the tab it opens, and watches with it, so the tab can
+  // tell its own agent's watch from any other watcher on the same path.
+  reviewToken?: string;
 }
 
 export interface WaitForReviewEventsResult {
@@ -49,10 +53,11 @@ const DEFAULT_BATCH_WINDOW_MS = 250;
 const MAX_RETAINED_EVENTS = 100;
 
 type NormalizedWaitOptions = Required<
-  Omit<WaitForReviewEventsOptions, "documentPath" | "timeoutMs">
+  Omit<WaitForReviewEventsOptions, "documentPath" | "timeoutMs" | "reviewToken">
 > & {
   documentPath?: string;
   timeoutMs?: number;
+  reviewToken?: string;
 };
 
 export class ReviewEventQueue {
@@ -143,6 +148,18 @@ export class ReviewEventQueue {
     const normalizedPath = path.resolve(documentPath);
     return [...this.waiters].filter(
       (waiter) => waiter.options.documentPath === normalizedPath,
+    ).length;
+  }
+
+  // Watchers of one review round rather than of the path: a tab asks with the
+  // token it was opened with, so a second session's open or a leftover
+  // `roughdraft watch` on the same file is not counted as its own agent.
+  waiterCountForReview(documentPath: string, reviewToken: string): number {
+    const normalizedPath = path.resolve(documentPath);
+    return [...this.waiters].filter(
+      (waiter) =>
+        waiter.options.documentPath === normalizedPath &&
+        waiter.options.reviewToken === reviewToken,
     ).length;
   }
 
@@ -246,6 +263,9 @@ function normalizeWaitOptions(
     documentPath: options.documentPath
       ? path.resolve(options.documentPath)
       : undefined,
+    ...(options.reviewToken && options.reviewToken.trim().length > 0
+      ? { reviewToken: options.reviewToken.trim() }
+      : {}),
     afterSequence: Math.max(0, options.afterSequence ?? 0),
     timeoutMs:
       options.timeoutMs !== undefined

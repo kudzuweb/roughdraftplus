@@ -440,6 +440,9 @@ interface DocumentWorkspaceProps {
   documentCopyPath: string | null;
   documentFilenameLabel: string;
   documentSessionLabel: string | null;
+  // The review round this tab was opened for, when `roughdraft open` started
+  // one. Null means no round is known and any watcher counts as the agent's.
+  documentReviewToken: string | null;
   showDocumentLocation?: boolean;
   documentEditorViewMode: DocumentEditorViewMode;
   onDocumentEditorViewModeChange: (mode: DocumentEditorViewMode) => void;
@@ -469,6 +472,7 @@ export function DocumentWorkspace({
   documentCopyPath,
   documentFilenameLabel,
   documentSessionLabel,
+  documentReviewToken,
   showDocumentLocation = true,
   documentEditorViewMode,
   onDocumentEditorViewModeChange,
@@ -495,6 +499,7 @@ export function DocumentWorkspace({
   const [reviewHandoffState, setReviewHandoffState] =
     useState<ReviewHandoffState>("idle");
   const [reviewWatcherCount, setReviewWatcherCount] = useState(0);
+  const [reviewRoundWatcherCount, setReviewRoundWatcherCount] = useState(0);
   const [reviewWatcherSeen, setReviewWatcherSeen] = useState(false);
   const [reviewWatchLoss, setReviewWatchLoss] =
     useState<ReviewWatchLoss>("none");
@@ -555,8 +560,13 @@ export function DocumentWorkspace({
   useEffect(() => {
     if (!backend?.getReviewWatchStatus || !activeDocumentPath) {
       setReviewWatcherCount(0);
+      setReviewRoundWatcherCount(0);
       return;
     }
+
+    // A new token is a new round, so the previous round's watcher must not
+    // count for it until this round's watch is seen.
+    setReviewRoundWatcherCount(0);
 
     let cancelled = false;
     let lostPolls = 0;
@@ -568,10 +578,18 @@ export function DocumentWorkspace({
     };
     const refreshWatchStatus = async () => {
       try {
-        const status = await backend.getReviewWatchStatus?.(activeDocumentPath);
+        const status = await backend.getReviewWatchStatus?.(
+          activeDocumentPath,
+          documentReviewToken,
+        );
         if (cancelled) return;
         const watcherCount = status?.watcherCount ?? 0;
         setReviewWatcherCount(watcherCount);
+        // Without a round of its own the tab cannot tell one watcher from
+        // another, so every watcher on the path counts as its agent's.
+        setReviewRoundWatcherCount(
+          status?.watcherCountForReview ?? watcherCount,
+        );
         if (watcherCount > 0) {
           lostPolls = 0;
           setReviewWatcherSeen(true);
@@ -592,6 +610,7 @@ export function DocumentWorkspace({
       } catch {
         if (cancelled) return;
         setReviewWatcherCount(0);
+        setReviewRoundWatcherCount(0);
         recordLoss("unreachable");
       }
     };
@@ -605,7 +624,12 @@ export function DocumentWorkspace({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [activeDocumentPath, backend, onServerInstanceChanged]);
+  }, [
+    activeDocumentPath,
+    backend,
+    documentReviewToken,
+    onServerInstanceChanged,
+  ]);
 
   useEffect(() => {
     if (reviewHandoffState === "undelivered" && reviewWatcherCount > 0) {
@@ -618,7 +642,10 @@ export function DocumentWorkspace({
       return;
     }
 
-    if (reviewWatcherCount === 0) {
+    // Only this round's watch ends the block: another session's open or a
+    // leftover `roughdraft watch` on the same file would otherwise resume
+    // saving into a review this tab's loop never started.
+    if (reviewRoundWatcherCount === 0) {
       sawNoWatcherAfterNotifiedRef.current = true;
       return;
     }
@@ -627,7 +654,7 @@ export function DocumentWorkspace({
       sawNoWatcherAfterNotifiedRef.current = false;
       setReviewHandoffState("idle");
     }
-  }, [reviewHandoffState, reviewWatcherCount]);
+  }, [reviewHandoffState, reviewRoundWatcherCount, reviewWatcherCount]);
 
   useEffect(() => {
     if (reviewHandoffState === "notified") {
@@ -696,11 +723,13 @@ export function DocumentWorkspace({
         const result = await onCompleteReview(options);
         if (result.delivered) {
           setReviewWatcherCount(0);
+          setReviewRoundWatcherCount(0);
           setReviewHandoffState("notified");
           setOverallComment("");
           setReviewHandoffPopoverOpen(true);
         } else {
           setReviewWatcherCount(0);
+          setReviewRoundWatcherCount(0);
           setReviewHandoffState("undelivered");
           setReviewHandoffPopoverOpen(true);
         }

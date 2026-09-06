@@ -200,6 +200,26 @@ export function getSessionLabelFromLocation(): string | null {
   return searchParams.get("label")?.trim() || null;
 }
 
+export function getReviewTokenFromLocation(): string | null {
+  const searchParams = new URLSearchParams(window.location.search);
+  return searchParams.get("reviewToken")?.trim() || null;
+}
+
+export function syncReviewTokenInUrl(reviewToken: string | null) {
+  const url = new URL(window.location.href);
+  if (reviewToken) {
+    url.searchParams.set("reviewToken", reviewToken);
+  } else {
+    url.searchParams.delete("reviewToken");
+  }
+
+  const nextLocation = `${url.pathname}${url.search}${url.hash}`;
+  const currentLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (nextLocation !== currentLocation) {
+    window.history.replaceState(null, "", nextLocation);
+  }
+}
+
 export function syncSessionLabelInUrl(sessionLabel: string | null) {
   const url = new URL(window.location.href);
   if (sessionLabel) {

@@ -600,6 +600,58 @@ describe("createApp", () => {
     await waitingPromise;
   });
 
+  it("counts review watchers of one round apart from the rest on the path", async () => {
+    fs.writeFileSync(path.join(projectDir, "draft.md"), "# Draft\n");
+    const { app } = createApp({
+      staticDirPath: projectDir,
+    });
+
+    const watching = [
+      request(app).post("/api/review-events/watch").send({
+        projectPath: projectDir,
+        path: "draft.md",
+        reviewToken: "round-1",
+        timeoutSeconds: 1,
+        batchWindowSeconds: 0,
+      }),
+      request(app).post("/api/review-events/watch").send({
+        projectPath: projectDir,
+        path: "draft.md",
+        reviewToken: "round-2",
+        timeoutSeconds: 1,
+        batchWindowSeconds: 0,
+      }),
+    ];
+    const watchingPromise = Promise.all(watching);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const roundStatus = await request(app)
+      .get("/api/review-events/status")
+      .query({
+        projectPath: projectDir,
+        path: "draft.md",
+        reviewToken: "round-1",
+      });
+    const pathStatus = await request(app)
+      .get("/api/review-events/status")
+      .query({ projectPath: projectDir, path: "draft.md" });
+
+    expect(roundStatus.status).toBe(200);
+    expect(roundStatus.body).toMatchObject({
+      watching: true,
+      watcherCount: 2,
+      watcherCountForReview: 1,
+    });
+    // A tab that knows no round hears only the count for the whole path.
+    expect(pathStatus.body.watcherCount).toBe(2);
+    expect(pathStatus.body.watcherCountForReview).toBeUndefined();
+
+    await request(app)
+      .post("/api/review-events")
+      .send({ projectPath: projectDir, path: "draft.md" });
+    await watchingPromise;
+  });
+
   it("rejects page ids that resolve outside the project directory", async () => {
     const outsideName = `${path.basename(projectDir)}-secret`;
     const outsideFilePath = path.join(

@@ -220,6 +220,89 @@ test.describe("save gating", () => {
     );
   });
 
+  test("after Done Reviewing only the review that reopened the document resumes saving", async ({
+    page,
+    request,
+  }) => {
+    const filePath = writeProjectFile(
+      projectDir,
+      "scoped.md",
+      reflowingMarkdown,
+    );
+    const writes = trackFileWrites(page);
+    const firstReviewToken = "review-token-first";
+    const reopenedReviewToken = "review-token-reopened";
+    const watchDocument = (reviewToken?: string) =>
+      request.post("/api/review-events/watch", {
+        data: {
+          projectPath: projectDir,
+          path: "scoped.md",
+          timeoutSeconds: 10,
+          ...(reviewToken ? { reviewToken } : {}),
+        },
+      });
+
+    const firstWatch = watchDocument(firstReviewToken);
+    pendingWatch = firstWatch;
+
+    const params = new URLSearchParams({
+      path: filePath,
+      reviewToken: firstReviewToken,
+    });
+    await page.goto(`/?${params.toString()}`);
+    await expect(richTextEditor(page)).toContainText("hard-wrapped");
+    await page.getByTestId("review-handoff-button").click();
+    await expect(page.getByTestId("review-handoff-button")).toHaveText("Sent");
+    await firstWatch;
+    await page.keyboard.press("Escape");
+    const afterDone = snapshotFile(filePath);
+
+    await richTextEditor(page).click();
+    await page.keyboard.press("End");
+    await page.keyboard.type(" typed after done");
+    await expect(richTextEditor(page)).toContainText("typed after done");
+
+    // Watchers this tab's review did not start: a leftover `roughdraft watch`
+    // and another session's open on the same path. Neither reopened this
+    // document, so neither may resume its saves.
+    const strayWatch = watchDocument();
+    const otherSessionWatch = watchDocument("review-token-elsewhere");
+    await page.waitForTimeout(2000);
+    await page.keyboard.type(" and typed while they watch");
+    await expect(richTextEditor(page)).toContainText("while they watch");
+    await settleAutosave(page);
+
+    expect(writes.filter((write) => write.startsWith("PUT"))).toEqual([]);
+    expect(snapshotFile(filePath)).toEqual(afterDone);
+    await expect(page.getByTestId("review-handoff-button")).toHaveText("Sent");
+
+    // The `roughdraft open` that reopens the document hands this tab the
+    // token of the round it is about to watch; that watch resumes saving.
+    await expect
+      .poll(async () => {
+        const response = await request.post("/api/open-request", {
+          data: {
+            path: filePath,
+            url: page.url(),
+            reviewToken: reopenedReviewToken,
+          },
+        });
+        return (await response.json()).delivered;
+      })
+      .toBe(true);
+    const reopenedWatch = watchDocument(reopenedReviewToken);
+    pendingWatch = Promise.all([strayWatch, otherSessionWatch, reopenedWatch]);
+
+    await expect(page.getByTestId("review-handoff-button")).not.toHaveText(
+      "Sent",
+    );
+    await richTextEditor(page).click();
+    await page.keyboard.type(" and in the reopened review");
+    await expect
+      .poll(() => readProjectFile(projectDir, "scoped.md"))
+      .toContain("and in the reopened review");
+  });
+
   test("a file changed on disk outside the editor is not overwritten by the reflowed copy", async ({
     page,
   }) => {

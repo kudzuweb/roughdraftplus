@@ -110,6 +110,43 @@ describe("ReviewEventQueue", () => {
     vi.useRealTimers();
   });
 
+  it("counts only the watchers of one review round", async () => {
+    vi.useFakeTimers();
+    const queue = new ReviewEventQueue();
+    const rounds = [
+      queue.wait({
+        documentPath: "/tmp/project/draft.md",
+        reviewToken: "round-1",
+        batchWindowMs: 0,
+      }),
+      queue.wait({
+        documentPath: "/tmp/project/draft.md",
+        reviewToken: "round-2",
+        batchWindowMs: 0,
+      }),
+      queue.wait({ documentPath: "/tmp/project/draft.md", batchWindowMs: 0 }),
+      queue.wait({
+        documentPath: "/tmp/project/other.md",
+        reviewToken: "round-1",
+        batchWindowMs: 0,
+      }),
+    ];
+
+    expect(queue.waiterCountForDocument("/tmp/project/draft.md")).toBe(3);
+    expect(queue.waiterCountForReview("/tmp/project/draft.md", "round-1")).toBe(
+      1,
+    );
+    expect(queue.waiterCountForReview("/tmp/project/draft.md", "round-3")).toBe(
+      0,
+    );
+
+    queue.emit(eventInput("/tmp/project/draft.md"));
+    queue.emit(eventInput("/tmp/project/other.md"));
+    await vi.advanceTimersByTimeAsync(0);
+    await Promise.all(rounds);
+    vi.useRealTimers();
+  });
+
   it("ignores unrelated document paths", async () => {
     vi.useFakeTimers();
     const queue = new ReviewEventQueue();
