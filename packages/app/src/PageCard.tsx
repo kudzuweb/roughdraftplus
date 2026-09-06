@@ -35,7 +35,7 @@ import {
 import { cn } from "./lib/utils";
 import { MarkdownCodeEditor } from "./MarkdownCodeEditor";
 import { buildLocationForLinkedMarkdownDocument } from "./app-navigation";
-import { toHtml } from "./markdown";
+import { splitYamlDocumentMetadata, toHtml } from "./markdown";
 import type { Page, StorageBackend } from "./storage";
 import { useCommentAnchorLayout } from "./useCommentAnchorLayout";
 import { useReviewLayoutShiftAnimation } from "./useReviewLayoutShiftAnimation";
@@ -679,17 +679,20 @@ const RichTextEditorSurface = memo(function RichTextEditorSurface({
       const currentDoc = doc ?? currentEditor?.getJSON();
       if (!currentDoc) return;
 
-      onMarkdownChange(
-        editorStateToCriticMarkdown(
-          currentDoc,
-          nextComments ?? commentsRef.current,
-          {
-            frontmatter: frontmatterRef.current,
-            endmatter: endmatterRef.current,
-            idCounters: idCountersRef.current,
-          },
-        ),
+      const markdown = editorStateToCriticMarkdown(
+        currentDoc,
+        nextComments ?? commentsRef.current,
+        {
+          frontmatter: frontmatterRef.current,
+          endmatter: endmatterRef.current,
+          idCounters: idCountersRef.current,
+        },
       );
+      const nextEndmatter = splitYamlDocumentMetadata(markdown).endmatter;
+      if (nextEndmatter) {
+        endmatterRef.current = nextEndmatter;
+      }
+      onMarkdownChange(markdown);
     },
     [onMarkdownChange],
   );
