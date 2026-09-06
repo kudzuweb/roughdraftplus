@@ -144,7 +144,7 @@ function truncateSuggestionText(text: string) {
   return `${text.slice(0, SUGGESTION_TEXT_PREVIEW_LIMIT)}...`;
 }
 
-function SuggestionChangedText({
+export function SuggestionChangedText({
   changeId,
   variant,
   text,
