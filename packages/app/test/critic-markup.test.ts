@@ -27,6 +27,20 @@ function readMarkdownFixture(name: string): string {
     .trimEnd()}\n`;
 }
 
+interface SpecFixture {
+  source: { markdown: string };
+  comments: Array<{ id: string; body: string; by: string; re?: string }>;
+}
+
+function readSpecFixture(name: string): SpecFixture {
+  return JSON.parse(
+    fs.readFileSync(
+      path.join(process.cwd(), "..", "..", "docs", "spec", "fixtures", name),
+      "utf8",
+    ),
+  ) as SpecFixture;
+}
+
 describe("CriticMarkup comments", () => {
   it("preserves YAML frontmatter delimiters and raw table-like YAML text", () => {
     const input = [
@@ -134,6 +148,27 @@ describe("CriticMarkup comments", () => {
     const output = editorStateToCriticMarkdown(doc, comments);
     expect(output).toContain("{==highlighted==}{>>comment text<<}{#c1}");
     expect(output).toContain("body: Reply text");
+    expect(output).toContain("re: c1");
+  });
+
+  it("reads the legacy endmatter reply spec fixture and keeps the reply across a save", () => {
+    const fixture = readSpecFixture("legacy-endmatter-reply.json");
+    const { doc, comments } = criticMarkdownToEditorState(
+      fixture.source.markdown,
+    );
+
+    for (const expected of fixture.comments) {
+      expect(comments.get(expected.id)).toMatchObject({
+        id: expected.id,
+        content: expected.body,
+        parentCommentId: expected.re ?? null,
+      });
+    }
+
+    const output = editorStateToCriticMarkdown(doc, comments);
+
+    expect(output).toContain("{==this claim==}{>>Needs a source.<<}{#c1}");
+    expect(output).toContain("body: I can add one from the intro.");
     expect(output).toContain("re: c1");
   });
 
