@@ -2113,3 +2113,160 @@ describe("Markdown rich-text round-trip regressions", () => {
     expect(richTextRoundTrip(input)).toBe(input);
   });
 });
+
+describe("CriticMarkup delimiter escaping", () => {
+  // Every sequence that can reopen or close a review marker, plus the escape
+  // character itself, in one payload.
+  const typedText = String.raw`back\slash {==a==} {>>b<<} {++c++} {--d--} {~~e~>f~~} g~>h`;
+  const escapedText = String.raw`back\\slash \{==a\==} \{>>b\<<} \{++c\++} \{--d\--} \{~~e\~>f\~~} g\~>h`;
+  const commentMetadata = '{id="c1" by="user" at="2026-04-23T18:00:00.000Z"}';
+
+  function collectDocText(node: JSONContent): string {
+    if (typeof node.text === "string") return node.text;
+    return (node.content ?? []).map(collectDocText).join("");
+  }
+
+  it("reads an escaped comment body back as the text the reviewer typed", () => {
+    const input = `Review {==this claim==}{>>${escapedText}<<}${commentMetadata}.\n`;
+
+    const { doc, comments, idCounters } = criticMarkdownToEditorState(input);
+
+    expect(comments.size).toBe(1);
+    expect(comments.get("c1")?.content).toBe(typedText);
+    expect(idCounters.comments).toBe(1);
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("escapes a comment body so typed markup never becomes live markup", () => {
+    const input = `Review {==this claim==}{>>Needs a source.<<}${commentMetadata}.\n`;
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    const comment = comments.get("c1");
+    if (!comment) throw new Error("Expected comment c1");
+    comments.set("c1", { ...comment, content: typedText });
+
+    const saved = editorStateToCriticMarkdown(doc, comments);
+    expect(saved).toContain(`{>>${escapedText}<<}`);
+
+    const reloaded = criticMarkdownToEditorState(saved);
+    expect(reloaded.comments.size).toBe(1);
+    expect(reloaded.comments.get("c1")?.content).toBe(typedText);
+    expect(reloaded.idCounters.comments).toBe(1);
+    expect(editorStateToCriticMarkdown(reloaded.doc, reloaded.comments)).toBe(
+      saved,
+    );
+  });
+
+  it("keeps a reply body literal without allocating a second thread", () => {
+    const input = `${[
+      `Review {==this claim==}{>>Needs a source.<<}${commentMetadata}`,
+      `{>>${escapedText}<<}{id="c2" by="AI" at="2026-04-23T18:05:00.000Z" re="c1"}.`,
+    ].join("")}\n`;
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.size).toBe(2);
+    expect(comments.get("c2")).toMatchObject({
+      content: typedText,
+      parentCommentId: "c1",
+    });
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("keeps an insertion mark's text literal", () => {
+    const input = `Add {++${escapedText}++}{id="s1" by="AI" at="2026-04-23T18:00:00.000Z"} here.\n`;
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    const { changes } = criticMarkdownToRenderedHtml(input);
+
+    expect(collectDocText(doc)).toBe(`Add ${typedText} here.`);
+    expect([...changes.keys()]).toEqual(["s1"]);
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("keeps a deletion mark's text literal", () => {
+    const input = `Drop {--${escapedText}--}{id="s1" by="AI" at="2026-04-23T18:00:00.000Z"} here.\n`;
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    const { changes } = criticMarkdownToRenderedHtml(input);
+
+    expect(collectDocText(doc)).toBe(`Drop ${typedText} here.`);
+    expect([...changes.keys()]).toEqual(["s1"]);
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("keeps both halves of a substitution literal", () => {
+    const input = `Use {~~${escapedText}~>${escapedText}~~}{id="s1" by="AI" at="2026-04-23T18:00:00.000Z"} instead.\n`;
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    const { changes } = criticMarkdownToRenderedHtml(input);
+
+    expect(collectDocText(doc)).toBe(`Use ${typedText}${typedText} instead.`);
+    expect([...changes.keys()]).toEqual(["s1"]);
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("keeps a comment anchor's text literal", () => {
+    const input = `Review {==${escapedText}==}{>>Needs a source.<<}${commentMetadata}.\n`;
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+
+    expect(collectDocText(doc)).toBe(`Review ${typedText}.`);
+    expect(comments.size).toBe(1);
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("keeps an anchored comment inside a fenced code block literal", () => {
+    const input = [
+      "```md",
+      `{==${escapedText}==}{>>${escapedText}<<}${commentMetadata}`,
+      "```",
+      "",
+    ].join("\n");
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("c1")?.content).toBe(typedText);
+    expect(collectDocText(doc)).toBe(typedText);
+    expect(editorStateToCriticMarkdown(doc, comments)).toBe(input);
+  });
+
+  it("keeps a backslash that does not precede a delimiter", () => {
+    // A body written before escaping existed keeps its raw backslashes on the
+    // way in, and gains their escaped form on the way out.
+    const body = String.raw`see C:\path and 50\% off`;
+    const input = `Review {==this claim==}{>>${body}<<}${commentMetadata}.\n`;
+
+    const { doc, comments } = criticMarkdownToEditorState(input);
+    expect(comments.get("c1")?.content).toBe(body);
+
+    const saved = editorStateToCriticMarkdown(doc, comments);
+    expect(saved).toContain(String.raw`{>>see C:\\path and 50\\% off<<}`);
+
+    const reloaded = criticMarkdownToEditorState(saved);
+    expect(reloaded.comments.get("c1")?.content).toBe(body);
+    expect(editorStateToCriticMarkdown(reloaded.doc, reloaded.comments)).toBe(
+      saved,
+    );
+  });
+
+  it("leaves a document-level comment in endmatter unescaped", () => {
+    const input = [
+      "Body text.",
+      "",
+      "---",
+      "comments:",
+      "  c1:",
+      `    body: ${typedText}`,
+      "    by: user",
+      '    at: "2026-04-28T12:00:00.000Z"',
+      "",
+    ].join("\n");
+
+    const { comments } = criticMarkdownToEditorState(input);
+
+    expect(comments.get("c1")).toMatchObject({
+      content: typedText,
+      scope: "document",
+    });
+  });
+});
