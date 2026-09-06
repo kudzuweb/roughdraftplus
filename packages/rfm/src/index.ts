@@ -95,6 +95,30 @@ interface Metadata {
 }
 
 const CRITICMARKUP_CLOSE_DELIMITER_PATTERN = /<<}|\+\+}|--}|~~}|==}/;
+// A delimiter written with a leading backslash is literal text, not a marker
+// boundary. See the Escaping Delimiters section of the RFM spec.
+const CRITICMARKUP_ESCAPED_DELIMITER_PATTERN =
+  /\\(\\|\{==|==\}|\{>>|<<\}|\{\+\+|\+\+\}|\{--|--\}|\{~~|~~\}|~>)/g;
+
+function unescapeCriticMarkupText(text: string): string {
+  return text.replace(CRITICMARKUP_ESCAPED_DELIMITER_PATTERN, "$1");
+}
+
+function indexOfUnescaped(
+  markdown: string,
+  delimiter: string,
+  from: number,
+): number {
+  for (let offset = from; offset < markdown.length; offset += 1) {
+    if (markdown[offset] === "\\") {
+      offset += 1;
+      continue;
+    }
+    if (markdown.startsWith(delimiter, offset)) return offset;
+  }
+
+  return -1;
+}
 
 interface IdReference {
   id: string;
@@ -324,7 +348,7 @@ export function validateRoughdraftMarkdown(
     }
 
     if (markdown.startsWith("{==", offset)) {
-      const end = markdown.indexOf("==}", offset + 3);
+      const end = indexOfUnescaped(markdown, "==}", offset + 3);
       if (end === -1) {
         addDiagnostic(
           "error",
@@ -533,13 +557,15 @@ export function extractRoughdraftReviewIndex(markdown: string): RfmReviewIndex {
     }
 
     if (markdown.startsWith("{==", offset)) {
-      const end = markdown.indexOf("==}", offset + 3);
+      const end = indexOfUnescaped(markdown, "==}", offset + 3);
       if (end === -1) {
         offset += 3;
         continue;
       }
 
-      const anchorText = markdown.slice(offset + 3, end);
+      const anchorText = unescapeCriticMarkupText(
+        markdown.slice(offset + 3, end),
+      );
       let nextOffset = end + 3;
       let anchoredComments = 0;
       while (markdown.startsWith("{>>", nextOffset)) {
@@ -843,7 +869,7 @@ function parseComment(
     offset: number,
   ) => void,
 ): ParsedComment | null {
-  const close = markdown.indexOf("<<}", offset + 3);
+  const close = indexOfUnescaped(markdown, "<<}", offset + 3);
   if (close === -1) {
     addDiagnostic(
       "error",
@@ -857,7 +883,7 @@ function parseComment(
   const metadata = parseMetadata(markdown, close + 3, true, addDiagnostic);
 
   return {
-    content: markdown.slice(offset + 3, close),
+    content: unescapeCriticMarkupText(markdown.slice(offset + 3, close)),
     metadata,
     offset,
     markerEndOffset: close + 3,
@@ -885,7 +911,9 @@ function parseSuggestion(
     );
     return {
       suggestionKind: "addition",
-      text: markdown.slice(offset + 3, addition.endOffset - 3),
+      text: unescapeCriticMarkupText(
+        markdown.slice(offset + 3, addition.endOffset - 3),
+      ),
       metadata,
       offset,
       markerEndOffset: addition.endOffset,
@@ -910,7 +938,9 @@ function parseSuggestion(
       false,
       addDiagnostic,
     );
-    const text = markdown.slice(offset + 3, deletion.endOffset - 3);
+    const text = unescapeCriticMarkupText(
+      markdown.slice(offset + 3, deletion.endOffset - 3),
+    );
     return {
       suggestionKind: "deletion",
       text,
@@ -932,9 +962,9 @@ function parseSuggestion(
   }
 
   if (markdown.startsWith("{~~", offset)) {
-    const separator = markdown.indexOf("~>", offset + 3);
+    const separator = indexOfUnescaped(markdown, "~>", offset + 3);
     const close =
-      separator === -1 ? -1 : markdown.indexOf("~~}", separator + 2);
+      separator === -1 ? -1 : indexOfUnescaped(markdown, "~~}", separator + 2);
 
     if (separator === -1 || close === -1) {
       addDiagnostic(
@@ -950,9 +980,13 @@ function parseSuggestion(
     const metadata = parseMetadata(markdown, endOffset, false, addDiagnostic);
     return {
       suggestionKind: "substitution",
-      text: markdown.slice(separator + 2, close),
-      originalText: markdown.slice(offset + 3, separator),
-      replacementText: markdown.slice(separator + 2, close),
+      text: unescapeCriticMarkupText(markdown.slice(separator + 2, close)),
+      originalText: unescapeCriticMarkupText(
+        markdown.slice(offset + 3, separator),
+      ),
+      replacementText: unescapeCriticMarkupText(
+        markdown.slice(separator + 2, close),
+      ),
       metadata,
       offset,
       markerEndOffset: endOffset,
@@ -971,7 +1005,7 @@ function parseWrappedMarker(
 ): { endOffset: number } | null {
   if (!markdown.startsWith(open, offset)) return null;
 
-  const closeOffset = markdown.indexOf(close, offset + open.length);
+  const closeOffset = indexOfUnescaped(markdown, close, offset + open.length);
   return closeOffset === -1 ? null : { endOffset: closeOffset + close.length };
 }
 

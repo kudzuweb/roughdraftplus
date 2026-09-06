@@ -746,3 +746,56 @@ describe("RFM mutation helpers", () => {
     });
   });
 });
+
+describe("escaped review delimiters", () => {
+  const typedText = String.raw`back\slash {==a==} {>>b<<} {++c++} {--d--} {~~e~>f~~} g~>h`;
+  const escapedText = String.raw`back\\slash \{==a\==} \{>>b\<<} \{++c\++} \{--d\--} \{~~e\~>f\~~} g\~>h`;
+
+  it("reads a comment body past its escaped delimiters", () => {
+    const markdown = `Please revisit {==this claim==}{>>${escapedText}<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.\n`;
+
+    expect(codes(markdown)).toEqual([]);
+    expect(extractRoughdraftReviewIndex(markdown).items).toMatchObject([
+      { id: "c1", kind: "comment", text: typedText, anchorText: "this claim" },
+    ]);
+  });
+
+  it("reads an escaped anchor, insertion, deletion and substitution", () => {
+    const markdown = [
+      `Anchor {==${escapedText}==}{>>Needs a source.<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.`,
+      `Add {++${escapedText}++}{id="s1" by="AI" at="2026-04-28T12:05:00.000Z"}.`,
+      `Drop {--${escapedText}--}{id="s2" by="AI" at="2026-04-28T12:06:00.000Z"}.`,
+      `Use {~~${escapedText}~>${escapedText}~~}{id="s3" by="AI" at="2026-04-28T12:07:00.000Z"}.`,
+      "",
+    ].join("\n");
+
+    expect(codes(markdown)).toEqual([]);
+    expect(extractRoughdraftReviewIndex(markdown).items).toMatchObject([
+      { id: "c1", anchorText: typedText },
+      { id: "s1", suggestionKind: "addition", text: typedText },
+      { id: "s2", suggestionKind: "deletion", originalText: typedText },
+      {
+        id: "s3",
+        suggestionKind: "substitution",
+        originalText: typedText,
+        replacementText: typedText,
+      },
+    ]);
+  });
+
+  it("appends a reply after a comment whose body carries escapes", () => {
+    const markdown = `Please revisit {==this claim==}{>>${escapedText}<<}{id="c1" by="user" at="2026-04-28T12:00:00.000Z"}.\n`;
+
+    const updated = appendRoughdraftReply(markdown, {
+      parentId: "c1",
+      message: "Noted.",
+      at: "2026-04-28T12:10:00.000Z",
+    });
+
+    expect(updated).toContain(`{>>${escapedText}<<}`);
+    expect(extractRoughdraftReviewIndex(updated).items).toMatchObject([
+      { id: "c1", text: typedText },
+      { id: "c2", parentId: "c1", text: "Noted." },
+    ]);
+  });
+});
