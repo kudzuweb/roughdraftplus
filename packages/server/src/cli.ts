@@ -940,6 +940,8 @@ function printCommandHelp(
     log("  --no-watch           Open the file without waiting");
     log(
       "  --loop               Report whether the round ended with a done-signal",
+    );
+    log(
       "  --label <text>       Name this session; the document header shows who opened it",
     );
     log("  --timeout <seconds>  Maximum watch time; omitted means no timeout");
