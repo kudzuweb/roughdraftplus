@@ -60,18 +60,13 @@ Paragraph with **bold**, [link](https://example.com), `inline code`.
 ```
 ### Review Document
 ```markdown
-# Review document {==Select this sentence==}{>>Root comment<<}{#root} This sentence includes {++clearer wording++}{#s1}. Replace {~~old phrase~>new phrase~~}{#s2} and remove {--dead text--}{#s3}.
+# Review document {==Select this sentence==}{>>Root comment<<}{#root}{>>Nested reply<<}{id="child" by="AI" at="2026-04-28T12:01:00.000Z" re="root"}{>>Second reply<<}{id="child2" by="Nora" at="2026-04-28T12:06:00.000Z" re="root"} This sentence includes {++clearer wording++}{#s1}. Replace {~~old phrase~>new phrase~~}{#s2} and remove {--dead text--}{#s3}.
 
 ---
 comments:
   root:
     by: Nora
     at: "2026-04-28T12:00:00.000Z"
-  child:
-    body: Nested reply
-    by: AI
-    at: "2026-04-28T12:01:00.000Z"
-    re: root
   c1:
     body: Looks good.
     by: Nora
@@ -138,11 +133,13 @@ suggestions:
 | Editor | Link popover | Click a link or choose Link from selection menu | `link-popover`, `link-url-input`, `link-action-open`, `link-action-delete` | Use the plain fixture link. |
 | Editor | Context menu | Right-click in rich editor | `editor-context-menu` | Capture comment, suggestion, paste, and paste-markdown actions. |
 | Review rail | Comments | Open review fixture in rich mode | `document-review-rail`, `comment-thread-root` | Thread containers use `data-comment-thread-container="true"`. |
+| Review rail | Thread collapsed | Open review fixture in rich mode; the `root` thread carries two replies | `comment-thread-root`, `comment-rail-child2`, `comment-rail-root-action-expand-replies` | Default state for any thread with more than one reply: the anchor comment plus the newest reply, with earlier replies hidden behind a `Show 1 earlier reply` toggle. The same collapsing applies to the `comment-banner-*` fallback below 1100px. |
+| Review rail | Thread expanded | Click the collapsed thread to select it, then click `comment-rail-root-action-expand-replies` | `comment-rail-child`, `comment-rail-child2`, `comment-rail-root-action-collapse-replies` | Every reply in order; the toggle reads `Hide earlier replies` and returns the thread to the collapsed default. |
 | Review rail | Suggestions | Open review fixture in rich mode | `suggestion-thread-s1`, `suggestion-thread-s2`, `suggestion-thread-s3` | Thread containers use `data-suggestion-thread-container="true"`. |
 | Review rail | Draft suggestion | Select text and choose a suggestion action | `draft-suggestion-thread`, `draft-suggestion-editor` | Capture dismiss/cancel/apply actions. |
 | Comment editor | New root comment draft | Select text and choose Add comment | `comment-rail-c1-editor`, `comment-rail-c1-action-save` | Save uses the popover-style button; footer Cancel is absent because the thread trash action dismisses the draft. |
 | Comment editor | Root comment editing | Use a comment card edit action | `comment-rail-root-editor` | Comment test IDs follow `comment-${variant}-${id}-...`. |
-| Comment editor | Reply editing | Use a reply action | `comment-rail-child-editor` | Useful for nested thread spacing. |
+| Comment editor | Reply editing | Expand the thread if it is collapsed, then use a reply action | `comment-rail-child-editor` | Useful for nested thread spacing. |
 | Code mode | Review rail present | Open review fixture with `?editor=code` | `page-card-code`, `markdown-code-editor` | Confirms code editor and rail can coexist. |
 | Code mode | Review rail absent | Open fenced fixture with `?editor=code` | `page-card-code`, `markdown-code-editor` | Confirms fenced CriticMarkup alone does not create review rail. |
 | Error/home fallback | Non-Markdown path | Open URL with `?path=/tmp/file.txt` | homepage error message | Copy: `Roughdraft now opens one .md file at a time.` |
