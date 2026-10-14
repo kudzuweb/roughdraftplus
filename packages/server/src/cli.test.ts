@@ -631,68 +631,13 @@ describe("cli", () => {
     expect(test.getSpawnCount()).toBe(0);
   });
 
-  it("opens the default browser on macOS when Chrome is installed but not the default browser", () => {
+  it("opens a Chrome app window on macOS whenever Chrome is installed, even when it is not the default browser", () => {
     const opened: Array<{ command: string; args: string[] }> = [];
     const openUrl = createDefaultOpenUrl({
       env: {},
       platform: "darwin",
       spawnSyncCommand: (command, args) => {
-        if (command === "plutil") {
-          expect(args?.join(" ")).toContain(
-            "com.apple.launchservices.secure.plist",
-          );
-          return {
-            status: 0,
-            stdout: JSON.stringify([
-              {
-                LSHandlerURLScheme: "http",
-                LSHandlerRoleAll: "com.apple.Safari",
-              },
-            ]),
-          } as ReturnType<typeof import("node:child_process").spawnSync>;
-        }
-
-        if (command === "open" && args?.[0] === "-Ra") {
-          return {
-            status: 0,
-            stdout: "",
-          } as ReturnType<typeof import("node:child_process").spawnSync>;
-        }
-
-        throw new Error(`unexpected spawnSync command ${command}`);
-      },
-      openDetachedCommand: (command, args) => {
-        opened.push({ command, args });
-      },
-    });
-
-    const mode = openUrl("http://localhost:4020/?file=draft.md");
-
-    expect(mode).toBe("browser");
-    expect(opened).toEqual([
-      { command: "open", args: ["http://localhost:4020/?file=draft.md"] },
-    ]);
-  });
-
-  it("opens a Chrome app window on macOS when Chrome is the default browser", () => {
-    const opened: Array<{ command: string; args: string[] }> = [];
-    const openUrl = createDefaultOpenUrl({
-      env: {},
-      platform: "darwin",
-      spawnSyncCommand: (command, args) => {
-        if (command === "plutil") {
-          return {
-            status: 0,
-            stdout: JSON.stringify([
-              {
-                LSHandlerURLScheme: "http",
-                LSHandlerRoleAll: "com.google.Chrome",
-              },
-            ]),
-          } as ReturnType<typeof import("node:child_process").spawnSync>;
-        }
-
-        if (command === "open" && args?.[0] === "-Ra") {
+        if (command === "open" && args?.join(" ") === "-Ra Google Chrome") {
           return {
             status: 0,
             stdout: "",
@@ -719,6 +664,34 @@ describe("cli", () => {
           "--app=http://localhost:4020/?file=draft.md",
         ],
       },
+    ]);
+  });
+
+  it("opens the default browser on macOS when Chrome is not installed", () => {
+    const opened: Array<{ command: string; args: string[] }> = [];
+    const openUrl = createDefaultOpenUrl({
+      env: {},
+      platform: "darwin",
+      spawnSyncCommand: (command, args) => {
+        if (command === "open" && args?.join(" ") === "-Ra Google Chrome") {
+          return {
+            status: 1,
+            stdout: "",
+          } as ReturnType<typeof import("node:child_process").spawnSync>;
+        }
+
+        throw new Error(`unexpected spawnSync command ${command}`);
+      },
+      openDetachedCommand: (command, args) => {
+        opened.push({ command, args });
+      },
+    });
+
+    const mode = openUrl("http://localhost:4020/?file=draft.md");
+
+    expect(mode).toBe("browser");
+    expect(opened).toEqual([
+      { command: "open", args: ["http://localhost:4020/?file=draft.md"] },
     ]);
   });
 
