@@ -676,53 +676,6 @@ function openDetached(command: string, args: string[]) {
   child.unref();
 }
 
-function resolveDefaultBrowserBundleId(
-  platform: NodeJS.Platform = process.platform,
-  spawnSyncCommand: SpawnSyncCommand = spawnSync,
-): string | null {
-  if (platform !== "darwin") return null;
-
-  const result = spawnSyncCommand(
-    "plutil",
-    [
-      "-extract",
-      "LSHandlers",
-      "json",
-      "-o",
-      "-",
-      path.join(
-        os.homedir(),
-        "Library/Preferences/com.apple.LaunchServices/com.apple.launchservices.secure.plist",
-      ),
-    ],
-    {
-      encoding: "utf8",
-      windowsHide: true,
-    },
-  );
-
-  if (result.status !== 0) return null;
-
-  try {
-    const handlers = JSON.parse(result.stdout) as Array<{
-      LSHandlerRoleAll?: string;
-      LSHandlerURLScheme?: string;
-    }>;
-    return (
-      handlers
-        .find((handler) => handler.LSHandlerURLScheme === "http")
-        ?.LSHandlerRoleAll?.trim()
-        .toLowerCase() ?? null
-    );
-  } catch {
-    return null;
-  }
-}
-
-function isChromeBundleId(bundleId: string | null): boolean {
-  return bundleId === "com.google.chrome";
-}
-
 export function createDefaultOpenUrl({
   env = process.env,
   platform = process.platform,
@@ -739,20 +692,15 @@ export function createDefaultOpenUrl({
       return "disabled";
     }
 
-    if (
-      isChromeBundleId(
-        resolveDefaultBrowserBundleId(platform, spawnSyncCommand),
-      )
-    ) {
-      if (hasChromeAppMode(platform, spawnSyncCommand)) {
-        openDetachedCommand("open", [
-          "-na",
-          "Google Chrome",
-          "--args",
-          `--app=${url}`,
-        ]);
-        return "chrome-app";
-      }
+    // A Chrome app window whenever Chrome is installed, whatever the default browser is.
+    if (hasChromeAppMode(platform, spawnSyncCommand)) {
+      openDetachedCommand("open", [
+        "-na",
+        "Google Chrome",
+        "--args",
+        `--app=${url}`,
+      ]);
+      return "chrome-app";
     }
 
     if (platform === "darwin") {
